@@ -11,11 +11,11 @@ sqlx.workspace = true
 thiserror.workspace = true
 undrly-core.workspace = true
 undrly-normalize.workspace = true
-undrly-provider.workspace = true
+undrly-provider = { workspace = true, features = ["http"] }
 undrly-store.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["net", "io-util"] }
 undrly-store = { workspace = true, features = ["testing"] }
 
 [lints]

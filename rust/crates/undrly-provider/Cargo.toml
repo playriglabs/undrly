@@ -7,10 +7,16 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 undrly-core.workspace = true
+
+[features]
+# Network transport for real sources. The only network code in the workspace;
+# decoding never needs it.
+http = ["dep:reqwest"]
 
 [dev-dependencies]
 rust_decimal.workspace = true

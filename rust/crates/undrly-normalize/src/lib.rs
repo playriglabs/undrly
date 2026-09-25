@@ -8,11 +8,12 @@
 //! normalizer does not understand is an error, never a guess.
 
 use undrly_core::{
-    CurrencyCode, DisplayName, EntityKind, Figi, InstrumentClass, Isin, Lei, Mic, Validity,
-    VenueSymbol,
+    CurrencyCode, DisplayName, EntityKind, ExternalIdentifier, Figi, InstrumentClass, Isin, Lei,
+    Mic, Validity, VenueSymbol,
 };
 
 pub mod fixture;
+pub mod sec;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NormalizeError {
@@ -68,6 +69,18 @@ pub struct NormalizedListing {
     pub symbol_valid_during: Validity,
 }
 
+/// Provider-neutral claims about one entity on its own: no securities,
+/// listings, or venues. For sources that are authoritative for an entity's
+/// identity but not for what it issues or where that trades (e.g. SEC EDGAR).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedEntityRecord {
+    pub kind: EntityKind,
+    pub name: DisplayName,
+    /// Entity identifiers the source asserts (LEI, CIK), in the source's
+    /// order. Never empty; ingestion resolves the entity by these.
+    pub identifiers: Vec<ExternalIdentifier>,
+}
+
 /// Normalizes one provider's reference records.
 pub trait ReferenceNormalizer {
     type Record;
@@ -80,4 +93,14 @@ pub(crate) fn invalid(field: &'static str, reason: impl ToString) -> NormalizeEr
         field,
         reason: reason.to_string(),
     }
+}
+
+/// Normalizes one provider's entity records.
+pub trait EntityNormalizer {
+    type Record;
+
+    fn normalize_entity(
+        &self,
+        record: &Self::Record,
+    ) -> Result<NormalizedEntityRecord, NormalizeError>;
 }

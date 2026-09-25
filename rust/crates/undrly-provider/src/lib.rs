@@ -14,18 +14,22 @@
 //! `InstrumentProvider`, `SearchProvider`, and `StreamingProvider` are added
 //! when the first provider that genuinely supports them is integrated.
 //!
-//! [`fixture`] is a deterministic reference-data provider over captured
-//! fixture files; it is the only provider implementation and makes no
-//! network requests.
+//! Implementations:
+//! - [`fixture`]: deterministic reference-data provider over Undrly's own
+//!   fixture format; no network.
+//! - [`sec`]: SEC EDGAR company submissions (filer identity), the first real
+//!   source.
 //!
 //! Decoding is synchronous and operates on bytes, so every provider is
-//! testable against captured fixtures with no network. Transport (HTTP,
-//! WebSocket, retry/backoff) is a separate concern introduced with the first
-//! real provider.
+//! testable against captured fixtures with no network. Transport lives
+//! behind the `http` feature ([`sec::http`]), and this crate is the only one
+//! that performs network access: `undrly-core`, `undrly-normalize`, and
+//! `undrly-store` never do.
 
 use undrly_core::SourceId;
 
 pub mod fixture;
+pub mod sec;
 
 /// A payload could not be decoded into a provider-native record.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

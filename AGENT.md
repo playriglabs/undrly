@@ -400,10 +400,14 @@ External identifiers map to canonical IDs through the **identifier layer**:
   different node for an overlapping period) is rejected and quarantined
   with its full context for investigation. Nodes are never merged
   automatically, and no source is automatically chosen as truth
-- identity resolution is deterministic and uses one **primary identifier**
-  per category: entity by LEI, instrument by ISIN, venue by MIC, currency
-  by ISO 4217 code, listing by (instrument, venue). No match mints a new
-  canonical id; more than one match rejects the record as ambiguous.
+- identity resolution is deterministic and uses **primary identifiers**
+  per category: entity by LEI or SEC CIK, instrument by ISIN, venue by
+  MIC, currency by ISO 4217 code, listing by (instrument, venue). No match
+  mints a new canonical id; more than one matched node (including a record
+  whose LEI and CIK point to different entities) rejects the record as
+  ambiguous. A record's primary identifiers are all assigned to the node it
+  resolves to; records that share no primary identifier are never linked
+  (by name or otherwise), even when they describe the same company.
   Names and venue symbols never select a node. Secondary identifiers (e.g.
   FIGIs, venue symbols) are claims assigned to the resolved node and are
   quarantined on conflict; they never change which node a record resolves
@@ -548,6 +552,31 @@ Ingestion rules:
   per-table operations with no normalization, reconciliation,
   source-priority, or provider logic. An operation that must be atomic uses
   its own transaction, or a savepoint inside the caller's transaction
+
+Real-source rules:
+
+- **network access lives only in `undrly-provider`**, behind its `http`
+  feature. `undrly-core`, `undrly-normalize`, and `undrly-store` never
+  perform network access; decoding and normalization stay pure functions
+  of bytes
+- **raw first:** the exact response body is persisted as a
+  `source_record` before any canonical fact is derived from it, in the
+  same transaction. Nothing transforms the body before it is stored (no
+  content encoding is negotiated, so the stored bytes are the served
+  document). The request URL is the record key
+- a fetch failure returns before any database access and writes nothing
+- provider response structures are provider-native types in
+  `undrly-provider`; they never appear in `undrly-core` or storage
+- a source asserts only what it is authoritative for. A source's
+  incidental fields (e.g. SEC's tickers and exchanges) never become
+  listings, venues, symbols, or identifiers of another kind
+- requests are conservative: declared `User-Agent` with a contact
+  (configured by the operator, never hardcoded), one request per call,
+  timeouts and size limits, no concurrency, no automatic retries, no
+  redirects, no crawling
+- the normal test suite never touches the internet: providers are tested
+  against captured responses and local servers; live integration tests
+  are `#[ignore]`d and run explicitly
 
 ---
 

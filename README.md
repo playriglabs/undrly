@@ -17,13 +17,15 @@ API. There is no frontend in the current scope.
 
 ## Current status
 
-**Phases 0–2 and the Phase 3 NVDA identity slice.**
+**Phases 0–2, the Phase 3 NVDA identity slice, and the first real source
+(SEC EDGAR, NVIDIA only).**
 
 A deterministic fixture record for NVIDIA / NVDA flows through decode,
-normalize, identity resolution, and PostgreSQL, and is read back. There is
-no HTTP API, no real provider integration or network access, and no market
-data. Nothing here is production-ready. No exchanges, assets, or data
-sources are supported yet.
+normalize, identity resolution, and PostgreSQL, and is read back. NVIDIA's
+SEC EDGAR submissions document can be fetched live and ingested as an
+entity with its CIK, traceable to the exact stored response
+([`docs/sources/sec-edgar.md`](docs/sources/sec-edgar.md)). There is no HTTP
+API and no market data. Nothing here is production-ready.
 
 ## Architecture
 
@@ -68,7 +70,7 @@ undrly/
 │   └── crates/
 │       ├── undrly-core/        canonical domain (no I/O)
 │       ├── undrly-store/       PostgreSQL migrations, mapping, repositories
-│       ├── undrly-provider/    provider capabilities + deterministic fixture provider
+│       ├── undrly-provider/    provider capabilities, fixture + SEC EDGAR providers (only network code)
 │       ├── undrly-normalize/   provider records → validated canonical values (pure)
 │       └── undrly-ingest/      resolve identities + persist, one transaction per record
 ├── typescript/                 Bun workspace (API plane)
@@ -121,6 +123,11 @@ cp .env.example .env  # then set UNDRLY_POSTGRES_PASSWORD
 docker compose up -d
 DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly \
   cargo test -p undrly-store   # each test creates, migrates, drops its own DB
+
+# Optional live SEC EDGAR check (network; not part of check.sh)
+UNDRLY_SEC_USER_AGENT="Your Name you@example.com" \
+DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly \
+  cargo test -p undrly-ingest --test sec_live -- --ignored --nocapture
 ```
 
 ## Implemented
@@ -141,12 +148,13 @@ DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly \
   identifier assignment with conflict quarantine).
 - NVDA vertical slice: fixture provider → normalizer → `ingest_reference`
   (identity resolution by primary identifier, one transaction per record).
-- Provider boundary: `QuoteProvider` and `ReferenceDataProvider`; the only
-  implementation is the deterministic fixture provider.
+- Provider boundary: `QuoteProvider` and `ReferenceDataProvider`;
+  implementations are the deterministic fixture provider and SEC EDGAR
+  (company submissions → entity + CIK, via `ingest_entity`).
 
 ## Not implemented
 
-Real provider integrations, network access, market-price ingestion,
+Real providers other than SEC EDGAR filer identity, market-price ingestion,
 normalization and reconciliation pipelines, Resolve, Graph, Search, the HTTP
 API, streaming/WebSockets, authentication, rate limiting, billing, SDK, MCP,
 and any frontend. There is no reference data or market data in this

@@ -6,6 +6,11 @@
 //!   assign identifiers (quarantine conflicts) → assert relationships]
 //! ```
 //!
+//! Two record shapes are supported: [`ingest_reference`] for a security with
+//! its issuer, currency and listing, and [`ingest_entity`] for an entity on
+//! its own (a source authoritative for identity only, such as SEC EDGAR;
+//! see [`sec`]).
+//!
 //! Decode and normalize are pure and run before any write, so a malformed
 //! record writes nothing. Everything else is one transaction: any error rolls
 //! back every write of the record, leaving no partial canonical state.
@@ -23,11 +28,14 @@
 //!
 //! # Identity resolution
 //!
-//! Each object is found by its **primary identifier** only: entity by LEI,
-//! instrument by ISIN, venue by MIC, currency by ISO 4217 code, and a listing
-//! by (instrument, venue). No names, symbols, or fuzzy matching are used. If
-//! the primary identifier maps to no node, a new canonical id is minted; if it
-//! maps to more than one, the record is rejected as ambiguous. Secondary
+//! Each object is found by its **primary identifiers** only: entity by LEI or
+//! SEC CIK, instrument by ISIN, venue by MIC, currency by ISO 4217 code, and a
+//! listing by (instrument, venue). No names, symbols, or fuzzy matching are
+//! used. If the record's primary identifiers map to no node, a new canonical
+//! id is minted; if they map to more than one, the record is rejected as
+//! ambiguous. Every primary identifier in the record is then assigned to the
+//! resolved node (an entity record with both an LEI and a CIK links them); a
+//! conflict on one rejects the record. Secondary
 //! identifiers (FIGIs) and the venue symbol are claims assigned to the resolved
 //! node; a conflicting claim is quarantined and never changes which node the
 //! record resolved to.
@@ -36,14 +44,20 @@
 //! the stored one, the stored one is kept. Reconciling such differences is
 //! reconciliation's job, not ingestion's.
 
+pub mod sec;
+
 use sqlx::{Acquire, PgConnection};
 use undrly_core::identifier::AssignmentError;
 use undrly_core::{
-    CanonicalId, Currency, CurrencyId, Entity, EntityId, ExternalIdentifier, IdentifierAssignment,
-    Instrument, InstrumentId, Listing, ListingId, ListingSymbol, Relationship, RelationshipError,
-    RelationshipType, SourceId, Timestamp, Validity, Venue, VenueId,
+    CanonicalId, Currency, CurrencyId, DisplayName, Entity, EntityId, EntityKind,
+    ExternalIdentifier, IdentifierAssignment, Instrument, InstrumentId, Listing, ListingId,
+    ListingSymbol, Namespace, Relationship, RelationshipError, RelationshipType, SourceId,
+    Timestamp, Validity, Venue, VenueId,
 };
-use undrly_normalize::{NormalizeError, NormalizedReference, ReferenceNormalizer};
+use undrly_normalize::{
+    EntityNormalizer, NormalizeError, NormalizedEntityRecord, NormalizedReference,
+    ReferenceNormalizer,
+};
 use undrly_provider::{DecodeError, ReferenceDataProvider};
 use undrly_store::conflicts::ConflictId;
 use undrly_store::identifiers::{AssignOutcome, assign_identifier, identifier_history};
@@ -111,6 +125,18 @@ impl IngestReport {
     }
 }
 
+/// Everything one entity-record ingestion did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityIngestReport {
+    pub source_record: (SourceRecordId, Write),
+    pub entity: Resolution<EntityId>,
+    pub identifiers: Vec<(ExternalIdentifier, AssignOutcome)>,
+}
+
+/// Namespaces that resolve an entity. Adding one is an architectural
+/// decision (`AGENT.md` §10).
+pub const ENTITY_PRIMARY_NAMESPACES: [Namespace; 2] = [Namespace::Lei, Namespace::Cik];
+
 impl From<sqlx::Error> for IngestError {
     fn from(err: sqlx::Error) -> Self {
         IngestError::Store(StoreError::Database(err))
@@ -147,6 +173,18 @@ pub enum IngestError {
         identifier: ExternalIdentifier,
         outcome: Box<AssignOutcome>,
     },
+    /// An entity record carried no primary identifier, or an identifier that
+    /// cannot resolve an entity.
+    #[error("entity record identifiers {0:?} are not usable primary identifiers")]
+    NoEntityPrimaryIdentifier(Vec<ExternalIdentifier>),
+    #[error(transparent)]
+    Fetch(#[from] undrly_provider::sec::http::FetchError),
+    /// A fetched record describes something other than what was requested.
+    #[error("requested {requested:?}, but the record is for {found:?}")]
+    UnexpectedRecord {
+        requested: ExternalIdentifier,
+        found: Vec<ExternalIdentifier>,
+    },
 }
 
 /// Ingests one reference record atomically. See the crate docs.
@@ -162,25 +200,113 @@ where
 {
     let record = provider.decode_reference(&raw.payload)?;
     let reference = normalizer.normalize(&record)?;
-    let source_id = provider.source_id().clone();
 
     let mut tx = conn.begin().await?;
-    if get_source(&mut tx, &source_id).await?.is_none() {
-        return Err(IngestError::UnknownSource(source_id));
-    }
-    let (record, write) = insert_source_record(
+    let (record, write) = store_raw_record(&mut tx, provider.source_id(), raw).await?;
+    let report = persist(&mut tx, &reference, &record, write).await?;
+    tx.commit().await?;
+    Ok(report)
+}
+
+/// Ingests one entity record atomically: the raw record, the entity (found by
+/// its primary identifiers or minted), and its identifier assignments.
+pub async fn ingest_entity<P, N>(
+    conn: &mut PgConnection,
+    provider: &P,
+    normalizer: &N,
+    raw: &RawRecord,
+) -> Result<EntityIngestReport, IngestError>
+where
+    P: ReferenceDataProvider,
+    N: EntityNormalizer<Record = P::Record>,
+{
+    let record = provider.decode_reference(&raw.payload)?;
+    let normalized: NormalizedEntityRecord = normalizer.normalize_entity(&record)?;
+    check_entity_identifiers(&normalized.identifiers)?;
+
+    let mut tx = conn.begin().await?;
+    let (record, write) = store_raw_record(&mut tx, provider.source_id(), raw).await?;
+    let mut identifiers = Vec::new();
+    let entity = resolve_entity(
         &mut tx,
+        normalized.kind,
+        &normalized.name,
+        &normalized.identifiers,
+        &record,
+        &mut identifiers,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(EntityIngestReport {
+        source_record: (record.id, write),
+        entity,
+        identifiers,
+    })
+}
+
+fn check_entity_identifiers(identifiers: &[ExternalIdentifier]) -> Result<(), IngestError> {
+    if identifiers.is_empty()
+        || identifiers
+            .iter()
+            .any(|i| !ENTITY_PRIMARY_NAMESPACES.contains(&i.namespace()))
+    {
+        return Err(IngestError::NoEntityPrimaryIdentifier(identifiers.to_vec()));
+    }
+    Ok(())
+}
+
+/// Stores the raw record first: every fact of the record derives from it.
+async fn store_raw_record(
+    tx: &mut PgConnection,
+    source_id: &SourceId,
+    raw: &RawRecord,
+) -> Result<(RecordProvenance, Write), IngestError> {
+    if get_source(tx, source_id).await?.is_none() {
+        return Err(IngestError::UnknownSource(source_id.clone()));
+    }
+    Ok(insert_source_record(
+        tx,
         &SourceRecord {
-            source_id,
+            source_id: source_id.clone(),
             record_key: raw.record_key.clone(),
             payload: raw.payload.clone(),
             received_at: raw.received_at,
         },
     )
-    .await?;
-    let report = persist(&mut tx, &reference, &record, write).await?;
-    tx.commit().await?;
-    Ok(report)
+    .await?)
+}
+
+/// Finds the entity by its primary identifiers, or mints one, then assigns
+/// every primary identifier to it.
+async fn resolve_entity(
+    tx: &mut PgConnection,
+    kind: EntityKind,
+    name: &DisplayName,
+    identifiers: &[ExternalIdentifier],
+    record: &RecordProvenance,
+    report: &mut Vec<(ExternalIdentifier, AssignOutcome)>,
+) -> Result<Resolution<EntityId>, IngestError> {
+    let entity = match resolve_primary(tx, identifiers).await? {
+        Some(node) => Resolution::Existing(existing::<EntityId>(tx, node).await?),
+        None => {
+            let id = EntityId::generate();
+            reference::insert_entity(
+                tx,
+                &Entity {
+                    id,
+                    kind,
+                    name: name.clone(),
+                },
+                record.id,
+            )
+            .await?;
+            Resolution::Created(id)
+        }
+    };
+    for identifier in identifiers {
+        assign_primary(tx, identifier.clone(), entity.id().into(), record, report).await?;
+    }
+    Ok(entity)
 }
 
 async fn persist(
@@ -193,29 +319,19 @@ async fn persist(
     let mut identifiers = Vec::new();
 
     // Entity, by LEI.
-    let lei = ExternalIdentifier::Lei(r.issuer.lei.clone());
-    let entity = match resolve_primary(tx, &lei).await? {
-        Some(node) => Resolution::Existing(existing::<EntityId>(tx, node).await?),
-        None => {
-            let id = EntityId::generate();
-            reference::insert_entity(
-                tx,
-                &Entity {
-                    id,
-                    kind: r.issuer.kind,
-                    name: r.issuer.name.clone(),
-                },
-                record_id,
-            )
-            .await?;
-            Resolution::Created(id)
-        }
-    };
-    assign_primary(tx, lei, entity.id().into(), record, &mut identifiers).await?;
+    let entity = resolve_entity(
+        tx,
+        r.issuer.kind,
+        &r.issuer.name,
+        &[ExternalIdentifier::Lei(r.issuer.lei.clone())],
+        record,
+        &mut identifiers,
+    )
+    .await?;
 
     // Instrument, by ISIN.
     let isin = ExternalIdentifier::Isin(r.instrument.isin.clone());
-    let instrument = match resolve_primary(tx, &isin).await? {
+    let instrument = match resolve_primary(tx, std::slice::from_ref(&isin)).await? {
         Some(node) => Resolution::Existing(existing::<InstrumentId>(tx, node).await?),
         None => {
             let id = InstrumentId::generate();
@@ -240,7 +356,7 @@ async fn persist(
 
     // Currency, by ISO 4217 code.
     let code = ExternalIdentifier::Iso4217(r.denomination.code.clone());
-    let currency = match resolve_primary(tx, &code).await? {
+    let currency = match resolve_primary(tx, std::slice::from_ref(&code)).await? {
         Some(node) => Resolution::Existing(existing::<CurrencyId>(tx, node).await?),
         None => {
             let id = CurrencyId::generate();
@@ -260,7 +376,7 @@ async fn persist(
 
     // Venue, by MIC.
     let mic = ExternalIdentifier::Mic(r.listing.mic.clone());
-    let venue = match resolve_primary(tx, &mic).await? {
+    let venue = match resolve_primary(tx, std::slice::from_ref(&mic)).await? {
         Some(node) => Resolution::Existing(existing::<VenueId>(tx, node).await?),
         None => {
             let id = VenueId::generate();
@@ -356,23 +472,31 @@ async fn persist(
     })
 }
 
-/// The single node a primary identifier maps to in any period, if any.
+/// The single node the primary identifiers map to in any period, if any.
 async fn resolve_primary(
     tx: &mut PgConnection,
-    identifier: &ExternalIdentifier,
+    identifiers: &[ExternalIdentifier],
 ) -> Result<Option<CanonicalId>, IngestError> {
-    let mut nodes: Vec<CanonicalId> = identifier_history(tx, identifier)
-        .await?
-        .into_iter()
-        .map(|s| s.assignment.node())
-        .collect();
+    let mut nodes: Vec<CanonicalId> = Vec::new();
+    for identifier in identifiers {
+        nodes.extend(
+            identifier_history(tx, identifier)
+                .await?
+                .into_iter()
+                .map(|s| s.assignment.node()),
+        );
+    }
     nodes.sort();
     nodes.dedup();
     match nodes.as_slice() {
         [] => Ok(None),
         [one] => Ok(Some(*one)),
         many => Err(IngestError::Ambiguous {
-            what: format!("{} {}", identifier.namespace(), identifier.value()),
+            what: identifiers
+                .iter()
+                .map(|i| format!("{} {}", i.namespace(), i.value()))
+                .collect::<Vec<_>>()
+                .join(", "),
             candidates: many.to_vec(),
         }),
     }
