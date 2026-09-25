@@ -266,7 +266,7 @@ fn check_entity_identifiers(identifiers: &[ExternalIdentifier]) -> Result<(), In
 }
 
 /// Stores the raw record first: every fact of the record derives from it.
-pub(crate) async fn store_raw_record(
+pub async fn store_raw_record(
     tx: &mut PgConnection,
     source_id: &SourceId,
     raw: &RawRecord,
@@ -351,6 +351,8 @@ async fn persist(
                     id,
                     class: r.instrument.class,
                     name: r.instrument.name.clone(),
+                    contract_multiplier: None,
+                    unit_of_measure: None,
                 },
                 record_id,
             )

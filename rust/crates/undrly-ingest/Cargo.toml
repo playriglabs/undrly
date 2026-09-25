@@ -16,6 +16,7 @@ undrly-store.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+sha2 = "0.10"
 tokio = { workspace = true, features = ["net", "io-util"] }
 undrly-store = { workspace = true, features = ["testing"] }
 

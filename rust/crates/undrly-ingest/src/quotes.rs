@@ -56,12 +56,37 @@ where
     P: QuoteProvider,
     N: QuoteNormalizer<Quote = P::Quote>,
 {
+    ingest_quotes_for(conn, provider, normalizer, raw, None).await
+}
+
+/// [`ingest_quotes`] for a record that covers only the `requested` symbols
+/// (one Coinbase product, one Alpaca batch): the source's other feeds are
+/// neither matched nor reported missing. `None` means every feed.
+pub async fn ingest_quotes_for<P, N>(
+    conn: &mut PgConnection,
+    provider: &P,
+    normalizer: &N,
+    raw: &RawRecord,
+    requested: Option<&[VenueSymbol]>,
+) -> Result<QuoteIngestReport, IngestError>
+where
+    P: QuoteProvider,
+    N: QuoteNormalizer<Quote = P::Quote>,
+{
     let decoded = provider.decode_quote(&raw.payload)?;
 
     let mut tx = conn.begin().await?;
     let (record, write) = store_raw_record(&mut tx, provider.source_id(), raw).await?;
-    let feeds = quote_feeds_of_source(&mut tx, provider.source_id()).await?;
-    let symbols: Vec<VenueSymbol> = feeds.iter().map(|f| f.feed.symbol.clone()).collect();
+    let mut feeds = quote_feeds_of_source(&mut tx, provider.source_id()).await?;
+    if let Some(requested) = requested {
+        feeds.retain(|f| requested.contains(&f.feed.symbol));
+    }
+    let mut symbols: Vec<VenueSymbol> = Vec::new();
+    for f in &feeds {
+        if !symbols.contains(&f.feed.symbol) {
+            symbols.push(f.feed.symbol.clone());
+        }
+    }
     let quotes = normalizer.normalize_quotes(&decoded, &symbols)?;
 
     let mut report = QuoteIngestReport {

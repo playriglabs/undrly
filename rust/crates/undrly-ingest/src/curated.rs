@@ -10,7 +10,7 @@
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
     Alias, CanonicalId, ExternalIdentifier, IdentifierAssignment, Listing, ListingSymbol,
-    QuoteAggregation, QuoteFeed, Relationship, Validity,
+    QuoteAggregation, QuoteFeed, Relationship, UniverseSnapshot, Validity,
 };
 use undrly_normalize::curated::normalize_universe;
 use undrly_provider::curated::CuratedProvider;
@@ -18,7 +18,7 @@ use undrly_provider::{Provider, ReferenceDataProvider};
 use undrly_store::identifiers::{AssignOutcome, assign_identifier};
 use undrly_store::listing_symbols::{SymbolAssignOutcome, assign_listing_symbol};
 use undrly_store::sources::{RecordProvenance, SourceRecordId};
-use undrly_store::{Write, aliases, graph, market, reference};
+use undrly_store::{Write, aliases, graph, market, reference, sources, universe};
 
 use crate::{IngestError, RawRecord, store_raw_record};
 
@@ -43,7 +43,16 @@ pub async fn ingest_universe(
     conn: &mut PgConnection,
     raw: &RawRecord,
 ) -> Result<UniverseIngestReport, IngestError> {
-    let provider = CuratedProvider::new();
+    ingest_universe_as(conn, CuratedProvider::new(), raw).await
+}
+
+/// [`ingest_universe`] for a file in the curated format published under
+/// another source (the generated V1.1 snapshot uses `undrly-universe`).
+pub async fn ingest_universe_as(
+    conn: &mut PgConnection,
+    provider: CuratedProvider,
+    raw: &RawRecord,
+) -> Result<UniverseIngestReport, IngestError> {
     let u = normalize_universe(&provider.decode_reference(&raw.payload)?)?;
 
     let mut tx = conn.begin().await?;
@@ -65,8 +74,18 @@ pub async fn ingest_universe(
         )
         .await?;
     }
-    for (entity, lei) in &u.entities {
+    for (entity, lei, cik) in &u.entities {
         report.count(reference::insert_entity(&mut tx, entity, r).await?);
+        if let Some(cik) = cik {
+            assign(
+                &mut tx,
+                ExternalIdentifier::Cik(cik.clone()),
+                entity.id.into(),
+                &record,
+                &mut report,
+            )
+            .await?;
+        }
         if let Some(lei) = lei {
             assign(
                 &mut tx,
@@ -171,6 +190,7 @@ pub async fn ingest_universe(
             unit: f.unit,
             basis: f.basis,
             price_type: f.price_type,
+            stale_after_seconds: f.stale_after_seconds,
             provenance: record.provenance.clone(),
         };
         report.count(market::insert_quote_feed(&mut tx, &feed, r).await?.1);
@@ -183,6 +203,31 @@ pub async fn ingest_universe(
             provenance: record.provenance.clone(),
         };
         report.count(market::insert_quote_aggregation(&mut tx, &declared, r).await?);
+    }
+    // Memberships are asserted by the upstream universe file, stored earlier
+    // as its own source record; the snapshot only references it.
+    for x in &u.universes {
+        let upstream = sources::find_source_record(&mut tx, &x.source, &x.record_key, &x.sha256)
+            .await?
+            .ok_or_else(|| {
+                IngestError::CuratedDisagrees(format!(
+                    "universe {}: raw record `{}` of `{}` is not stored",
+                    x.key.as_str(),
+                    x.record_key,
+                    x.source
+                ))
+            })?;
+        let snapshot = UniverseSnapshot {
+            key: x.key,
+            as_of: x.as_of,
+            members: x.members.clone(),
+            provenance: upstream.provenance.clone(),
+        };
+        report.count(
+            universe::insert_universe_snapshot(&mut tx, &snapshot, upstream.id)
+                .await?
+                .1,
+        );
     }
     tx.commit().await?;
     Ok(report)
