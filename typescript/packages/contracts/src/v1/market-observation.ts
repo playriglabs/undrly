@@ -52,6 +52,10 @@ function variant<Basis extends ObservationBasis, Venue extends z.ZodType>(
 }
 
 /**
+ * @deprecated Superseded by `ObservationV1` / `QuoteV1` (./quote.ts), which
+ * add FX subjects, price type, bid/ask and nullable source time. Kept for its
+ * fixtures; no API route serves it.
+ *
  * A normalized price observation. `venueId` is present exactly when
  * `basis` is `"venue"`; aggregated and derived values never name a venue.
  */

@@ -29,6 +29,9 @@ const vocabulary = readJson("shared/vocabulary.json") as {
   relationshipTypes: string[];
   relationshipRules: [string, string, string][];
   observationBases: string[];
+  instrumentClasses: string[];
+  priceTypes: string[];
+  aggregationMethods: string[];
 };
 
 describe("API v1 valid documents", () => {
@@ -38,6 +41,8 @@ describe("API v1 valid documents", () => {
     ["api/v1/market-observation.asset-unit.json", v1.MarketObservationV1],
     ["api/v1/market-observation.asset-unit-no-code.json", v1.MarketObservationV1],
     ["api/v1/relationship.issued-by.json", v1.RelationshipV1],
+    ["api/v1/quote.perpetual-usdc.json", v1.QuoteV1],
+    ["api/v1/quote.fx.json", v1.QuoteV1],
   ] as const;
 
   for (const [path, schema] of cases) {
@@ -83,7 +88,9 @@ describe("API v1 invalid documents", () => {
         ? v1.MarketObservationV1
         : name.startsWith("relationship.")
           ? v1.RelationshipV1
-          : undefined;
+          : name.startsWith("quote.")
+            ? v1.QuoteV1
+            : undefined;
       expect(schema, `unrecognized fixture ${name}`).toBeDefined();
       expect(schema?.safeParse(readJson(`api/v1/invalid/${name}`)).success).toBe(false);
     });
@@ -144,5 +151,11 @@ describe("shared vocabulary agrees with Rust and the database", () => {
 
   it("observation bases", () => {
     expect([...v1.OBSERVATION_BASES].sort()).toStrictEqual([...vocabulary.observationBases].sort());
+  });
+
+  it("instrument classes, price types, aggregation methods", () => {
+    expect([...v1.INSTRUMENT_CLASSES]).toStrictEqual(vocabulary.instrumentClasses);
+    expect([...v1.PRICE_TYPES]).toStrictEqual(vocabulary.priceTypes);
+    expect([...v1.AGGREGATION_METHODS]).toStrictEqual(vocabulary.aggregationMethods);
   });
 });

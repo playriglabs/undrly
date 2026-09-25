@@ -95,6 +95,36 @@ impl fmt::Display for VenueSymbol {
     }
 }
 
+/// What an [`Alias`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AliasKind {
+    /// A symbol or ticker-like code (`BTC`, `XAU`, `BTC-PERP`).
+    Symbol,
+    /// A name (`Bitcoin`, `Gold`).
+    Name,
+}
+
+impl AliasKind {
+    pub const ALL: [AliasKind; 2] = [AliasKind::Symbol, AliasKind::Name];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AliasKind::Symbol => "symbol",
+            AliasKind::Name => "name",
+        }
+    }
+}
+
+/// A search term for a node, asserted by a source. For discovery only: an
+/// alias never selects a node for identity resolution (unlike identifiers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alias {
+    pub node: crate::id::CanonicalId,
+    pub text: DisplayName,
+    pub kind: AliasKind,
+    pub provenance: Provenance,
+}
+
 /// Kind of entity. Extended as new kinds are needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityKind {
@@ -118,15 +148,27 @@ pub enum InstrumentClass {
     Equity,
     /// A crypto asset, including stablecoins. Never a fiat currency.
     CryptoAsset,
+    /// A physical commodity in a defined unit (e.g. gold, one troy ounce).
+    Commodity,
+    /// A perpetual futures contract. Its underlying is a `DERIVES_FROM`
+    /// relationship, its settlement asset a `SETTLES_IN` relationship.
+    PerpetualFuture,
 }
 
 impl InstrumentClass {
-    pub const ALL: [InstrumentClass; 2] = [InstrumentClass::Equity, InstrumentClass::CryptoAsset];
+    pub const ALL: [InstrumentClass; 4] = [
+        InstrumentClass::Equity,
+        InstrumentClass::CryptoAsset,
+        InstrumentClass::Commodity,
+        InstrumentClass::PerpetualFuture,
+    ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             InstrumentClass::Equity => "equity",
             InstrumentClass::CryptoAsset => "crypto_asset",
+            InstrumentClass::Commodity => "commodity",
+            InstrumentClass::PerpetualFuture => "perpetual_future",
         }
     }
 }

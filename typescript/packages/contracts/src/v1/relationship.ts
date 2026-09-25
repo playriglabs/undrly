@@ -41,6 +41,7 @@ export const RELATIONSHIP_RULES: readonly (readonly [RelationshipType, Category,
   ["DENOMINATED_IN", "instrument", "instrument"],
   ["SETTLES_IN", "instrument", "currency"],
   ["SETTLES_IN", "instrument", "instrument"],
+  ["DERIVES_FROM", "instrument", "instrument"],
 ];
 
 export const ProvenanceV1 = z.strictObject({

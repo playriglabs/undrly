@@ -618,6 +618,21 @@ stale
 
 Never label an aggregated or derived value as a raw venue quote.
 
+Prices flow through an explicit aggregation boundary, even when only one
+source exists:
+
+```text
+providers → raw source records → market observations (per source, with basis)
+  → aggregation (named, versioned method) → canonical quote → API / cache
+```
+
+- observations keep `basis` (venue / aggregated / derived) and never lose
+  their source; a venue quote is always presented as that venue's quote
+- the API serves canonical quotes from storage (or a cache in front of
+  it); it never calls an upstream provider per request
+- a source that states no observation time gets none; Undrly's receipt
+  time is never presented as source time
+
 ---
 
 ## 15. Provenance

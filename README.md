@@ -17,8 +17,15 @@ API. There is no frontend in the current scope.
 
 ## Current status
 
-**Phases 0–2, the Phase 3 NVDA identity slice, and the first real source
-(SEC EDGAR, NVIDIA only).**
+**Phases 0–2, the Phase 3 NVDA identity slice, the first real source (SEC
+EDGAR, NVIDIA only), and the hackathon v1 cross-market slice
+([`docs/hackathon-v1.md`](docs/hackathon-v1.md)).**
+
+One read-only API (`search`, `resolve`, `quote`, `quotes`, `graph`) serves
+five markets through one contract: NVDA (IEX venue quote via Alpaca),
+BTC/USD (Kraken), EUR/USD (Kraken), XAU/USD (gold-api, aggregated) and the
+BTC perpetual (Hyperliquid, mark price in USDC). Every quote traces to the
+exact upstream response ([`docs/sources/quotes.md`](docs/sources/quotes.md)).
 
 A deterministic fixture record for NVIDIA / NVDA flows through decode,
 normalize, identity resolution, and PostgreSQL, and is read back. NVIDIA's
@@ -72,8 +79,11 @@ undrly/
 │       ├── undrly-store/       PostgreSQL migrations, mapping, repositories
 │       ├── undrly-provider/    provider capabilities, fixture + SEC EDGAR providers (only network code)
 │       ├── undrly-normalize/   provider records → validated canonical values (pure)
-│       └── undrly-ingest/      resolve identities + persist, one transaction per record
+│       ├── undrly-ingest/      resolve identities + persist, quotes + aggregation
+│       └── undrly-collect/     demo collector binary: seed, sequential polling
 ├── typescript/                 Bun workspace (API plane)
+│   ├── apps/
+│   │   └── api/                read-only Hono API (search, resolve, quote, quotes, graph)
 │   └── packages/
 │       └── contracts/          external JSON API contract (Zod)
 ├── database/migrations/        PostgreSQL schema (owned by undrly-store)
@@ -124,6 +134,13 @@ docker compose up -d
 DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly \
   cargo test -p undrly-store   # each test creates, migrates, drops its own DB
 
+# Cross-market demo: seed, collect once, start the API, run the checks
+# (network; add APCA_API_KEY_ID / APCA_API_SECRET_KEY for the NVDA quote)
+DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly ./scripts/demo.sh
+#   or, separately:
+#   rust/target/debug/undrly-collect seed && rust/target/debug/undrly-collect run
+#   bun typescript/apps/api/src/server.ts        # http://127.0.0.1:8787
+
 # Optional live SEC EDGAR check (network; not part of check.sh)
 UNDRLY_SEC_USER_AGENT="Your Name you@example.com" \
 DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly \
@@ -154,8 +171,12 @@ DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly \
 
 ## Not implemented
 
-Real providers other than SEC EDGAR filer identity, market-price ingestion,
-normalization and reconciliation pipelines, Resolve, Graph, Search, the HTTP
-API, streaming/WebSockets, authentication, rate limiting, billing, SDK, MCP,
-and any frontend. There is no reference data or market data in this
-repository; fixture values are illustrative test data.
+Markets beyond the five demo instruments, second sources per market, source
+ranking/weighting/outlier handling, Phase 5 identity resolution
+([`docs/phase-5-identity-resolution.md`](docs/phase-5-identity-resolution.md),
+future architecture only), streaming/WebSockets, historical OHLC,
+authentication, rate limiting, billing, SDK, MCP, and any frontend. Source
+data is licensed for **local demo mode only** until each source's terms are
+reviewed ([`docs/sources/quotes.md`](docs/sources/quotes.md)). The only
+reference data in the repository is the curated demo universe
+(`data/demo/universe.json`); other fixture values are illustrative test data.

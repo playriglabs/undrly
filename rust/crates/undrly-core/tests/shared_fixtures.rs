@@ -7,8 +7,9 @@ use std::path::Path;
 
 use serde_json::Value;
 use undrly_core::{
-    CanonicalId, Category, Cik, CurrencyCode, EntityKind, Figi, InstrumentClass, Isin, Lei, Mic,
-    Namespace, ObservationBasis, RelationshipType, SourceId, Timestamp, VenueSymbol, decimal,
+    AggregationMethod, CanonicalId, Category, Cik, CurrencyCode, EntityKind, Figi, InstrumentClass,
+    Isin, Lei, Mic, Namespace, ObservationBasis, PriceType, RelationshipType, SourceId, Timestamp,
+    VenueSymbol, decimal,
 };
 use uuid::Uuid;
 
@@ -130,6 +131,10 @@ fn vocabulary_matches_fixture() {
         set(ObservationBasis::NAMES),
         set(strings(&fixture["observationBases"]))
     );
+    let price_types: Vec<&str> = PriceType::ALL.iter().map(|t| t.as_str()).collect();
+    assert_eq!(price_types, strings(&fixture["priceTypes"]));
+    let methods: Vec<&str> = AggregationMethod::ALL.iter().map(|m| m.as_str()).collect();
+    assert_eq!(methods, strings(&fixture["aggregationMethods"]));
 
     let namespaces = fixture["identifierNamespaces"].as_object().unwrap();
     assert_eq!(namespaces.len(), Namespace::ALL.len());

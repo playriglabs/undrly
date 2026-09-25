@@ -1,0 +1,15 @@
+{
+  "name": "@undrly/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only HTTP API: search, resolve, quote, quotes, graph (docs/hackathon-v1.md).",
+  "scripts": {
+    "start": "bun run src/server.ts"
+  },
+  "dependencies": {
+    "@undrly/contracts": "workspace:*",
+    "hono": "^4.13.9",
+    "postgres": "^3.4.9"
+  }
+}

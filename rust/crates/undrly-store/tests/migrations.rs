@@ -8,8 +8,8 @@ use std::path::Path;
 
 use serde_json::Value;
 use undrly_core::{
-    Category, Cik, CurrencyCode, EntityKind, Figi, InstrumentClass, Isin, Lei, Mic, Namespace,
-    ObservationBasis, RelationshipType,
+    AggregationMethod, Category, Cik, CurrencyCode, EntityKind, Figi, InstrumentClass, Isin, Lei,
+    Mic, Namespace, ObservationBasis, PriceType, RelationshipType,
 };
 
 fn fixture(name: &str) -> Value {
@@ -35,7 +35,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 8);
+    assert_eq!(applied.len(), 9);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -65,6 +65,9 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         "graph_edges",
         "market_observations",
         "source_records",
+        "aliases",
+        "quote_feeds",
+        "canonical_quotes",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -214,6 +217,40 @@ async fn check_constraint_vocabularies_equal_core() {
     .unwrap();
     for name in ObservationBasis::NAMES {
         assert!(constraint.contains(&format!("'{name}'")), "{constraint}");
+    }
+    for (table, constraint, names) in [
+        (
+            "market_observations",
+            "market_observations_price_type_check",
+            PriceType::ALL.map(PriceType::as_str).to_vec(),
+        ),
+        (
+            "quote_feeds",
+            "quote_feeds_price_type_check",
+            PriceType::ALL.map(PriceType::as_str).to_vec(),
+        ),
+        (
+            "canonical_quotes",
+            "canonical_quotes_method_check",
+            AggregationMethod::ALL
+                .map(AggregationMethod::as_str)
+                .to_vec(),
+        ),
+    ] {
+        let def: String = sqlx::query_scalar(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint
+             WHERE conrelid = $1::regclass AND conname = $2",
+        )
+        .bind(table)
+        .bind(constraint)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        let quoted = def.matches('\'').count() / 2;
+        assert_eq!(quoted, names.len(), "{def}");
+        for name in names {
+            assert!(def.contains(&format!("'{name}'")), "{def}");
+        }
     }
 
     db.teardown().await;

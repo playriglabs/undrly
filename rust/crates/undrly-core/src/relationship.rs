@@ -94,8 +94,9 @@ impl RelationshipType {
             RelationshipType::DenominatedIn | RelationshipType::SettlesIn => {
                 &[(Instrument, Currency), (Instrument, Instrument)]
             }
-            RelationshipType::DerivesFrom
-            | RelationshipType::Holds
+            // A derivative instrument (e.g. a perpetual) → its underlying.
+            RelationshipType::DerivesFrom => &[(Instrument, Instrument)],
+            RelationshipType::Holds
             | RelationshipType::Tracks
             | RelationshipType::MemberOf
             | RelationshipType::Tokenizes
@@ -256,8 +257,17 @@ mod tests {
     fn types_without_rules_are_not_storable() {
         let a: CanonicalId = InstrumentId::generate().into();
         let b: CanonicalId = InstrumentId::generate().into();
-        assert!(Relationship::new(a, RelationshipType::DerivesFrom, b, provenance()).is_err());
+        assert!(Relationship::new(a, RelationshipType::Holds, b, provenance()).is_err());
         assert!(Relationship::new(a, RelationshipType::RelatedTo, b, provenance()).is_err());
+    }
+
+    #[test]
+    fn a_derivative_derives_from_an_instrument_only() {
+        let perp: CanonicalId = InstrumentId::generate().into();
+        let btc: CanonicalId = InstrumentId::generate().into();
+        assert!(Relationship::new(perp, RelationshipType::DerivesFrom, btc, provenance()).is_ok());
+        let usd: CanonicalId = CurrencyId::generate().into();
+        assert!(Relationship::new(perp, RelationshipType::DerivesFrom, usd, provenance()).is_err());
     }
 
     #[test]

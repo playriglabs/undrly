@@ -73,7 +73,7 @@ async fn live_nvidia_from_sec_edgar() {
         .unwrap()
         .unwrap();
     assert_eq!(record.payload, fetched.body);
-    assert_eq!(record.record_key, fetched.url);
+    assert_eq!(record.record_key, fetched.record_key);
     assert_eq!(record.received_at, fetched.received_at);
 
     let Resolution::Created(entity_id) = report.entity else {

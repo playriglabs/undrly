@@ -14,11 +14,13 @@
 //! - [`reference`]: entities, instruments, venues, currencies, listings.
 //! - [`relationship`]: directed relationships in canonical direction.
 //! - [`observation`]: normalized market observations.
+//! - [`quote`]: the aggregation boundary from observations to canonical quotes.
 
 pub mod decimal;
 pub mod id;
 pub mod identifier;
 pub mod observation;
+pub mod quote;
 pub mod reference;
 pub mod relationship;
 pub mod source;
@@ -31,10 +33,14 @@ pub use identifier::{
     Cik, CurrencyCode, ExternalIdentifier, Figi, IdentifierAssignment, IdentifierError, Isin, Lei,
     ListingSymbol, Mic, Namespace,
 };
-pub use observation::{MarketObservation, ObservationBasis, PriceUnit};
+pub use observation::{
+    BidAsk, MarketObservation, ObservationBasis, ObservationError, PriceSubject, PriceType,
+    PriceUnit,
+};
+pub use quote::{AggregationMethod, QuoteFeed, select_latest};
 pub use reference::{
-    Currency, DisplayName, Entity, EntityKind, Instrument, InstrumentClass, Listing, Venue,
-    VenueSymbol,
+    Alias, AliasKind, Currency, DisplayName, Entity, EntityKind, Instrument, InstrumentClass,
+    Listing, Venue, VenueSymbol,
 };
 pub use relationship::{Relationship, RelationshipError, RelationshipType};
 pub use rust_decimal::Decimal;

@@ -16,8 +16,9 @@ use undrly_core::decimal::{self, DecimalError};
 use undrly_core::identifier::IdentifierError;
 use undrly_core::time::TimestampError;
 use undrly_core::{
-    CanonicalId, Category, Cik, CurrencyCode, Decimal, EntityKind, ExternalIdentifier, Figi,
-    IdError, InstrumentClass, Isin, Lei, Mic, Namespace, Redistribution, Timestamp, Validity,
+    CanonicalId, Category, Cik, CurrencyCode, CurrencyId, Decimal, EntityKind, ExternalIdentifier,
+    Figi, IdError, InstrumentClass, InstrumentId, Isin, Lei, Mic, Namespace, ObservationBasis,
+    PriceSubject, PriceType, PriceUnit, Redistribution, Timestamp, Validity, VenueId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -101,6 +102,47 @@ pub fn external_identifier_from_sql(
         Namespace::Iso4217 => ExternalIdentifier::Iso4217(CurrencyCode::parse(value)?),
         Namespace::Cik => ExternalIdentifier::Cik(Cik::parse(value)?),
     })
+}
+
+pub fn price_subject_from_sql(
+    uuid: sqlx::types::Uuid,
+    category: &str,
+) -> Result<PriceSubject, MappingError> {
+    match canonical_id_from_sql(uuid, category)?.category() {
+        Category::Instrument => Ok(PriceSubject::Instrument(InstrumentId::from_uuid(uuid)?)),
+        Category::Currency => Ok(PriceSubject::Currency(CurrencyId::from_uuid(uuid)?)),
+        _ => Err(unknown("price subject category", category)),
+    }
+}
+
+pub fn price_unit_from_sql(
+    uuid: sqlx::types::Uuid,
+    category: &str,
+) -> Result<PriceUnit, MappingError> {
+    match canonical_id_from_sql(uuid, category)?.category() {
+        Category::Instrument => Ok(PriceUnit::Asset(InstrumentId::from_uuid(uuid)?)),
+        Category::Currency => Ok(PriceUnit::Currency(CurrencyId::from_uuid(uuid)?)),
+        _ => Err(unknown("price unit category", category)),
+    }
+}
+
+pub fn price_type_from_sql(value: &str) -> Result<PriceType, MappingError> {
+    PriceType::ALL
+        .into_iter()
+        .find(|t| t.as_str() == value)
+        .ok_or_else(|| unknown("price type", value))
+}
+
+pub fn basis_from_sql(
+    basis: &str,
+    venue: Option<sqlx::types::Uuid>,
+) -> Result<ObservationBasis, MappingError> {
+    match (basis, venue) {
+        ("venue", Some(venue)) => Ok(ObservationBasis::Venue(VenueId::from_uuid(venue)?)),
+        ("aggregated", None) => Ok(ObservationBasis::Aggregated),
+        ("derived", None) => Ok(ObservationBasis::Derived),
+        _ => Err(unknown("observation basis", basis)),
+    }
 }
 
 fn unknown(what: &'static str, value: &str) -> MappingError {

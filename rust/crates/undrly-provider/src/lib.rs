@@ -28,8 +28,31 @@
 
 use undrly_core::SourceId;
 
+pub mod alpaca;
+pub mod curated;
 pub mod fixture;
+pub mod gold_api;
+#[cfg(feature = "http")]
+pub mod http;
+pub mod hyperliquid;
+pub mod kraken;
 pub mod sec;
+
+/// A JSON number exactly as written in the payload (e.g. `4273.600098`),
+/// never parsed through a float. Normalization turns it into a `Decimal`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonNumber(pub String);
+
+impl<'de> serde::Deserialize<'de> for JsonNumber {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw: Box<serde_json::value::RawValue> = serde::Deserialize::deserialize(d)?;
+        let text = raw.get();
+        match text.bytes().next() {
+            Some(b'-' | b'0'..=b'9') => Ok(JsonNumber(text.to_owned())),
+            _ => Err(serde::de::Error::custom("expected a JSON number")),
+        }
+    }
+}
 
 /// A payload could not be decoded into a provider-native record.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

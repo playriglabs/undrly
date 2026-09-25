@@ -12,12 +12,14 @@
 //! transaction they use a savepoint, so callers can compose them into larger
 //! atomic units.
 
+pub mod aliases;
 pub mod conflicts;
 pub mod error;
 pub mod graph;
 pub mod identifiers;
 pub mod listing_symbols;
 pub mod mapping;
+pub mod market;
 pub mod reference;
 pub mod sources;
 #[cfg(feature = "testing")]

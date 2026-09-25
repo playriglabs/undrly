@@ -44,6 +44,15 @@ export function canonicalIdCategory(value: string): Category | null {
   return version === 7n && variant === 2n ? category : null;
 }
 
+/** The UUID (PostgreSQL text form) of a valid canonical id, or `null`. */
+export function canonicalIdUuid(value: string): string | null {
+  if (canonicalIdCategory(value) === null) return null;
+  const hex = decodeIdBody(value.slice(value.lastIndexOf(":") + 1))
+    .toString(16)
+    .padStart(32, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** Formats a UUID (as stored in PostgreSQL) as canonical id text. */
 export function formatCanonicalId(category: Category, uuid: string): string {
   const hex = uuid.replaceAll("-", "");

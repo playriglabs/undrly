@@ -11,7 +11,9 @@
   ],
   "instrumentClasses": [
     "equity",
-    "crypto_asset"
+    "crypto_asset",
+    "commodity",
+    "perpetual_future"
   ],
   "relationshipTypes": [
     "ISSUED_BY",
@@ -58,6 +60,11 @@
       "SETTLES_IN",
       "instrument",
       "instrument"
+    ],
+    [
+      "DERIVES_FROM",
+      "instrument",
+      "instrument"
     ]
   ],
   "observationBases": [
@@ -85,5 +92,14 @@
     "cik": [
       "entity"
     ]
-  }
+  },
+  "priceTypes": [
+    "last",
+    "mid",
+    "mark",
+    "reference"
+  ],
+  "aggregationMethods": [
+    "latest-observation-v1"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "subjectId": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2",
-  "relationshipType": "DERIVES_FROM",
+  "relationshipType": "HOLDS",
   "objectId": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g6",
   "provenance": {
     "sourceId": "example-source",

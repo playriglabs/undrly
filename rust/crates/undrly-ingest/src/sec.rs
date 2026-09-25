@@ -24,7 +24,7 @@ use crate::{EntityIngestReport, IngestError, RawRecord, ingest_entity};
 /// A fetched response as a raw record: the requested URL is the record key.
 pub fn raw_record(fetched: &FetchedRecord) -> RawRecord {
     RawRecord {
-        record_key: fetched.url.clone(),
+        record_key: fetched.record_key.clone(),
         payload: fetched.body.clone(),
         received_at: fetched.received_at,
     }

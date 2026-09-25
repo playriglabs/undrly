@@ -44,6 +44,8 @@
 //! the stored one, the stored one is kept. Reconciling such differences is
 //! reconciliation's job, not ingestion's.
 
+pub mod curated;
+pub mod quotes;
 pub mod sec;
 
 use sqlx::{Acquire, PgConnection};
@@ -179,6 +181,14 @@ pub enum IngestError {
     NoEntityPrimaryIdentifier(Vec<ExternalIdentifier>),
     #[error(transparent)]
     Fetch(#[from] undrly_provider::sec::http::FetchError),
+    /// A normalized quote could not form a valid observation (e.g. crossed
+    /// bid/ask, or a feed pricing a subject in itself).
+    #[error(transparent)]
+    Observation(undrly_core::ObservationError),
+    /// Curated reference data contradicts what is stored (a conflicting
+    /// identifier or listing symbol). The whole record is rejected.
+    #[error("curated data disagrees with stored data: {0}")]
+    CuratedDisagrees(String),
     /// A fetched record describes something other than what was requested.
     #[error("requested {requested:?}, but the record is for {found:?}")]
     UnexpectedRecord {
@@ -256,7 +266,7 @@ fn check_entity_identifiers(identifiers: &[ExternalIdentifier]) -> Result<(), In
 }
 
 /// Stores the raw record first: every fact of the record derives from it.
-async fn store_raw_record(
+pub(crate) async fn store_raw_record(
     tx: &mut PgConnection,
     source_id: &SourceId,
     raw: &RawRecord,

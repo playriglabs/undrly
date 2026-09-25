@@ -27,6 +27,11 @@ extension (created by migration 0001).
 | 0006 | — | `identifier_conflicts_replay_key`: replaying a conflicting claim adds no duplicate |
 | 0007 | — | `source_record_id` on every source-derived fact (see [Source-record provenance](#source-record-provenance)) |
 | 0008 | — | SEC CIK namespace: `identifier_schemes` (`cik` → entity), shape `^[0-9]{10}$` and not zero, allowed in `identifier_conflicts` |
+| 0009 | `market_observations` (replaced) | observations of an instrument **or currency** subject: price type, optional bid/ask, nullable source time, `source_record_id` |
+| 0009 | `aliases` | search terms (symbols, names) per node, with provenance; never identity |
+| 0009 | `quote_feeds` | "source S's symbol X prices subject Y in unit Z at venue V / aggregated", with provenance |
+| 0009 | `canonical_quotes` | derived cache: one selected observation per (subject, unit), the output of aggregation |
+| 0009 | — | instrument classes `commodity`, `perpetual_future`; `DERIVES_FROM` instrument → instrument |
 
 Shared domains: `display_name`, `financial_decimal` (numeric within
 `rust_decimal` range, scale preserved), `validity` (half-open non-empty

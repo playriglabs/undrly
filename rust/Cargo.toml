@@ -6,6 +6,7 @@ members = [
     "crates/undrly-provider",
     "crates/undrly-normalize",
     "crates/undrly-ingest",
+    "crates/undrly-collect",
 ]
 
 [workspace.package]

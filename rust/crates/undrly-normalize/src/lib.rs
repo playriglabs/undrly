@@ -8,11 +8,16 @@
 //! normalizer does not understand is an error, never a guess.
 
 use undrly_core::{
-    CurrencyCode, DisplayName, EntityKind, ExternalIdentifier, Figi, InstrumentClass, Isin, Lei,
-    Mic, Validity, VenueSymbol,
+    BidAsk, CurrencyCode, Decimal, DisplayName, EntityKind, ExternalIdentifier, Figi,
+    InstrumentClass, Isin, Lei, Mic, PriceType, Timestamp, Validity, VenueSymbol,
 };
 
+pub mod alpaca;
+pub mod curated;
 pub mod fixture;
+pub mod gold_api;
+pub mod hyperliquid;
+pub mod kraken;
 pub mod sec;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -103,4 +108,42 @@ pub trait EntityNormalizer {
         &self,
         record: &Self::Record,
     ) -> Result<NormalizedEntityRecord, NormalizeError>;
+}
+
+/// One price a source reported under its own symbol. Ingestion matches it to
+/// a quote feed (source, symbol, price type) to learn what it prices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedQuote {
+    pub symbol: VenueSymbol,
+    pub price_type: PriceType,
+    pub price: Decimal,
+    pub bid_ask: Option<BidAsk>,
+    /// The source's time for the price; `None` when the source states none.
+    pub observed_at: Option<Timestamp>,
+}
+
+/// Normalizes one provider's quote payloads, for the requested `symbols`
+/// only. A requested symbol absent from the payload is simply not returned;
+/// ingestion reports it.
+pub trait QuoteNormalizer {
+    type Quote;
+
+    fn normalize_quotes(
+        &self,
+        quote: &Self::Quote,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedQuote>, NormalizeError>;
+}
+
+/// A financial decimal from a source's text, exactly (scale preserved).
+pub(crate) fn decimal(field: &'static str, text: &str) -> Result<Decimal, NormalizeError> {
+    undrly_core::decimal::parse_canonical(text).map_err(|e| invalid(field, e))
+}
+
+/// A source's RFC 3339 timestamp, in UTC, truncated to microseconds (the
+/// precision Undrly stores). Sources may send nanoseconds (Alpaca) or offsets.
+pub(crate) fn timestamp(field: &'static str, text: &str) -> Result<Timestamp, NormalizeError> {
+    let parsed = chrono::DateTime::parse_from_rfc3339(text).map_err(|e| invalid(field, e))?;
+    Timestamp::from_datetime_truncating(parsed.with_timezone(&chrono::Utc))
+        .map_err(|e| invalid(field, e))
 }

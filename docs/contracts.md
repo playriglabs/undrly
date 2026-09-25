@@ -41,6 +41,26 @@ Values both languages render must be identical. They are pinned by
 Fixtures: `tests/fixtures/api/v1/` (valid documents must round-trip unchanged,
 `invalid/` must be rejected).
 
+### Documents served by the API (`typescript/apps/api`)
+
+| Endpoint | Document |
+| --- | --- |
+| `GET /v1/quote/:query` | `QuoteV1`: the one canonical quote of a subject in a unit |
+| `GET /v1/quotes/:query` | `ObservationsV1`: the latest observation of each feed behind it |
+| `GET /v1/resolve?q=` | `ResolveResultV1`: `resolved` / `ambiguous` / `not_found` |
+| `GET /v1/search?q=` | `SearchResultV1` (discovery only) |
+| `GET /v1/instruments/:id/graph` | `GraphV1` |
+| errors | `ErrorV1` (`bad_request` 400, `not_found`/`no_quote` 404, `ambiguous` 409) |
+
+`QuoteV1` and `ObservationV1` share their price fields: `subject` (an
+instrument with its class, or a currency with its code), `unit`,
+`priceType`, `price`, `bid`/`ask` (both or neither), `basis`, `venue`
+(exactly when `basis` is `venue`), `observedAt` (`null` when the source
+states no time), `receivedAt` and `source`. `QuoteV1` adds `asOf`,
+`freshness` (computed at read time) and `aggregation` (method, number of
+eligible observations, computed at). `MarketObservationV1` is superseded and
+is not served.
+
 ## Changing the API contract
 
 - Adding a key is breaking, because readers reject unknown keys. Any shape

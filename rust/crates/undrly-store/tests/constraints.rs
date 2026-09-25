@@ -733,7 +733,13 @@ async fn only_canonical_directions_are_stored() {
     );
     // Types whose node categories do not exist yet.
     assert_rejected(
-        edge(&db, nvda, "DERIVES_FROM", usdc).await,
+        edge(&db, nvda, "HOLDS", usdc).await,
+        FOREIGN_KEY_VIOLATION,
+        rules,
+    );
+    // A derivative derives from an instrument, never a currency.
+    assert_rejected(
+        edge(&db, nvda, "DERIVES_FROM", usd).await,
         FOREIGN_KEY_VIOLATION,
         rules,
     );
@@ -988,6 +994,7 @@ async fn facts_name_a_matching_source_record() {
     .await
     .unwrap();
     let expected: Vec<(String, String)> = [
+        "aliases",
         "currencies",
         "entities",
         "graph_edges",
@@ -996,6 +1003,8 @@ async fn facts_name_a_matching_source_record() {
         "instruments",
         "listing_symbols",
         "listings",
+        "market_observations",
+        "quote_feeds",
         "venues",
     ]
     .into_iter()
@@ -1017,46 +1026,81 @@ async fn facts_name_a_matching_source_record() {
 
 // --- market observations -----------------------------------------------------
 
+#[derive(Clone, Copy)]
 struct Obs {
-    instrument: Uuid,
+    subject: (Uuid, &'static str),
     basis: &'static str,
     venue: Option<Uuid>,
+    price_type: &'static str,
     price: &'static str,
+    bid_ask: Option<(&'static str, &'static str)>,
     unit: (Uuid, &'static str),
-    observed_at: &'static str,
+    observed_at: Option<&'static str>,
+    record: i64,
+}
+
+/// A fresh raw record from `SOURCE` received at `RECEIVED_AT`.
+async fn record(db: &TestDb) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO source_records (source_id, record_key, payload, received_at)
+         VALUES ($1, $2, 'p', $3) RETURNING id",
+    )
+    .bind(SOURCE)
+    .bind(Uuid::now_v7().to_string())
+    .bind(ts(RECEIVED_AT))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
 }
 
 async fn observe(db: &TestDb, o: &Obs) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "INSERT INTO market_observations
-           (instrument_id, basis, venue_id, price, unit_id, unit_category, source_id, observed_at, received_at)
-         VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8, now()) RETURNING id",
+           (subject_id, subject_category, basis, venue_id, price_type, price, bid, ask,
+            unit_id, unit_category, source_id, observed_at, received_at, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8::numeric,
+                 $9, $10, $11, $12, $13, $14) RETURNING id",
     )
-    .bind(o.instrument)
+    .bind(o.subject.0)
+    .bind(o.subject.1)
     .bind(o.basis)
     .bind(o.venue)
+    .bind(o.price_type)
     .bind(o.price)
+    .bind(o.bid_ask.map(|(b, _)| b))
+    .bind(o.bid_ask.map(|(_, a)| a))
     .bind(o.unit.0)
     .bind(o.unit.1)
     .bind(SOURCE)
-    .bind(ts(o.observed_at))
+    .bind(o.observed_at.map(ts))
+    .bind(ts(RECEIVED_AT))
+    .bind(o.record)
     .fetch_one(&db.pool)
     .await
+}
+
+async fn base_obs(db: &TestDb) -> Obs {
+    Obs {
+        subject: (db.node(Category::Instrument).await, "instrument"),
+        basis: "aggregated",
+        venue: None,
+        price_type: "last",
+        price: "183.4200",
+        bid_ask: None,
+        unit: (db.node(Category::Currency).await, "currency"),
+        observed_at: Some("2026-09-24T12:00:00Z"),
+        record: record(db).await,
+    }
 }
 
 #[tokio::test]
 async fn observation_basis_and_venue_agree() {
     let Some(db) = fresh().await else { return };
-    let nvda = db.node(Category::Instrument).await;
     let nasdaq = db.node(Category::Venue).await;
-    let usd = (db.node(Category::Currency).await, "currency");
     let base = Obs {
-        instrument: nvda,
         basis: "venue",
         venue: Some(nasdaq),
-        price: "183.4200",
-        unit: usd,
-        observed_at: "2026-09-24T12:00:00Z",
+        ..base_obs(&db).await
     };
     observe(&db, &base).await.unwrap();
     for (basis, venue) in [
@@ -1064,125 +1108,184 @@ async fn observation_basis_and_venue_agree() {
         ("aggregated", Some(nasdaq)),
         ("derived", Some(nasdaq)),
     ] {
+        let o = Obs {
+            basis,
+            venue,
+            record: record(&db).await,
+            ..base
+        };
         assert_rejected(
-            observe(
-                &db,
-                &Obs {
-                    basis,
-                    venue,
-                    observed_at: "2026-09-24T12:00:01Z",
-                    ..base
-                },
-            )
-            .await,
+            observe(&db, &o).await,
             CHECK_VIOLATION,
             Some("market_observations_basis_venue"),
         );
     }
+    let o = Obs {
+        basis: "indicative",
+        venue: None,
+        record: record(&db).await,
+        ..base
+    };
     assert_rejected(
-        observe(
-            &db,
-            &Obs {
-                basis: "indicative",
-                venue: None,
-                ..base
-            },
-        )
-        .await,
+        observe(&db, &o).await,
         CHECK_VIOLATION,
         Some("market_observations_basis_check"),
+    );
+    let o = Obs {
+        price_type: "close",
+        record: record(&db).await,
+        ..base
+    };
+    assert_rejected(
+        observe(&db, &o).await,
+        CHECK_VIOLATION,
+        Some("market_observations_price_type_check"),
     );
     db.teardown().await;
 }
 
 #[tokio::test]
-async fn observation_units_are_canonical_currency_or_asset_nodes() {
+async fn observation_subjects_and_units_are_canonical_nodes() {
     let Some(db) = fresh().await else { return };
-    let nvda = db.node(Category::Instrument).await;
-    let usd = db.node(Category::Currency).await;
+    let base = base_obs(&db).await;
     let usdc = db.crypto_asset().await;
+    let eur = db.node(Category::Currency).await;
     let venue = db.node(Category::Venue).await;
-    let base = Obs {
-        instrument: nvda,
-        basis: "aggregated",
-        venue: None,
-        price: "183.4200",
-        unit: (usd, "currency"),
-        observed_at: "2026-09-24T12:00:00Z",
-    };
     observe(&db, &base).await.unwrap();
+    // FX: a currency priced in a currency.
     observe(
         &db,
         &Obs {
-            unit: (usdc, "instrument"),
+            subject: (eur, "currency"),
+            record: record(&db).await,
             ..base
         },
     )
     .await
     .unwrap();
-    assert_rejected(
-        observe(
-            &db,
-            &Obs {
+    // A crypto asset as the unit (e.g. a perpetual in USDC).
+    observe(
+        &db,
+        &Obs {
+            unit: (usdc, "instrument"),
+            record: record(&db).await,
+            ..base
+        },
+    )
+    .await
+    .unwrap();
+    let rejected = [
+        (
+            Obs {
+                subject: (venue, "venue"),
+                ..base
+            },
+            CHECK_VIOLATION,
+            "market_observations_subject_category_check",
+        ),
+        (
+            Obs {
                 unit: (venue, "venue"),
                 ..base
             },
-        )
-        .await,
-        CHECK_VIOLATION,
-        Some("market_observations_unit_category_check"),
-    );
-    // Declaring a false category is caught by the node FK.
-    assert_rejected(
-        observe(
-            &db,
-            &Obs {
+            CHECK_VIOLATION,
+            "market_observations_unit_category_check",
+        ),
+        (
+            Obs {
                 unit: (usdc, "currency"),
-                observed_at: "2026-09-24T12:00:01Z",
                 ..base
             },
-        )
-        .await,
-        FOREIGN_KEY_VIOLATION,
-        Some("market_observations_unit_id_unit_category_fkey"),
-    );
-    assert_rejected(
-        observe(
-            &db,
-            &Obs {
-                instrument: usdc,
+            FOREIGN_KEY_VIOLATION,
+            "market_observations_unit_id_unit_category_fkey",
+        ),
+        (
+            Obs {
+                subject: (usdc, "instrument"),
                 unit: (usdc, "instrument"),
                 ..base
             },
+            CHECK_VIOLATION,
+            "market_observations_not_self_denominated",
+        ),
+        (
+            Obs {
+                bid_ask: Some(("2.0", "1.0")),
+                ..base
+            },
+            CHECK_VIOLATION,
+            "market_observations_bid_ask",
+        ),
+    ];
+    for (o, sqlstate, constraint) in rejected {
+        // No source time, so no replay key can fire before the constraint
+        // under test.
+        let o = Obs {
+            observed_at: None,
+            record: record(&db).await,
+            ..o
+        };
+        assert_rejected(observe(&db, &o).await, sqlstate, Some(constraint));
+    }
+    // Half a spread is not a spread.
+    let o = Obs {
+        record: record(&db).await,
+        ..base
+    };
+    assert_rejected(
+        sqlx::query(
+            "INSERT INTO market_observations
+               (subject_id, subject_category, basis, price_type, price, bid, unit_id,
+                unit_category, source_id, received_at, source_record_id)
+             VALUES ($1, 'instrument', 'aggregated', 'last', 1, 1, $2, 'currency', $3, $4, $5)",
         )
+        .bind(o.subject.0)
+        .bind(o.unit.0)
+        .bind(SOURCE)
+        .bind(ts(RECEIVED_AT))
+        .bind(o.record)
+        .execute(&db.pool)
         .await,
         CHECK_VIOLATION,
-        Some("market_observations_not_self_denominated"),
+        Some("market_observations_bid_ask"),
     );
     db.teardown().await;
 }
 
 #[tokio::test]
-async fn observation_replays_are_idempotent_including_null_venue() {
+async fn observation_replays_are_idempotent() {
     let Some(db) = fresh().await else { return };
-    let nvda = db.node(Category::Instrument).await;
     let nasdaq = db.node(Category::Venue).await;
-    let usd = (db.node(Category::Currency).await, "currency");
+    let base = base_obs(&db).await;
     for (basis, venue) in [("venue", Some(nasdaq)), ("aggregated", None)] {
         let o = Obs {
-            instrument: nvda,
             basis,
             venue,
-            price: "183.4200",
-            unit: usd,
-            observed_at: "2026-09-24T12:00:00Z",
+            record: record(&db).await,
+            ..base
         };
         observe(&db, &o).await.unwrap();
+        // The same record cannot yield the pair twice.
         assert_rejected(
             observe(
                 &db,
                 &Obs {
                     price: "183.4300",
+                    observed_at: Some("2026-09-24T12:00:05Z"),
+                    ..o
+                },
+            )
+            .await,
+            UNIQUE_VIOLATION,
+            Some("market_observations_record_key"),
+        );
+        // Another response restating the same source time is the same
+        // observation.
+        assert_rejected(
+            observe(
+                &db,
+                &Obs {
+                    record: record(&db).await,
                     ..o
                 },
             )
@@ -1191,6 +1294,127 @@ async fn observation_replays_are_idempotent_including_null_venue() {
             Some("market_observations_replay_key"),
         );
     }
+    // Without a source time, each response is its own observation.
+    for _ in 0..2 {
+        let o = Obs {
+            observed_at: None,
+            record: record(&db).await,
+            ..base
+        };
+        observe(&db, &o).await.unwrap();
+    }
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn observations_feeds_aliases_and_canonical_quotes_have_provenance() {
+    let Some(db) = fresh().await else { return };
+    let base = base_obs(&db).await;
+    sqlx::query("INSERT INTO sources (id, name) VALUES ('second-source', 'Second')")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let foreign: i64 = sqlx::query_scalar(
+        "INSERT INTO source_records (source_id, record_key, payload, received_at)
+         VALUES ('second-source', 'k', 'p', $1) RETURNING id",
+    )
+    .bind(ts(RECEIVED_AT))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_rejected(
+        observe(
+            &db,
+            &Obs {
+                record: foreign,
+                ..base
+            },
+        )
+        .await,
+        FOREIGN_KEY_VIOLATION,
+        Some("market_observations_source_record_fkey"),
+    );
+
+    let feed = |basis: &'static str, venue: Option<Uuid>, record: i64| {
+        sqlx::query(
+            "INSERT INTO quote_feeds
+               (feed_source_id, symbol, subject_id, subject_category, unit_id, unit_category,
+                basis, venue_id, price_type, source_id, received_at, source_record_id)
+             VALUES ($1, 'XBTUSD', $2, 'instrument', $3, 'currency', $4, $5, 'last', $1, $6, $7)",
+        )
+        .bind(SOURCE)
+        .bind(base.subject.0)
+        .bind(base.unit.0)
+        .bind(basis)
+        .bind(venue)
+        .bind(ts(RECEIVED_AT))
+        .bind(record)
+    };
+    assert_rejected(
+        feed("venue", None, db.record).execute(&db.pool).await,
+        CHECK_VIOLATION,
+        Some("quote_feeds_basis_venue"),
+    );
+    assert_rejected(
+        feed("aggregated", None, foreign).execute(&db.pool).await,
+        FOREIGN_KEY_VIOLATION,
+        Some("quote_feeds_source_record_fkey"),
+    );
+    feed("aggregated", None, db.record)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_rejected(
+        feed("aggregated", None, db.record).execute(&db.pool).await,
+        UNIQUE_VIOLATION,
+        Some("quote_feeds_one_per_symbol"),
+    );
+
+    let alias = |text: &'static str| {
+        sqlx::query(
+            "INSERT INTO aliases
+               (node_id, node_category, alias, kind, source_id, received_at, source_record_id)
+             VALUES ($1, 'instrument', $2, 'symbol', $3, $4, $5)",
+        )
+        .bind(base.subject.0)
+        .bind(text)
+        .bind(SOURCE)
+        .bind(ts(RECEIVED_AT))
+        .bind(db.record)
+    };
+    alias("BTC").execute(&db.pool).await.unwrap();
+    // Aliases are case-insensitive per node, kind and source.
+    assert_rejected(
+        alias("btc").execute(&db.pool).await,
+        UNIQUE_VIOLATION,
+        Some("aliases_one_per_source"),
+    );
+    assert_rejected(
+        alias(" BTC").execute(&db.pool).await,
+        CHECK_VIOLATION,
+        Some("display_name_check"),
+    );
+
+    // A canonical quote must point at an observation of the same pair.
+    let observation = observe(&db, &base).await.unwrap();
+    let other_unit = db.node(Category::Currency).await;
+    let canonical = |unit: Uuid| {
+        sqlx::query(
+            "INSERT INTO canonical_quotes
+               (subject_id, subject_category, unit_id, unit_category, observation_id, method,
+                eligible_count, computed_at)
+             VALUES ($1, 'instrument', $2, 'currency', $3, 'latest-observation-v1', 1, now())",
+        )
+        .bind(base.subject.0)
+        .bind(unit)
+        .bind(observation)
+    };
+    assert_rejected(
+        canonical(other_unit).execute(&db.pool).await,
+        FOREIGN_KEY_VIOLATION,
+        Some("canonical_quotes_observation_id_subject_id_unit_id_fkey"),
+    );
+    canonical(base.unit.0).execute(&db.pool).await.unwrap();
     db.teardown().await;
 }
 
@@ -1210,18 +1434,20 @@ async fn decimals_keep_scale_and_stay_within_decimal_range() {
     ];
     for (price, observed_at) in cases {
         let written = decimal_to_sql(Decimal::from_str(price).unwrap());
-        let id: i64 = sqlx::query_scalar(
-            "INSERT INTO market_observations
-               (instrument_id, basis, price, unit_id, unit_category, source_id, observed_at, received_at)
-             VALUES ($1, 'derived', $2::numeric, $3, $4, $5, $6, now()) RETURNING id",
+        let id = observe(
+            &db,
+            &Obs {
+                subject: (nvda, "instrument"),
+                basis: "derived",
+                venue: None,
+                price_type: "last",
+                price: &*written.clone().leak(),
+                bid_ask: None,
+                unit: usd,
+                observed_at: Some(observed_at),
+                record: record(&db).await,
+            },
         )
-        .bind(nvda)
-        .bind(&written)
-        .bind(usd.0)
-        .bind(usd.1)
-        .bind(SOURCE)
-        .bind(ts(observed_at))
-        .fetch_one(&db.pool)
         .await
         .unwrap();
         let text: String =
@@ -1248,12 +1474,15 @@ async fn decimals_keep_scale_and_stay_within_decimal_range() {
             observe(
                 &db,
                 &Obs {
-                    instrument: nvda,
+                    subject: (nvda, "instrument"),
                     basis: "derived",
                     venue: None,
+                    price_type: "last",
                     price: bad,
+                    bid_ask: None,
                     unit: usd,
-                    observed_at: "2026-02-01T00:00:00Z",
+                    observed_at: Some("2026-02-01T00:00:00Z"),
+                    record: record(&db).await,
                 },
             )
             .await,

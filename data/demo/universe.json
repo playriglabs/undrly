@@ -1,0 +1,297 @@
+{
+  "dataset": "undrly-demo-universe",
+  "version": 1,
+  "description": "Curated reference data for the hackathon v1 cross-market demo (docs/hackathon-v1.md). Canonical ids were generated once (UUIDv7) and are pinned here; they are not derived from any external identifier.",
+  "currencies": [
+    {
+      "key": "usd",
+      "id": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "name": "US Dollar",
+      "iso4217": "USD"
+    },
+    {
+      "key": "eur",
+      "id": "undrly:currency:01m3bbjhmvew7s0k69t2htpdf2",
+      "name": "Euro",
+      "iso4217": "EUR"
+    }
+  ],
+  "entities": [
+    {
+      "key": "nvidia",
+      "id": "undrly:entity:01m3bbjhmxfzn8aj400yc3pgv6",
+      "kind": "company",
+      "name": "NVIDIA Corporation",
+      "lei": "549300S4KLFTLO7GSQ80"
+    }
+  ],
+  "venues": [
+    {
+      "key": "nasdaq",
+      "id": "undrly:venue:01m3bbjhn0e1svvjpfc9xgryq7",
+      "name": "Nasdaq",
+      "mic": "XNAS"
+    },
+    {
+      "key": "iex",
+      "id": "undrly:venue:01m3bbjhn2f69bqbcr6mrdtg99",
+      "name": "IEX",
+      "mic": "IEXG"
+    },
+    {
+      "key": "kraken",
+      "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
+      "name": "Kraken",
+      "mic": null
+    },
+    {
+      "key": "hyperliquid",
+      "id": "undrly:venue:01m3bbjhn7fnja52h9vgg8cb3f",
+      "name": "Hyperliquid",
+      "mic": null
+    }
+  ],
+  "instruments": [
+    {
+      "key": "nvda",
+      "id": "undrly:instrument:01m3bbjhnafy595gsgwh5qzy73",
+      "class": "equity",
+      "name": "NVIDIA Corporation Common Stock",
+      "isin": "US67066G1040",
+      "figi": "BBG001S5TZJ6"
+    },
+    {
+      "key": "btc",
+      "id": "undrly:instrument:01m3bbjhndfhhb0kbmejmgabc3",
+      "class": "crypto_asset",
+      "name": "Bitcoin",
+      "isin": null,
+      "figi": null
+    },
+    {
+      "key": "usdc",
+      "id": "undrly:instrument:01m3bbjhnfe5k9378rwq0sv1kj",
+      "class": "crypto_asset",
+      "name": "USD Coin",
+      "isin": null,
+      "figi": null
+    },
+    {
+      "key": "gold",
+      "id": "undrly:instrument:01m3bbjhnjewwb8qvvkn6rf2c1",
+      "class": "commodity",
+      "name": "Gold (troy ounce)",
+      "isin": null,
+      "figi": null
+    },
+    {
+      "key": "btc-perp",
+      "id": "undrly:instrument:01m3bbjhnmexhrq6f38m4rwy8x",
+      "class": "perpetual_future",
+      "name": "BTC Perpetual (Hyperliquid)",
+      "isin": null,
+      "figi": null
+    }
+  ],
+  "listings": [
+    {
+      "key": "nvda-xnas",
+      "id": "undrly:listing:01m3bbjhnqeqer8hh3a5w97wb1",
+      "instrument": "nvda",
+      "venue": "nasdaq",
+      "symbol": "NVDA",
+      "figi": "BBG000BBK0R0"
+    }
+  ],
+  "relationships": [
+    [
+      "nvda",
+      "ISSUED_BY",
+      "nvidia"
+    ],
+    [
+      "nvda",
+      "DENOMINATED_IN",
+      "usd"
+    ],
+    [
+      "nvda",
+      "TRADES_ON",
+      "iex"
+    ],
+    [
+      "btc",
+      "TRADES_ON",
+      "kraken"
+    ],
+    [
+      "btc-perp",
+      "DERIVES_FROM",
+      "btc"
+    ],
+    [
+      "btc-perp",
+      "SETTLES_IN",
+      "usdc"
+    ],
+    [
+      "btc-perp",
+      "TRADES_ON",
+      "hyperliquid"
+    ]
+  ],
+  "aliases": [
+    {
+      "node": "nvda",
+      "alias": "NVDA",
+      "kind": "symbol"
+    },
+    {
+      "node": "nvda",
+      "alias": "NVIDIA",
+      "kind": "name"
+    },
+    {
+      "node": "nvidia",
+      "alias": "NVIDIA",
+      "kind": "name"
+    },
+    {
+      "node": "btc",
+      "alias": "BTC",
+      "kind": "symbol"
+    },
+    {
+      "node": "btc",
+      "alias": "XBT",
+      "kind": "symbol"
+    },
+    {
+      "node": "btc",
+      "alias": "Bitcoin",
+      "kind": "name"
+    },
+    {
+      "node": "usdc",
+      "alias": "USDC",
+      "kind": "symbol"
+    },
+    {
+      "node": "usdc",
+      "alias": "USD Coin",
+      "kind": "name"
+    },
+    {
+      "node": "gold",
+      "alias": "XAU",
+      "kind": "symbol"
+    },
+    {
+      "node": "gold",
+      "alias": "Gold",
+      "kind": "name"
+    },
+    {
+      "node": "btc-perp",
+      "alias": "BTC-PERP",
+      "kind": "symbol"
+    },
+    {
+      "node": "btc-perp",
+      "alias": "BTC perpetual",
+      "kind": "name"
+    },
+    {
+      "node": "usd",
+      "alias": "US Dollar",
+      "kind": "name"
+    },
+    {
+      "node": "eur",
+      "alias": "Euro",
+      "kind": "name"
+    },
+    {
+      "node": "nasdaq",
+      "alias": "NASDAQ",
+      "kind": "symbol"
+    },
+    {
+      "node": "nasdaq",
+      "alias": "Nasdaq",
+      "kind": "name"
+    },
+    {
+      "node": "iex",
+      "alias": "IEX",
+      "kind": "symbol"
+    },
+    {
+      "node": "kraken",
+      "alias": "KRAKEN",
+      "kind": "symbol"
+    },
+    {
+      "node": "kraken",
+      "alias": "Kraken",
+      "kind": "name"
+    },
+    {
+      "node": "hyperliquid",
+      "alias": "HYPERLIQUID",
+      "kind": "symbol"
+    },
+    {
+      "node": "hyperliquid",
+      "alias": "Hyperliquid",
+      "kind": "name"
+    }
+  ],
+  "quoteFeeds": [
+    {
+      "source": "kraken",
+      "symbol": "XXBTZUSD",
+      "subject": "btc",
+      "unit": "usd",
+      "basis": "venue",
+      "venue": "kraken",
+      "priceType": "last"
+    },
+    {
+      "source": "kraken",
+      "symbol": "ZEURZUSD",
+      "subject": "eur",
+      "unit": "usd",
+      "basis": "venue",
+      "venue": "kraken",
+      "priceType": "last"
+    },
+    {
+      "source": "hyperliquid",
+      "symbol": "BTC",
+      "subject": "btc-perp",
+      "unit": "usdc",
+      "basis": "venue",
+      "venue": "hyperliquid",
+      "priceType": "mark"
+    },
+    {
+      "source": "gold-api",
+      "symbol": "XAU",
+      "subject": "gold",
+      "unit": "usd",
+      "basis": "aggregated",
+      "venue": null,
+      "priceType": "reference"
+    },
+    {
+      "source": "alpaca",
+      "symbol": "NVDA",
+      "subject": "nvda",
+      "unit": "usd",
+      "basis": "venue",
+      "venue": "iex",
+      "priceType": "last"
+    }
+  ]
+}
