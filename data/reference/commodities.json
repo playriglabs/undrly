@@ -177,6 +177,11 @@
       "kind": "name"
     },
     {
+      "node": "henry-hub",
+      "alias": "Henry Hub",
+      "kind": "name"
+    },
+    {
       "node": "maize",
       "alias": "MAIZE",
       "kind": "symbol"
@@ -187,6 +192,11 @@
       "kind": "name"
     },
     {
+      "node": "maize",
+      "alias": "Corn",
+      "kind": "name"
+    },
+    {
       "node": "wheat-us-hrw",
       "alias": "WHEAT_US_HRW",
       "kind": "symbol"
@@ -194,6 +204,11 @@
     {
       "node": "wheat-us-hrw",
       "alias": "Wheat US HRW",
+      "kind": "name"
+    },
+    {
+      "node": "wheat-us-hrw",
+      "alias": "Wheat",
       "kind": "name"
     },
     {
@@ -214,6 +229,11 @@
     {
       "node": "coffee-arabica",
       "alias": "Coffee Arabica",
+      "kind": "name"
+    },
+    {
+      "node": "coffee-arabica",
+      "alias": "Coffee",
       "kind": "name"
     },
     {
