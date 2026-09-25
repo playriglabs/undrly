@@ -3,3 +3,4 @@ tests/fixtures/sources/kraken/** binary
 tests/fixtures/sources/hyperliquid/** binary
 tests/fixtures/sources/gold-api/** binary
 tests/fixtures/sources/alpaca/** binary
+tests/fixtures/sources/coinbase/** binary

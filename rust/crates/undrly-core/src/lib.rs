@@ -37,7 +37,10 @@ pub use observation::{
     BidAsk, MarketObservation, ObservationBasis, ObservationError, PriceSubject, PriceType,
     PriceUnit,
 };
-pub use quote::{AggregationMethod, QuoteFeed, select_latest};
+pub use quote::{
+    Aggregate, AggregationMethod, MEAN_VENUE_MID_MAX_AGE_SECONDS, QuoteAggregation, QuoteFeed,
+    aggregate, select_latest,
+};
 pub use reference::{
     Alias, AliasKind, Currency, DisplayName, Entity, EntityKind, Instrument, InstrumentClass,
     Listing, Venue, VenueSymbol,

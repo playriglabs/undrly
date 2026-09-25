@@ -32,6 +32,9 @@ extension (created by migration 0001).
 | 0009 | `quote_feeds` | "source S's symbol X prices subject Y in unit Z at venue V / aggregated", with provenance |
 | 0009 | `canonical_quotes` | derived cache: one selected observation per (subject, unit), the output of aggregation |
 | 0009 | — | instrument classes `commodity`, `perpetual_future`; `DERIVES_FROM` instrument → instrument |
+| 0010 | `quote_aggregations` | the aggregation method declared for a pair, with provenance (default `latest-observation-v1`) |
+| 0010 | `canonical_quotes` (replaced) | derived cache: the method's output (price, price type, basis, `as_of`, eligible count) per pair |
+| 0010 | `canonical_quote_inputs` | exactly the observations a canonical quote used, with the price each contributed |
 
 Shared domains: `display_name`, `financial_decimal` (numeric within
 `rust_decimal` range, scale preserved), `validity` (half-open non-empty

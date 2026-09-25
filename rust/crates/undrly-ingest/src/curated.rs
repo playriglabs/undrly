@@ -10,7 +10,7 @@
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
     Alias, CanonicalId, ExternalIdentifier, IdentifierAssignment, Listing, ListingSymbol,
-    QuoteFeed, Relationship, Validity,
+    QuoteAggregation, QuoteFeed, Relationship, Validity,
 };
 use undrly_normalize::curated::normalize_universe;
 use undrly_provider::curated::CuratedProvider;
@@ -174,6 +174,15 @@ pub async fn ingest_universe(
             provenance: record.provenance.clone(),
         };
         report.count(market::insert_quote_feed(&mut tx, &feed, r).await?.1);
+    }
+    for (subject, unit, method) in &u.quote_aggregations {
+        let declared = QuoteAggregation {
+            subject: *subject,
+            unit: *unit,
+            method: *method,
+            provenance: record.provenance.clone(),
+        };
+        report.count(market::insert_quote_aggregation(&mut tx, &declared, r).await?);
     }
     tx.commit().await?;
     Ok(report)

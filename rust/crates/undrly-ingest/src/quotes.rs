@@ -15,14 +15,15 @@
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
     AggregationMethod, MarketObservation, ObservationError, PriceSubject, PriceUnit, Timestamp,
-    VenueSymbol, select_latest,
+    VenueSymbol, aggregate,
 };
 use undrly_normalize::QuoteNormalizer;
 use undrly_provider::QuoteProvider;
 use undrly_store::Write;
 use undrly_store::market::{
-    ObservationId, QuoteFeedId, StoredCanonicalQuote, insert_observation, latest_observations,
-    quote_feeds_of_source, upsert_canonical_quote,
+    ObservationId, QuoteFeedId, StoredCanonicalQuote, aggregation_method_of,
+    delete_canonical_quote, insert_observation, latest_observations, quote_feeds_of_source,
+    upsert_canonical_quote,
 };
 use undrly_store::sources::SourceRecordId;
 
@@ -104,15 +105,18 @@ where
 pub struct CanonicalRefresh {
     pub subject: PriceSubject,
     pub unit: PriceUnit,
-    /// The selected observation; `None` when there is nothing to select.
-    pub selected: Option<ObservationId>,
-    pub eligible_count: usize,
+    pub method: AggregationMethod,
+    /// Exactly the observations used; empty when nothing was eligible.
+    pub inputs: Vec<ObservationId>,
+    /// `Some` when a canonical quote was written or found unchanged; `None`
+    /// when nothing was eligible (any existing canonical quote was removed).
     pub write: Option<Write>,
 }
 
-/// Recomputes the canonical quote of each pair with
-/// [`AggregationMethod::LatestObservationV1`] and stores it. Each pair is its
-/// own transaction; the canonical table is a derived cache.
+/// Recomputes the canonical quote of each pair at `computed_at` with the
+/// pair's declared aggregation method and stores it, or removes it when no
+/// observation is eligible. Each pair is its own transaction; the canonical
+/// table is a derived cache. Observations are never modified.
 pub async fn refresh_canonical_quotes(
     conn: &mut PgConnection,
     pairs: &[(PriceSubject, PriceUnit)],
@@ -121,31 +125,38 @@ pub async fn refresh_canonical_quotes(
     let mut out = Vec::new();
     for &(subject, unit) in pairs {
         let mut tx = conn.begin().await?;
+        let method = aggregation_method_of(&mut tx, subject, unit).await?;
         let candidates = latest_observations(&mut tx, subject, unit).await?;
-        let selected = select_latest(&candidates).map(|(id, _)| *id);
-        let write = match selected {
-            Some(observation) => Some(
-                upsert_canonical_quote(
-                    &mut tx,
-                    &StoredCanonicalQuote {
-                        subject,
-                        unit,
-                        observation,
-                        method: AggregationMethod::LatestObservationV1,
-                        eligible_count: i32::try_from(candidates.len()).unwrap_or(i32::MAX),
-                        computed_at,
-                    },
+        let (inputs, write) = match aggregate(method, &candidates, computed_at) {
+            Some(a) => {
+                let quote = StoredCanonicalQuote {
+                    subject,
+                    unit,
+                    method,
+                    price: a.price,
+                    price_type: a.price_type,
+                    basis: a.basis,
+                    as_of: a.as_of,
+                    computed_at,
+                    inputs: a.inputs,
+                };
+                let write = upsert_canonical_quote(&mut tx, &quote).await?;
+                (
+                    quote.inputs.iter().map(|(id, _)| *id).collect(),
+                    Some(write),
                 )
-                .await?,
-            ),
-            None => None,
+            }
+            None => {
+                delete_canonical_quote(&mut tx, subject, unit).await?;
+                (Vec::new(), None)
+            }
         };
         tx.commit().await?;
         out.push(CanonicalRefresh {
             subject,
             unit,
-            selected,
-            eligible_count: candidates.len(),
+            method,
+            inputs,
             write,
         });
     }

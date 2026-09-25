@@ -80,9 +80,15 @@ export function createApp(sql: Sql, options: AppOptions) {
   const quoteRoute = async (query: string) => {
     const pair = await onePair(query);
     if (pair instanceof Response) return pair;
-    const quote = await canonicalQuote(sql, pair, now(), options.staleAfterSeconds);
-    if (quote === null) return fail("no_quote", `no quote for ${query}`);
-    return Response.json(quote);
+    const result = await canonicalQuote(sql, pair, now(), options.staleAfterSeconds);
+    if (result.kind === "none") return fail("no_quote", `no quote for ${query}`);
+    if (result.kind === "stale") {
+      return fail(
+        "no_quote",
+        `no fresh canonical quote for ${query}: the aggregate is as of ${result.asOf}`,
+      );
+    }
+    return Response.json(result.quote);
   };
   app.get("/v1/quote", (c) => quoteRoute((c.req.query("q") ?? "").trim()));
   app.get("/v1/quote/:query{.+}", (c) => quoteRoute(queryOf(c.req.param("query"), undefined)));
@@ -93,7 +99,7 @@ export function createApp(sql: Sql, options: AppOptions) {
     const body = v1.ObservationsV1.parse({
       schemaVersion: 1,
       query,
-      observations: await feedObservations(sql, pair),
+      observations: await feedObservations(sql, pair, now(), options.staleAfterSeconds),
     });
     return Response.json(body);
   };

@@ -315,14 +315,40 @@ type ObservationRow = {
   source_id: string;
   observed_at: string | null;
   received_at: string;
+  source_record_id: string;
+  record_key: string;
 };
 
 const OBSERVATION_COLUMNS = `o.id::text, o.subject_id::text, o.unit_id::text, o.unit_category,
   o.basis, o.venue_id::text, o.price_type, o.price::text, o.bid::text, o.ask::text, o.source_id,
-  ${tsText("o.observed_at")} AS observed_at, ${tsText("o.received_at")} AS received_at`;
+  ${tsText("o.observed_at")} AS observed_at, ${tsText("o.received_at")} AS received_at,
+  o.source_record_id::text, r.record_key`;
+
+/** Mirrors `undrly_core::quote::MEAN_VENUE_MID_MAX_AGE_SECONDS`. */
+export const MEAN_VENUE_MID_MAX_AGE_SECONDS = 30;
+
+/** The pair's declared aggregation method (default `latest-observation-v1`). */
+async function methodOf(sql: Sql, pair: Pair): Promise<string> {
+  const rows = await sql<{ method: string }[]>`
+    SELECT method FROM quote_aggregations WHERE subject_id = ${pair.subject} AND unit_id = ${pair.unit}`;
+  return rows[0]?.method ?? "latest-observation-v1";
+}
+
+/** Freshness window: the method's own, else the API's configured default. */
+function windowSeconds(method: string, staleAfterSeconds: number): number {
+  return method === "mean-venue-mid-v1" ? MEAN_VENUE_MID_MAX_AGE_SECONDS : staleAfterSeconds;
+}
+
+function freshness(asOf: string, now: Date, window: number): "fresh" | "stale" {
+  return (now.getTime() - Date.parse(asOf)) / 1000 <= window ? "fresh" : "stale";
+}
+
+async function venueRef(sql: Sql, uuid: string | null) {
+  const venue = uuid === null ? null : await nodeRefOf(sql, uuid);
+  return venue === null ? null : { id: venue.id, name: venue.name };
+}
 
 async function observationFields(sql: Sql, row: ObservationRow) {
-  const venue = row.venue_id === null ? null : await nodeRefOf(sql, row.venue_id);
   return {
     schemaVersion: 1 as const,
     subject: await subjectOf(sql, row.subject_id),
@@ -332,58 +358,152 @@ async function observationFields(sql: Sql, row: ObservationRow) {
     bid: row.bid,
     ask: row.ask,
     basis: row.basis,
-    venue: venue === null ? null : { id: venue.id, name: venue.name },
+    venue: await venueRef(sql, row.venue_id),
     observedAt: row.observed_at === null ? null : canonicalTimestamp(row.observed_at),
     receivedAt: canonicalTimestamp(row.received_at),
-    source: { id: row.source_id },
   };
 }
 
+export type CanonicalResult =
+  | { kind: "quote"; quote: v1.QuoteV1 }
+  | { kind: "none" }
+  /** A multi-source aggregate older than its method's window: not served. */
+  | { kind: "stale"; asOf: string };
+
+/**
+ * The canonical quote of a pair, from `canonical_quotes` and exactly its
+ * inputs. `latest-observation-v1` quotes are their single input observation
+ * (unchanged behaviour, flagged fresh/stale). A `mean-venue-mid-v1`
+ * aggregate older than its window is not served at all.
+ */
 export async function canonicalQuote(
   sql: Sql,
   pair: Pair,
   now: Date,
   staleAfterSeconds: number,
-): Promise<v1.QuoteV1 | null> {
+): Promise<CanonicalResult> {
   const rows = await sql.unsafe<
-    (ObservationRow & { method: string; eligible: number; computed_at: string })[]
+    {
+      method: v1.QuoteV1["aggregation"]["method"];
+      price: string;
+      price_type: v1.PriceType;
+      eligible: number;
+      as_of: string;
+      computed_at: string;
+    }[]
   >(
-    `SELECT ${OBSERVATION_COLUMNS}, c.method, c.eligible_count AS eligible,
-            ${tsText("c.computed_at")} AS computed_at
-     FROM canonical_quotes c JOIN market_observations o ON o.id = c.observation_id
-     WHERE c.subject_id = $1 AND c.unit_id = $2`,
+    `SELECT method, price::text, price_type, eligible_count AS eligible,
+            ${tsText("as_of")} AS as_of, ${tsText("computed_at")} AS computed_at
+     FROM canonical_quotes WHERE subject_id = $1 AND unit_id = $2`,
     [pair.subject, pair.unit],
   );
   const row = rows[0];
-  if (row === undefined) return null;
-  const fields = await observationFields(sql, row);
-  const asOf = fields.observedAt ?? fields.receivedAt;
-  const ageSeconds = (now.getTime() - Date.parse(asOf)) / 1000;
-  return v1.QuoteV1.parse({
-    ...fields,
-    asOf,
-    freshness: ageSeconds <= staleAfterSeconds ? "fresh" : "stale",
-    aggregation: {
-      method: row.method,
-      eligibleObservations: row.eligible,
-      computedAt: canonicalTimestamp(row.computed_at),
-    },
-  });
+  if (row === undefined) return { kind: "none" };
+  const inputRows = await sql.unsafe<(ObservationRow & { input_price: string })[]>(
+    `SELECT ${OBSERVATION_COLUMNS}, i.input_price::text
+     FROM canonical_quote_inputs i
+     JOIN market_observations o ON o.id = i.observation_id
+     JOIN source_records r ON r.id = o.source_record_id
+     WHERE i.subject_id = $1 AND i.unit_id = $2 ORDER BY o.id`,
+    [pair.subject, pair.unit],
+  );
+  const inputs = [];
+  for (const r of inputRows) {
+    inputs.push({
+      observationId: r.id,
+      sourceId: r.source_id,
+      venue: await venueRef(sql, r.venue_id),
+      price: r.input_price,
+      sourceRecordId: r.source_record_id,
+    });
+  }
+  const aggregation = {
+    method: row.method,
+    eligibleObservations: row.eligible,
+    computedAt: canonicalTimestamp(row.computed_at),
+    inputs,
+  };
+  const window = windowSeconds(row.method, staleAfterSeconds);
+
+  if (row.method === "latest-observation-v1") {
+    const only = inputRows[0];
+    if (only === undefined) return { kind: "none" };
+    const fields = await observationFields(sql, only);
+    const asOf = fields.observedAt ?? fields.receivedAt;
+    return {
+      kind: "quote",
+      quote: v1.QuoteV1.parse({
+        ...fields,
+        source: { id: only.source_id },
+        asOf,
+        freshness: freshness(asOf, now, window),
+        aggregation,
+      }),
+    };
+  }
+
+  const asOf = canonicalTimestamp(row.as_of);
+  if (freshness(asOf, now, window) === "stale") return { kind: "stale", asOf };
+  const latestReceipt = inputRows
+    .map((r) => canonicalTimestamp(r.received_at))
+    .sort((a, b) => Date.parse(a) - Date.parse(b))
+    .at(-1);
+  return {
+    kind: "quote",
+    quote: v1.QuoteV1.parse({
+      schemaVersion: 1,
+      subject: await subjectOf(sql, pair.subject),
+      unit: await unitOf(sql, pair.unit, pair.unitCategory),
+      priceType: row.price_type,
+      price: row.price,
+      bid: null,
+      ask: null,
+      basis: "aggregated",
+      venue: null,
+      observedAt: null,
+      receivedAt: latestReceipt,
+      source: null,
+      asOf,
+      freshness: "fresh",
+      aggregation,
+    }),
+  };
 }
 
-/** The latest observation of each feed (source, venue, price type) for a pair. */
-export async function feedObservations(sql: Sql, pair: Pair): Promise<v1.ObservationV1[]> {
+/**
+ * The latest observation of each feed (source, venue, price type) for a
+ * pair, each with its raw-record provenance and read-time freshness.
+ */
+export async function feedObservations(
+  sql: Sql,
+  pair: Pair,
+  now: Date,
+  staleAfterSeconds: number,
+): Promise<v1.ObservationV1[]> {
+  const window = windowSeconds(await methodOf(sql, pair), staleAfterSeconds);
   const rows = await sql.unsafe<ObservationRow[]>(
     `SELECT ${OBSERVATION_COLUMNS} FROM (
        SELECT DISTINCT ON (source_id, venue_id, price_type) *
        FROM market_observations WHERE subject_id = $1 AND unit_id = $2
        ORDER BY source_id, venue_id, price_type,
                 COALESCE(observed_at, received_at) DESC, received_at DESC, id DESC
-     ) o ORDER BY o.source_id, o.id`,
+     ) o JOIN source_records r ON r.id = o.source_record_id
+     ORDER BY o.source_id, o.id`,
     [pair.subject, pair.unit],
   );
   const out: v1.ObservationV1[] = [];
-  for (const row of rows) out.push(v1.ObservationV1.parse(await observationFields(sql, row)));
+  for (const row of rows) {
+    const fields = await observationFields(sql, row);
+    out.push(
+      v1.ObservationV1.parse({
+        ...fields,
+        observationId: row.id,
+        source: { id: row.source_id },
+        sourceRecord: { id: row.source_record_id, key: row.record_key },
+        freshness: freshness(fields.observedAt ?? fields.receivedAt, now, window),
+      }),
+    );
+  }
   return out;
 }
 

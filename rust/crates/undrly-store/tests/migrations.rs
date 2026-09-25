@@ -35,7 +35,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 9);
+    assert_eq!(applied.len(), 10);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -68,6 +68,8 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         "aliases",
         "quote_feeds",
         "canonical_quotes",
+        "canonical_quote_inputs",
+        "quote_aggregations",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -232,6 +234,13 @@ async fn check_constraint_vocabularies_equal_core() {
         (
             "canonical_quotes",
             "canonical_quotes_method_check",
+            AggregationMethod::ALL
+                .map(AggregationMethod::as_str)
+                .to_vec(),
+        ),
+        (
+            "quote_aggregations",
+            "quote_aggregations_method_check",
             AggregationMethod::ALL
                 .map(AggregationMethod::as_str)
                 .to_vec(),

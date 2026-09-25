@@ -30,6 +30,18 @@
   "aggregation": {
     "method": "latest-observation-v1",
     "eligibleObservations": 1,
-    "computedAt": "2026-09-25T03:52:19Z"
+    "computedAt": "2026-09-25T03:52:19Z",
+    "inputs": [
+      {
+        "observationId": "41",
+        "sourceId": "hyperliquid",
+        "venue": {
+          "id": "undrly:venue:01m3bbjhn7fnja52h9vgg8cb3f",
+          "name": "Hyperliquid"
+        },
+        "price": "84185.0",
+        "sourceRecordId": "12"
+      }
+    ]
   }
 }

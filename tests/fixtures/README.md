@@ -12,7 +12,7 @@ example Apple's ISIN and LEI) are used only as check-digit test vectors.
 | `identifiers.json` | Rust core, Rust store (vs. database) | Namespace-specific identifier cases. The database checks shape only, so every Rust-valid value must pass the database checks. |
 | `sources/reference-fixture/` | Rust ingest tests | Raw records for the deterministic fixture provider (see below). |
 | `sources/sec-edgar/` | Rust provider and ingest tests | Captured SEC EDGAR responses, byte for byte (see below). |
-| `sources/kraken/`, `sources/hyperliquid/`, `sources/gold-api/`, `sources/alpaca/` | Rust provider, normalize and ingest tests | Captured quote responses, byte for byte (see below). |
+| `sources/kraken/`, `sources/coinbase/`, `sources/hyperliquid/`, `sources/gold-api/`, `sources/alpaca/` | Rust provider, normalize and ingest tests | Captured quote responses, byte for byte (see below). |
 | `api/v1/` | TypeScript | External JSON API contract v1: valid documents (accepted unchanged) and `invalid/` (rejected). |
 
 Released API fixtures are append-only; a breaking change goes in `api/v2/`.
@@ -62,6 +62,7 @@ binary in `.gitattributes`. Prices are snapshots, not reference data.
 | `kraken/ticker.json` | `GET https://api.kraken.com/0/public/Ticker?pair=XXBTZUSD,ZEURZUSD` | 571 | `a8a7a77d46fe2d61816bfa00ef808a9f2ee15be5db6b5341b6ee61eb45cbcc57` |
 | `hyperliquid/metaAndAssetCtxs.json` | `POST https://api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}` | 72,414 | `90703344db921f6ec543a05859c03f2acc17832aff85e08ff6c8530a39ac4232` |
 | `gold-api/price-XAU.json` | `GET https://api.gold-api.com/price/XAU` | 182 | `abe307bb996b84fcbe4538ff4d9663b9689000088102079c5ebb33d06d5b19e0` |
+| `coinbase/book-BTC-USD-level1.json` | `GET https://api.exchange.coinbase.com/products/BTC-USD/book?level=1` (captured 2026-09-25T07:28:07Z) | 175 | `140a42cd1ef89975fb57649c392da89dfa2c3457f25a10e1ea9870ef7f8efd42` |
 
 `alpaca/snapshots-NVDA.json` is a real IEX-feed snapshot captured
 2026-09-25T07:11:19Z with the collector's request (Alpaca credentials as

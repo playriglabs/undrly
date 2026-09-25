@@ -58,7 +58,10 @@ instrument with its class, or a currency with its code), `unit`,
 (exactly when `basis` is `venue`), `observedAt` (`null` when the source
 states no time), `receivedAt` and `source`. `QuoteV1` adds `asOf`,
 `freshness` (computed at read time) and `aggregation` (method, number of
-eligible observations, computed at). `MarketObservationV1` is superseded and
+eligible observations, computed at, and `inputs`: exactly the observations
+used, with each one's contributed price and raw-record id). Its `source` is
+`null` for a multi-source aggregate. `ObservationV1` adds `observationId`,
+`sourceRecord` (`id`, `key`) and read-time `freshness`. `MarketObservationV1` is superseded and
 is not served.
 
 ## Changing the API contract

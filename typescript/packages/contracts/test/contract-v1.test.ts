@@ -43,6 +43,7 @@ describe("API v1 valid documents", () => {
     ["api/v1/relationship.issued-by.json", v1.RelationshipV1],
     ["api/v1/quote.perpetual-usdc.json", v1.QuoteV1],
     ["api/v1/quote.fx.json", v1.QuoteV1],
+    ["api/v1/quote.btc-usd-aggregated.json", v1.QuoteV1],
   ] as const;
 
   for (const [path, schema] of cases) {

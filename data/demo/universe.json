@@ -49,6 +49,12 @@
       "id": "undrly:venue:01m3bbjhn7fnja52h9vgg8cb3f",
       "name": "Hyperliquid",
       "mic": null
+    },
+    {
+      "key": "coinbase",
+      "id": "undrly:venue:01m3bqftk8fres6cvqv9arywkm",
+      "name": "Coinbase Exchange",
+      "mic": null
     }
   ],
   "instruments": [
@@ -138,6 +144,11 @@
       "btc-perp",
       "TRADES_ON",
       "hyperliquid"
+    ],
+    [
+      "btc",
+      "TRADES_ON",
+      "coinbase"
     ]
   ],
   "aliases": [
@@ -245,6 +256,16 @@
       "node": "hyperliquid",
       "alias": "Hyperliquid",
       "kind": "name"
+    },
+    {
+      "node": "coinbase",
+      "alias": "COINBASE",
+      "kind": "symbol"
+    },
+    {
+      "node": "coinbase",
+      "alias": "Coinbase Exchange",
+      "kind": "name"
     }
   ],
   "quoteFeeds": [
@@ -292,6 +313,22 @@
       "basis": "venue",
       "venue": "iex",
       "priceType": "last"
+    },
+    {
+      "source": "coinbase",
+      "symbol": "BTC-USD",
+      "subject": "btc",
+      "unit": "usd",
+      "basis": "venue",
+      "venue": "coinbase",
+      "priceType": "mid"
+    }
+  ],
+  "quoteAggregations": [
+    {
+      "subject": "btc",
+      "unit": "usd",
+      "method": "mean-venue-mid-v1"
     }
   ]
 }

@@ -25,10 +25,12 @@ use undrly_core::{DisplayName, Redistribution, Source, SourceId, Timestamp};
 use undrly_ingest::quotes::{QuoteIngestReport, ingest_quotes, refresh_canonical_quotes};
 use undrly_ingest::{IngestError, RawRecord};
 use undrly_normalize::alpaca::AlpacaNormalizer;
+use undrly_normalize::coinbase::CoinbaseNormalizer;
 use undrly_normalize::gold_api::GoldApiNormalizer;
 use undrly_normalize::hyperliquid::HyperliquidNormalizer;
 use undrly_normalize::kraken::KrakenNormalizer;
 use undrly_provider::alpaca::{self, AlpacaProvider, Credentials};
+use undrly_provider::coinbase::{self, CoinbaseProvider};
 use undrly_provider::gold_api::{self, GoldApiProvider};
 use undrly_provider::http::{FetchedRecord, HttpClient};
 use undrly_provider::hyperliquid::{self, HyperliquidProvider};
@@ -41,28 +43,37 @@ const DEFAULT_UNIVERSE: &str = "data/demo/universe.json";
 
 /// Every demo source. Redistribution starts `unknown` (treated as
 /// restricted) until a human reviews each source's terms.
-const SOURCES: [(&str, &str); 5] = [
+const SOURCES: [(&str, &str); 6] = [
     ("undrly-curated", "Undrly curated reference data"),
     ("kraken", "Kraken"),
     ("hyperliquid", "Hyperliquid"),
     ("gold-api", "gold-api.com"),
     ("alpaca", "Alpaca Market Data (IEX feed)"),
+    ("coinbase", "Coinbase Exchange"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Feed {
     Kraken,
+    Coinbase,
     Hyperliquid,
     GoldApi,
     Alpaca,
 }
 
 impl Feed {
-    const ALL: [Feed; 4] = [Feed::Kraken, Feed::Hyperliquid, Feed::GoldApi, Feed::Alpaca];
+    const ALL: [Feed; 5] = [
+        Feed::Kraken,
+        Feed::Coinbase,
+        Feed::Hyperliquid,
+        Feed::GoldApi,
+        Feed::Alpaca,
+    ];
 
     fn source(self) -> &'static str {
         match self {
             Feed::Kraken => kraken::SOURCE_ID,
+            Feed::Coinbase => coinbase::SOURCE_ID,
             Feed::Hyperliquid => hyperliquid::SOURCE_ID,
             Feed::GoldApi => gold_api::SOURCE_ID,
             Feed::Alpaca => alpaca::SOURCE_ID,
@@ -73,6 +84,7 @@ impl Feed {
     fn interval(self) -> Duration {
         Duration::from_secs(match self {
             Feed::Kraken => 10,
+            Feed::Coinbase => 10,
             Feed::Hyperliquid => 15,
             Feed::GoldApi => 60,
             Feed::Alpaca => 15,
@@ -267,6 +279,8 @@ async fn poll(
     let symbols: Vec<&str> = symbols.iter().map(String::as_str).collect();
     let fetched: FetchedRecord = match feed {
         Feed::Kraken => kraken::fetch_ticker(client, &symbols).await?,
+        // One product per request: the book names no product.
+        Feed::Coinbase => coinbase::fetch_book(client, symbols[0]).await?,
         Feed::Hyperliquid => hyperliquid::fetch_meta_and_asset_ctxs(client).await?,
         Feed::GoldApi => gold_api::fetch_price(client, symbols[0]).await?,
         Feed::Alpaca => {
@@ -282,6 +296,9 @@ async fn poll(
     let report: QuoteIngestReport = match feed {
         Feed::Kraken => {
             ingest_quotes(conn, &KrakenProvider::new(), &KrakenNormalizer, &raw).await?
+        }
+        Feed::Coinbase => {
+            ingest_quotes(conn, &CoinbaseProvider::new(), &CoinbaseNormalizer, &raw).await?
         }
         Feed::Hyperliquid => {
             ingest_quotes(

@@ -30,6 +30,18 @@
   "aggregation": {
     "method": "latest-observation-v1",
     "eligibleObservations": 1,
-    "computedAt": "2026-09-25T03:52:19Z"
+    "computedAt": "2026-09-25T03:52:19Z",
+    "inputs": [
+      {
+        "observationId": "40",
+        "sourceId": "kraken",
+        "venue": {
+          "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
+          "name": "Kraken"
+        },
+        "price": "1.13680",
+        "sourceRecordId": "11"
+      }
+    ]
   }
 }

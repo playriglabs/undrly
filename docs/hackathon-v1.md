@@ -187,3 +187,60 @@ listing-level currency.
 | 8 | `SEC EDGAR` in the demo | Not part of `seed`/`run` | Not needed for the five quotes. SEC ingestion is unchanged (`sec_live` test). With it, `search NVIDIA` also shows the separate CIK entity (§11). |
 | 9 | — | `GET /v1/quote?q=` / `/v1/quotes?q=` also accepted | Path form with unencoded `/` (`/v1/quote/EUR/USD`) is primary; the query-string form helps clients that encode. |
 | 10 | — | `NVIDIA` (entity *and* stock) quotes the stock | Resolve is ambiguous. Quote keeps only candidates that have a canonical quote; the entity has none, so exactly one remains. No ranking is involved. |
+
+## 13. Milestone: multi-source BTC/USD
+
+BTC/USD is the one pair with two independent venue sources. Every other
+pair is unchanged (`latest-observation-v1`, one feed).
+
+```text
+Kraken   GET /0/public/Ticker?pair=XXBTZUSD,…      → venue observation (last + bid/ask)
+Coinbase GET /products/BTC-USD/book?level=1        → venue observation (mid + bid/ask, book time)
+                         ↓ (collector, after each ingestion)
+          mean-venue-mid-v1  (declared for BTC/USD in data/demo/universe.json)
+                         ↓
+          canonical_quotes + canonical_quote_inputs  →  GET /v1/quote/BTC/USD
+```
+
+### Aggregation method `mean-venue-mid-v1`
+
+1. **Eligible:** for each feed of the pair, its latest observation that is a
+   **venue** quote, has **both bid and ask**, and is at most **30 s** old at
+   compute time. Age uses the effective time: source time if stated, else
+   receipt time.
+2. **Venue mid:** `mid_i = (bid_i + ask_i) / 2`, exact, at scale
+   `max(scale(bid_i), scale(ask_i)) + 1`.
+3. **Canonical price:** `Σ mid_i / n`, at scale `max(scale(mid_i)) + 1`,
+   rounded half to even. It is exact for one or two inputs.
+
+The result is labelled `basis = aggregated`, `venue = null`,
+`source = null`, `priceType = mid`, with no bid/ask. Its `asOf` is the
+**oldest** input's effective time. It is a simple mean of two venues' mids
+and nothing more: not a best bid/offer, an execution price, a fair value, an
+index, an oracle, or a market-wide price.
+
+No weighting, liquidity or volume scoring, outlier detection, confidence,
+source ranking, or fallback heuristics.
+
+### Freshness and fallback (deterministic)
+
+| Fresh eligible observations at compute time | Canonical quote |
+| --- | --- |
+| 2 | mean of both mids, `eligibleObservations = 2` |
+| 1 | that venue's mid, **still `basis = aggregated`**, `eligibleObservations = 1` (inputs name the venue) |
+| 0 | **none**: the collector deletes the canonical row, and `/v1/quote` returns 404 `no_quote` |
+
+At read time the API also refuses to serve a `mean-venue-mid-v1` quote whose
+`asOf` is older than 30 s (for example, if the collector has stopped): 404
+`no_quote`, never stale data labelled fresh. `/v1/quotes` still shows each
+venue observation, each marked `fresh` or `stale` against the same 30 s
+window.
+
+### Provenance
+
+`canonical_quote_inputs` lists exactly the observations used and the price
+each contributed. Every observation names its `source_record_id`, the exact
+upstream response bytes. `QuoteV1.aggregation.inputs` exposes
+`observationId`, `sourceId`, `venue`, `price` and `sourceRecordId`.
+Observations are never copied, changed, or deleted by aggregation. Removing
+a canonical quote removes only its input links.

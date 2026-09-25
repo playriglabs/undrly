@@ -100,6 +100,7 @@
     "reference"
   ],
   "aggregationMethods": [
-    "latest-observation-v1"
+    "latest-observation-v1",
+    "mean-venue-mid-v1"
   ]
 }

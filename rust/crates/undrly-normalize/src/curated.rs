@@ -8,10 +8,10 @@
 use std::collections::HashMap;
 
 use undrly_core::{
-    AliasKind, CanonicalId, Category, Currency, CurrencyCode, CurrencyId, DisplayName, Entity,
-    EntityId, EntityKind, Figi, Instrument, InstrumentClass, InstrumentId, Isin, Lei, ListingId,
-    Mic, ObservationBasis, PriceSubject, PriceType, PriceUnit, RelationshipType, SourceId, Venue,
-    VenueId, VenueSymbol,
+    AggregationMethod, AliasKind, CanonicalId, Category, Currency, CurrencyCode, CurrencyId,
+    DisplayName, Entity, EntityId, EntityKind, Figi, Instrument, InstrumentClass, InstrumentId,
+    Isin, Lei, ListingId, Mic, ObservationBasis, PriceSubject, PriceType, PriceUnit,
+    RelationshipType, SourceId, Venue, VenueId, VenueSymbol,
 };
 use undrly_provider::curated::Universe;
 
@@ -27,6 +27,7 @@ pub struct NormalizedUniverse {
     pub relationships: Vec<(CanonicalId, RelationshipType, CanonicalId)>,
     pub aliases: Vec<(CanonicalId, DisplayName, AliasKind)>,
     pub quote_feeds: Vec<NormalizedFeed>,
+    pub quote_aggregations: Vec<(PriceSubject, PriceUnit, AggregationMethod)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,6 +297,36 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         })
         .collect::<Result<Vec<_>, NormalizeError>>()?;
 
+    let quote_aggregations = u
+        .quote_aggregations
+        .iter()
+        .map(|a| {
+            let subject = match lookup("quoteAggregations.subject", &a.subject)? {
+                id if id.category() == Category::Instrument => {
+                    PriceSubject::Instrument(id.try_into().expect("checked category"))
+                }
+                id if id.category() == Category::Currency => {
+                    PriceSubject::Currency(id.try_into().expect("checked category"))
+                }
+                _ => return Err(invalid("quoteAggregations.subject", "not priceable")),
+            };
+            let unit = match lookup("quoteAggregations.unit", &a.unit)? {
+                id if id.category() == Category::Instrument => {
+                    PriceUnit::Asset(id.try_into().expect("checked category"))
+                }
+                id if id.category() == Category::Currency => {
+                    PriceUnit::Currency(id.try_into().expect("checked category"))
+                }
+                _ => return Err(invalid("quoteAggregations.unit", "not a unit")),
+            };
+            let method = AggregationMethod::ALL
+                .into_iter()
+                .find(|m| m.as_str() == a.method)
+                .ok_or_else(|| unsupported("quoteAggregations.method", &a.method))?;
+            Ok((subject, unit, method))
+        })
+        .collect::<Result<Vec<_>, NormalizeError>>()?;
+
     Ok(NormalizedUniverse {
         currencies,
         entities,
@@ -305,6 +336,7 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         relationships,
         aliases,
         quote_feeds,
+        quote_aggregations,
     })
 }
 

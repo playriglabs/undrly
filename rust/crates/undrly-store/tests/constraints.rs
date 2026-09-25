@@ -1004,6 +1004,7 @@ async fn facts_name_a_matching_source_record() {
         "listing_symbols",
         "listings",
         "market_observations",
+        "quote_aggregations",
         "quote_feeds",
         "venues",
     ]
@@ -1395,26 +1396,67 @@ async fn observations_feeds_aliases_and_canonical_quotes_have_provenance() {
         Some("display_name_check"),
     );
 
-    // A canonical quote must point at an observation of the same pair.
+    // A canonical quote's inputs must be observations of that very pair.
     let observation = observe(&db, &base).await.unwrap();
     let other_unit = db.node(Category::Currency).await;
-    let canonical = |unit: Uuid| {
+    let canonical = |unit: Uuid, method: &'static str, basis: &'static str| {
         sqlx::query(
             "INSERT INTO canonical_quotes
-               (subject_id, subject_category, unit_id, unit_category, observation_id, method,
-                eligible_count, computed_at)
-             VALUES ($1, 'instrument', $2, 'currency', $3, 'latest-observation-v1', 1, now())",
+               (subject_id, subject_category, unit_id, unit_category, method, price, price_type,
+                basis, as_of, eligible_count, computed_at)
+             VALUES ($1, 'instrument', $2, 'currency', $3, 1, 'mid', $4, now(), 1, now())",
+        )
+        .bind(base.subject.0)
+        .bind(unit)
+        .bind(method)
+        .bind(basis)
+    };
+    // A mean of venue mids is never attributed to a venue.
+    assert_rejected(
+        canonical(base.unit.0, "mean-venue-mid-v1", "derived")
+            .execute(&db.pool)
+            .await,
+        CHECK_VIOLATION,
+        Some("canonical_quotes_mean_is_aggregated"),
+    );
+    canonical(other_unit, "mean-venue-mid-v1", "aggregated")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    canonical(base.unit.0, "mean-venue-mid-v1", "aggregated")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let input = |unit: Uuid| {
+        sqlx::query(
+            "INSERT INTO canonical_quote_inputs (subject_id, unit_id, observation_id, input_price)
+             VALUES ($1, $2, $3, 1)",
         )
         .bind(base.subject.0)
         .bind(unit)
         .bind(observation)
     };
     assert_rejected(
-        canonical(other_unit).execute(&db.pool).await,
+        input(other_unit).execute(&db.pool).await,
         FOREIGN_KEY_VIOLATION,
-        Some("canonical_quotes_observation_id_subject_id_unit_id_fkey"),
+        Some("canonical_quote_inputs_observation_id_subject_id_unit_id_fkey"),
     );
-    canonical(base.unit.0).execute(&db.pool).await.unwrap();
+    input(base.unit.0).execute(&db.pool).await.unwrap();
+    // Removing a canonical quote removes its inputs, never the observation.
+    sqlx::query("DELETE FROM canonical_quotes WHERE subject_id = $1")
+        .bind(base.subject.0)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let left: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM canonical_quote_inputs),
+                (SELECT count(*) FROM market_observations WHERE id = $1)",
+    )
+    .bind(observation)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(left, (0, 1));
     db.teardown().await;
 }
 

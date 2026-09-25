@@ -33,6 +33,17 @@ pub struct Universe {
     pub relationships: Vec<(String, String, String)>,
     pub aliases: Vec<AliasRecord>,
     pub quote_feeds: Vec<QuoteFeedRecord>,
+    /// Pairs aggregated with a method other than the default.
+    #[serde(default)]
+    pub quote_aggregations: Vec<QuoteAggregationRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuoteAggregationRecord {
+    pub subject: String,
+    pub unit: String,
+    pub method: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -154,7 +165,8 @@ mod tests {
             .unwrap();
         assert_eq!(u.dataset, "undrly-demo-universe");
         assert_eq!(u.instruments.len(), 5);
-        assert_eq!(u.quote_feeds.len(), 5);
+        assert_eq!(u.quote_feeds.len(), 6);
+        assert_eq!(u.quote_aggregations.len(), 1);
     }
 
     #[test]

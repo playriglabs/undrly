@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "subject": {
+    "id": "undrly:instrument:01m3bbjhndfhhb0kbmejmgabc3",
+    "kind": "instrument",
+    "class": "crypto_asset",
+    "name": "Bitcoin"
+  },
+  "unit": {
+    "id": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+    "kind": "currency",
+    "code": "USD"
+  },
+  "priceType": "mid",
+  "price": "84076.2025000",
+  "bid": null,
+  "ask": null,
+  "basis": "venue",
+  "venue": {
+    "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
+    "name": "Kraken"
+  },
+  "observedAt": null,
+  "receivedAt": "2026-09-25T07:28:07.100Z",
+  "source": null,
+  "asOf": "2026-09-25T07:28:06.386017Z",
+  "freshness": "fresh",
+  "aggregation": {
+    "method": "mean-venue-mid-v1",
+    "eligibleObservations": 2,
+    "computedAt": "2026-09-25T07:28:10Z",
+    "inputs": [
+      {
+        "observationId": "42",
+        "sourceId": "kraken",
+        "venue": {
+          "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
+          "name": "Kraken"
+        },
+        "price": "84145.950000",
+        "sourceRecordId": "13"
+      },
+      {
+        "observationId": "43",
+        "sourceId": "coinbase",
+        "venue": {
+          "id": "undrly:venue:01m3bqftk8fres6cvqv9arywkm",
+          "name": "Coinbase Exchange"
+        },
+        "price": "84006.455",
+        "sourceRecordId": "14"
+      }
+    ]
+  }
+}

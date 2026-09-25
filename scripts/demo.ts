@@ -38,12 +38,18 @@ function quoteLine(q: v1.QuoteV1): string {
   const where = q.basis === "venue" ? `@ ${q.venue?.name}` : `(${q.basis})`;
   const spread = q.bid === null ? "" : ` [${q.bid} / ${q.ask}]`;
   const unit = q.unit.code ?? q.unit.id;
-  return `${q.subject.name}: ${q.price} ${unit} ${q.priceType}${spread} ${where} via ${q.source.id}, as of ${q.asOf} (${q.freshness})`;
+  const via =
+    q.source === null
+      ? `${q.aggregation.method} over ${q.aggregation.inputs.map((i) => `${i.venue?.name ?? i.sourceId} ${i.price}`).join(" + ")}`
+      : `via ${q.source.id}`;
+  return `${q.subject.name}: ${q.price} ${unit} ${q.priceType}${spread} ${where} ${via}, as of ${q.asOf} (${q.freshness})`;
 }
 
 type Market = {
   market: string;
   query: string;
+  /** Feeds that must each show an observation in /v1/quotes (default 1). */
+  minFeeds?: number;
   expect: (q: v1.QuoteV1) => void;
 };
 
@@ -61,10 +67,18 @@ const markets: Market[] = [
   {
     market: "crypto spot",
     query: "BTC/USD",
+    minFeeds: 2,
     expect: (q) => {
       expect(q.subject.kind === "instrument" && q.subject.class === "crypto_asset", "BTC asset");
-      expect(q.basis === "venue" && q.venue?.name === "Kraken", "Kraken venue quote");
       expect(q.unit.kind === "currency" && q.unit.code === "USD", "in USD");
+      expect(q.aggregation.method === "mean-venue-mid-v1", "mean of venue mids");
+      expect(q.basis === "aggregated" && q.venue === null && q.source === null, "no single venue");
+      const venues = q.aggregation.inputs.map((i) => i.venue?.name).sort();
+      expect(
+        q.aggregation.eligibleObservations === 2 &&
+          venues.join() === ["Coinbase Exchange", "Kraken"].join(),
+        `both venues contribute (got ${venues.join(", ")})`,
+      );
     },
   },
   {
@@ -111,8 +125,12 @@ for (const m of markets) {
     const r = await get(`/v1/quotes/${m.query}`);
     expect(r.status === 200, `HTTP ${r.status}`);
     const o = v1.ObservationsV1.parse(r.body);
-    expect(o.observations.length >= 1, "at least one feed observation");
-    return { detail: `${o.observations.length} feed observation(s)`, ms: r.ms };
+    const min = m.minFeeds ?? 1;
+    expect(o.observations.length >= min, `at least ${min} feed observation(s)`);
+    const feeds = o.observations
+      .map((x) => `${x.venue?.name ?? x.source.id} ${x.priceType} ${x.price} (${x.freshness}, record ${x.sourceRecord.id})`)
+      .join("; ");
+    return { detail: feeds, ms: r.ms };
   });
 }
 

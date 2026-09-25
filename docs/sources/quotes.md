@@ -16,6 +16,7 @@ that record.
 | `kraken` | `GET https://api.kraken.com/0/public/Ticker?pair=XXBTZUSD,ZEURZUSD` | none | `XXBTZUSD` → Bitcoin in USD; `ZEURZUSD` → EUR in USD | venue (Kraken) / last + bid/ask | **none stated** (`observed_at = null`) | Kraken Terms of Service and API terms; market-data redistribution |
 | `hyperliquid` | `POST https://api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}` | none | `BTC` → BTC perpetual in **USDC** | venue (Hyperliquid) / mark | **none stated** | Hyperliquid terms of use; the response covers every perp (~72 KB), and only `BTC` is used |
 | `gold-api` | `GET https://api.gold-api.com/price/XAU` | none | `XAU` → Gold (1 troy oz) in USD | aggregated / reference | `updatedAt` (seconds) | gold-api.com terms; the upstream contributors are undisclosed |
+| `coinbase` | `GET https://api.exchange.coinbase.com/products/BTC-USD/book?level=1` | none | `BTC-USD` → Bitcoin in USD | venue (Coinbase Exchange) / mid + bid/ask | book `time` (ns, truncated to µs) | Coinbase Exchange API / market-data terms; Coinbase requires a User-Agent |
 | `alpaca` | `GET https://data.alpaca.markets/v2/stocks/snapshots?symbols=NVDA&feed=iex` | `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` headers | `NVDA` → NVIDIA common stock in USD | **venue (IEX)** / last | trade time `t` (ns, truncated to µs) | Alpaca Market Data agreement; the IEX feed's display and redistribution terms |
 | `undrly-curated` | `data/demo/universe.json` (this repository) | — | declares all feeds above | — | — | Undrly-authored; identifiers in it (ISIN, FIGI, LEI, MIC) were checked against their registries |
 
@@ -31,6 +32,11 @@ that record.
 - **Gold is aggregated**: gold-api does not name a venue, so no venue is
   claimed. A response in a currency other than USD is rejected rather than
   mislabelled.
+- **BTC/USD has two venue feeds** (Kraken, Coinbase). Each is stored as its
+  own venue observation. The canonical BTC/USD quote is `mean-venue-mid-v1`
+  (see `docs/hackathon-v1.md` §13): `basis = aggregated`, attributed to no
+  venue or source. Coinbase's observation is its level-1 mid (normalizer
+  computes `(bid + ask) / 2` exactly), with the book time as source time.
 - **Kraken and Hyperliquid state no timestamp.** Their observations have
   `observed_at = null`, and freshness uses `received_at`. Undrly's clock is
   never presented as source time.
@@ -38,7 +44,8 @@ that record.
 ## Request behaviour
 
 `undrly-collect run` polls **sequentially**, one request at a time, at
-fixed intervals: Kraken 10 s, Hyperliquid 15 s, gold-api 60 s, Alpaca 15 s.
+fixed intervals: Kraken 10 s, Coinbase 10 s, Hyperliquid 15 s, gold-api
+60 s, Alpaca 15 s.
 There are no retries beyond the next tick, no concurrency, no redirects, a
 30 s timeout and a 32 MiB response limit.
 

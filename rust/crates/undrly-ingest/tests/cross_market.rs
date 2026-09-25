@@ -7,20 +7,25 @@
 use std::path::Path;
 
 use undrly_core::{
-    CanonicalId, DisplayName, ObservationBasis, PriceSubject, PriceType, PriceUnit, Redistribution,
-    Source, SourceId, Timestamp,
+    AggregationMethod, CanonicalId, DisplayName, ObservationBasis, PriceSubject, PriceType,
+    PriceUnit, Redistribution, Source, SourceId, Timestamp,
 };
 use undrly_ingest::RawRecord;
 use undrly_ingest::curated::ingest_universe;
-use undrly_ingest::quotes::{ingest_quotes, refresh_canonical_quotes};
+use undrly_ingest::quotes::{QuoteIngestReport, ingest_quotes, refresh_canonical_quotes};
+use undrly_normalize::coinbase::CoinbaseNormalizer;
 use undrly_normalize::kraken::KrakenNormalizer;
+use undrly_provider::coinbase::CoinbaseProvider;
 use undrly_provider::kraken::KrakenProvider;
-use undrly_store::market::{get_canonical_quote, get_observation};
+use undrly_store::market::{
+    ObservationId, get_canonical_quote, get_observation, latest_observations,
+};
 use undrly_store::sources::{facts_from_source_record, get_source_record, insert_source};
 use undrly_store::testing::{TestDb, fresh};
 use undrly_store::{Write, graph};
 
-pub const SOURCES: [&str; 5] = [
+pub const SOURCES: [&str; 6] = [
+    "coinbase",
     "undrly-curated",
     "kraken",
     "hyperliquid",
@@ -128,10 +133,10 @@ async fn curated_universe_is_idempotent_and_traceable() {
     let facts = facts_from_source_record(&mut conn, record).await.unwrap();
     assert_eq!(
         facts.nodes.len(),
-        2 + 1 + 4 + 5 + 1,
+        2 + 1 + 5 + 5 + 1,
         "currencies, entity, venues, instruments, listing"
     );
-    assert_eq!(facts.relationships.len(), 7);
+    assert_eq!(facts.relationships.len(), 8);
 
     // BTC perpetual → DERIVES_FROM Bitcoin, SETTLES_IN USDC, TRADES_ON Hyperliquid.
     let edges: Vec<(String, CanonicalId)> =
@@ -192,13 +197,20 @@ async fn kraken_ticker_becomes_canonical_btc_and_eur_quotes() {
     )
     .await
     .unwrap();
-    assert!(refreshed.iter().all(|r| r.eligible_count == 1));
+    assert!(refreshed.iter().all(|r| r.inputs.len() == 1));
 
+    // BTC/USD is declared `mean-venue-mid-v1`: with Kraken alone, the
+    // canonical quote is Kraken's mid, labelled aggregated (one input).
     let btc = get_canonical_quote(&mut conn, subject("btc"), unit("usd"))
         .await
         .unwrap()
         .unwrap();
-    let o = get_observation(&mut conn, btc.observation)
+    assert_eq!(btc.method, AggregationMethod::MeanVenueMidV1);
+    assert_eq!(btc.basis, ObservationBasis::Aggregated);
+    assert_eq!(btc.price.to_string(), "84145.9500000");
+    assert_eq!(btc.inputs.len(), 1);
+    // The Kraken venue observation itself is kept as reported.
+    let o = get_observation(&mut conn, btc.inputs[0].0)
         .await
         .unwrap()
         .unwrap();
@@ -220,7 +232,8 @@ async fn kraken_ticker_becomes_canonical_btc_and_eur_quotes() {
         .await
         .unwrap()
         .unwrap();
-    let o = get_observation(&mut conn, eur.observation)
+    assert_eq!(eur.method, AggregationMethod::LatestObservationV1);
+    let o = get_observation(&mut conn, eur.inputs[0].0)
         .await
         .unwrap()
         .unwrap();
@@ -413,7 +426,8 @@ async fn canonical(
         .await
         .unwrap()
         .unwrap();
-    get_observation(conn, q.observation).await.unwrap().unwrap()
+    assert_eq!(q.method, AggregationMethod::LatestObservationV1);
+    get_observation(conn, q.inputs[0].0).await.unwrap().unwrap()
 }
 
 async fn count(conn: &mut sqlx::PgConnection) -> i64 {
@@ -423,4 +437,288 @@ async fn count(conn: &mut sqlx::PgConnection) -> i64 {
     .fetch_one(conn)
     .await
     .unwrap()
+}
+
+// --- multi-source BTC/USD (mean-venue-mid-v1) -------------------------------------
+
+const COINBASE_BOOK: &str = "tests/fixtures/sources/coinbase/book-BTC-USD-level1.json";
+
+async fn ingest_kraken(conn: &mut sqlx::PgConnection, received_at: &str) -> QuoteIngestReport {
+    ingest_quotes(
+        conn,
+        &KrakenProvider::new(),
+        &KrakenNormalizer,
+        &raw(
+            &KrakenProvider::ticker_url(&["XXBTZUSD", "ZEURZUSD"]),
+            repo("tests/fixtures/sources/kraken/ticker.json"),
+            received_at,
+        ),
+    )
+    .await
+    .unwrap()
+}
+
+async fn ingest_coinbase(
+    conn: &mut sqlx::PgConnection,
+    payload: Vec<u8>,
+    received_at: &str,
+) -> Result<QuoteIngestReport, undrly_ingest::IngestError> {
+    ingest_quotes(
+        conn,
+        &CoinbaseProvider::new(),
+        &CoinbaseNormalizer,
+        &raw(&CoinbaseProvider::book_url("BTC-USD"), payload, received_at),
+    )
+    .await
+}
+
+async fn refresh_btc(
+    conn: &mut sqlx::PgConnection,
+    at: &str,
+) -> undrly_ingest::quotes::CanonicalRefresh {
+    refresh_canonical_quotes(
+        conn,
+        &[(subject("btc"), unit("usd"))],
+        Timestamp::parse(at).unwrap(),
+    )
+    .await
+    .unwrap()
+    .remove(0)
+}
+
+#[tokio::test]
+async fn two_venues_coexist_and_aggregate_with_exact_provenance() {
+    let Some((db, mut conn)) = seeded().await else {
+        return;
+    };
+    // Kraken's ticker states no time: effective = receipt. Coinbase's book
+    // time is 07:28:06.386017Z.
+    let kraken = ingest_kraken(&mut conn, "2026-09-25T07:28:07Z").await;
+    let coinbase = ingest_coinbase(&mut conn, repo(COINBASE_BOOK), "2026-09-25T07:28:07.100Z")
+        .await
+        .unwrap();
+    assert_eq!(coinbase.observations.len(), 1);
+
+    // Both venue observations exist independently, as each venue reported.
+    let latest = latest_observations(&mut conn, subject("btc"), unit("usd"))
+        .await
+        .unwrap();
+    assert_eq!(latest.len(), 2);
+    let by_source = |s: &str| {
+        latest
+            .iter()
+            .find(|(_, o)| o.source_id().as_str() == s)
+            .unwrap()
+    };
+    let (kraken_id, k) = by_source("kraken");
+    let (coinbase_id, c) = by_source("coinbase");
+    assert_eq!(
+        k.basis(),
+        ObservationBasis::Venue(curated("kraken").try_into().unwrap())
+    );
+    assert_eq!(
+        c.basis(),
+        ObservationBasis::Venue(curated("coinbase").try_into().unwrap())
+    );
+    assert_eq!(
+        (k.price_type(), c.price_type()),
+        (PriceType::Last, PriceType::Mid)
+    );
+    assert_eq!(c.price().to_string(), "84006.455");
+
+    let refresh = refresh_btc(&mut conn, "2026-09-25T07:28:10Z").await;
+    assert_eq!(refresh.write, Some(Write::Inserted));
+    let q = get_canonical_quote(&mut conn, subject("btc"), unit("usd"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(q.method, AggregationMethod::MeanVenueMidV1);
+    assert_eq!(
+        q.basis,
+        ObservationBasis::Aggregated,
+        "attributed to no venue"
+    );
+    assert_eq!(q.price_type, PriceType::Mid);
+    // (84145.950000 + 84006.455) / 2
+    assert_eq!(q.price.to_string(), "84076.2025000");
+    assert_eq!(
+        q.as_of,
+        Timestamp::parse("2026-09-25T07:28:06.386017Z").unwrap(),
+        "oldest input"
+    );
+    assert_eq!(q.eligible_count(), 2);
+
+    // Provenance: exactly the two observations, each from its raw record.
+    let mut used: Vec<(ObservationId, String)> = q
+        .inputs
+        .iter()
+        .map(|(id, p)| (*id, p.to_string()))
+        .collect();
+    used.sort();
+    let mut expected = vec![
+        (*kraken_id, "84145.950000".to_owned()),
+        (*coinbase_id, "84006.455".to_owned()),
+    ];
+    expected.sort();
+    assert_eq!(used, expected);
+    let records: Vec<i64> = sqlx::query_scalar(
+        "SELECT o.source_record_id FROM canonical_quote_inputs i
+         JOIN market_observations o ON o.id = i.observation_id
+         WHERE i.subject_id = $1 ORDER BY o.source_record_id",
+    )
+    .bind(curated("btc").uuid())
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let mut want = vec![kraken.source_record.0.0, coinbase.source_record.0.0];
+    want.sort();
+    assert_eq!(records, want);
+
+    // Replay: same records, same observations, same canonical quote.
+    let again_k = ingest_kraken(&mut conn, "2026-09-25T07:28:08Z").await;
+    let again_c = ingest_coinbase(&mut conn, repo(COINBASE_BOOK), "2026-09-25T07:28:08Z")
+        .await
+        .unwrap();
+    assert_eq!(
+        again_k.source_record,
+        (kraken.source_record.0, Write::Unchanged)
+    );
+    assert_eq!(
+        again_c.source_record,
+        (coinbase.source_record.0, Write::Unchanged)
+    );
+    assert!(
+        again_k
+            .observations
+            .iter()
+            .chain(&again_c.observations)
+            .all(|o| o.2 == Write::Unchanged)
+    );
+    assert_eq!(
+        refresh_btc(&mut conn, "2026-09-25T07:28:10Z").await.write,
+        Some(Write::Unchanged)
+    );
+    drop(conn);
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn aggregation_is_independent_of_ingestion_order() {
+    let mut results = Vec::new();
+    for kraken_first in [true, false] {
+        let Some((db, mut conn)) = seeded().await else {
+            return;
+        };
+        if kraken_first {
+            ingest_kraken(&mut conn, "2026-09-25T07:28:07Z").await;
+            ingest_coinbase(&mut conn, repo(COINBASE_BOOK), "2026-09-25T07:28:07.100Z")
+                .await
+                .unwrap();
+        } else {
+            ingest_coinbase(&mut conn, repo(COINBASE_BOOK), "2026-09-25T07:28:07.100Z")
+                .await
+                .unwrap();
+            ingest_kraken(&mut conn, "2026-09-25T07:28:07Z").await;
+        }
+        refresh_btc(&mut conn, "2026-09-25T07:28:10Z").await;
+        let q = get_canonical_quote(&mut conn, subject("btc"), unit("usd"))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut inputs: Vec<(String, String)> = Vec::new();
+        for (id, p) in &q.inputs {
+            let o = get_observation(&mut conn, *id).await.unwrap().unwrap();
+            inputs.push((o.source_id().to_string(), p.to_string()));
+        }
+        inputs.sort();
+        results.push((q.price.to_string(), q.as_of, inputs));
+        drop(conn);
+        db.teardown().await;
+    }
+    assert_eq!(results[0], results[1]);
+}
+
+#[tokio::test]
+async fn stale_observations_are_excluded_with_documented_fallback() {
+    let Some((db, mut conn)) = seeded().await else {
+        return;
+    };
+    ingest_coinbase(&mut conn, repo(COINBASE_BOOK), "2026-09-25T07:28:07Z")
+        .await
+        .unwrap();
+    ingest_kraken(&mut conn, "2026-09-25T07:28:30Z").await;
+
+    // 07:28:40: Coinbase (07:28:06.386) is 33.6 s old → excluded. One fresh
+    // venue remains: the canonical quote is its mid, still `aggregated`.
+    let one = refresh_btc(&mut conn, "2026-09-25T07:28:40Z").await;
+    assert_eq!(one.inputs.len(), 1);
+    let q = get_canonical_quote(&mut conn, subject("btc"), unit("usd"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(q.eligible_count(), 1);
+    assert_eq!(q.basis, ObservationBasis::Aggregated);
+    assert_eq!(q.price.to_string(), "84145.9500000");
+    let o = get_observation(&mut conn, q.inputs[0].0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(o.source_id().as_str(), "kraken");
+
+    // 07:29:01: both are older than 30 s → no canonical quote at all.
+    let none = refresh_btc(&mut conn, "2026-09-25T07:29:01Z").await;
+    assert!(none.inputs.is_empty() && none.write.is_none());
+    assert!(
+        get_canonical_quote(&mut conn, subject("btc"), unit("usd"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // The observations themselves are untouched.
+    assert_eq!(
+        latest_observations(&mut conn, subject("btc"), unit("usd"))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    drop(conn);
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn a_failed_provider_leaves_the_other_venue_intact() {
+    let Some((db, mut conn)) = seeded().await else {
+        return;
+    };
+    ingest_kraken(&mut conn, "2026-09-25T07:28:07Z").await;
+    let before = count(&mut conn).await;
+    for payload in [
+        &br#"{"message":"Internal server error"}"#[..],
+        br#"{"bids":[],"asks":[["84006.46","1",1]],"sequence":1,"time":"2026-09-25T07:28:06Z"}"#,
+    ] {
+        assert!(
+            ingest_coinbase(&mut conn, payload.to_vec(), "2026-09-25T07:28:08Z")
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(
+        count(&mut conn).await,
+        before,
+        "the failed responses wrote nothing"
+    );
+    let refresh = refresh_btc(&mut conn, "2026-09-25T07:28:10Z").await;
+    assert_eq!(refresh.inputs.len(), 1);
+    let q = get_canonical_quote(&mut conn, subject("btc"), unit("usd"))
+        .await
+        .unwrap()
+        .unwrap();
+    let o = get_observation(&mut conn, q.inputs[0].0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(o.source_id().as_str(), "kraken");
+    drop(conn);
+    db.teardown().await;
 }

@@ -13,6 +13,7 @@ use undrly_core::{
 };
 
 pub mod alpaca;
+pub mod coinbase;
 pub mod curated;
 pub mod fixture;
 pub mod gold_api;
