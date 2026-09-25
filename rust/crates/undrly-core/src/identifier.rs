@@ -10,11 +10,12 @@
 //! | LEI (ISO 17442) | [`Lei`] | 18 alphanumerics + 2 check digits, ISO 7064 MOD 97-10 |
 //! | MIC (ISO 10383) | [`Mic`] | 4 uppercase alphanumerics; no check digit |
 //! | ISO 4217 | [`CurrencyCode`] | 3 uppercase letters; no check digit |
+//! | SEC CIK | [`Cik`] | 10 digits, zero-padded, not all zeros; no check digit |
 //!
 //! `parse` accepts only the canonical spelling. `normalize` applies the
-//! namespace's normalization first (trim, uppercase); these namespaces are
-//! case-insensitive by specification. Venue symbols are *not* normalized: see
-//! [`crate::VenueSymbol`].
+//! namespace's normalization first: trim and uppercase for the alphanumeric
+//! namespaces (case-insensitive by specification), trim and zero-pad for CIK.
+//! Venue symbols are *not* normalized: see [`crate::VenueSymbol`].
 //!
 //! Registry membership (e.g. whether a MIC or currency code is currently
 //! assigned) is reference data, not syntax, and is not checked here.
@@ -42,15 +43,17 @@ pub enum Namespace {
     Lei,
     Mic,
     Iso4217,
+    Cik,
 }
 
 impl Namespace {
-    pub const ALL: [Namespace; 5] = [
+    pub const ALL: [Namespace; 6] = [
         Namespace::Isin,
         Namespace::Figi,
         Namespace::Lei,
         Namespace::Mic,
         Namespace::Iso4217,
+        Namespace::Cik,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -60,11 +63,13 @@ impl Namespace {
             Namespace::Lei => "lei",
             Namespace::Mic => "mic",
             Namespace::Iso4217 => "iso4217",
+            Namespace::Cik => "cik",
         }
     }
 
     /// Categories a value in this namespace may identify. FIGIs exist at
     /// share-class/composite level (instrument) and exchange level (listing).
+    /// A CIK identifies an SEC filer, which Undrly models as an entity.
     pub const fn categories(self) -> &'static [Category] {
         match self {
             Namespace::Isin => &[Category::Instrument],
@@ -72,6 +77,7 @@ impl Namespace {
             Namespace::Lei => &[Category::Entity],
             Namespace::Mic => &[Category::Venue],
             Namespace::Iso4217 => &[Category::Currency],
+            Namespace::Cik => &[Category::Entity],
         }
     }
 }
@@ -292,6 +298,56 @@ identifier_type!(
     validate_currency_code
 );
 
+/// SEC Central Index Key: the identifier EDGAR assigns to a filer.
+///
+/// Canonical spelling is EDGAR's 10-digit zero-padded form
+/// (`0001045810`), as used in EDGAR URLs and submissions data. A CIK has no
+/// check digit, so validation is shape only; whether a CIK is assigned is
+/// registry data. CIK 0 is never assigned and is rejected.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Cik(Box<str>);
+
+impl Cik {
+    pub const NAMESPACE: Namespace = Namespace::Cik;
+    const WIDTH: usize = 10;
+
+    /// Accepts only the canonical spelling: exactly 10 ASCII digits.
+    pub fn parse(s: &str) -> Result<Self, IdentifierError> {
+        let reject = |reason| error(Self::NAMESPACE, s, reason);
+        if s.len() != Self::WIDTH || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(reject("must be 10 digits"));
+        }
+        if s.bytes().all(|b| b == b'0') {
+            return Err(reject("must not be zero"));
+        }
+        Ok(Self(s.into()))
+    }
+
+    /// Trims surrounding whitespace and left-pads 1–10 digits with zeros
+    /// (EDGAR often writes CIKs unpadded, e.g. `1045810`), then parses. No
+    /// other spelling (prefixes, signs, separators) is accepted.
+    pub fn normalize(s: &str) -> Result<Self, IdentifierError> {
+        let trimmed = s.trim();
+        if trimmed.is_empty()
+            || trimmed.len() > Self::WIDTH
+            || !trimmed.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(error(Self::NAMESPACE, s, "must be 1 to 10 digits"));
+        }
+        Self::parse(&format!("{trimmed:0>10}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Cik {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// A validated external identifier from a global namespace.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExternalIdentifier {
@@ -300,6 +356,7 @@ pub enum ExternalIdentifier {
     Lei(Lei),
     Mic(Mic),
     Iso4217(CurrencyCode),
+    Cik(Cik),
 }
 
 impl ExternalIdentifier {
@@ -310,6 +367,7 @@ impl ExternalIdentifier {
             ExternalIdentifier::Lei(_) => Namespace::Lei,
             ExternalIdentifier::Mic(_) => Namespace::Mic,
             ExternalIdentifier::Iso4217(_) => Namespace::Iso4217,
+            ExternalIdentifier::Cik(_) => Namespace::Cik,
         }
     }
 
@@ -320,6 +378,7 @@ impl ExternalIdentifier {
             ExternalIdentifier::Lei(v) => v.as_str(),
             ExternalIdentifier::Mic(v) => v.as_str(),
             ExternalIdentifier::Iso4217(v) => v.as_str(),
+            ExternalIdentifier::Cik(v) => v.as_str(),
         }
     }
 }
@@ -472,6 +531,46 @@ mod tests {
         assert!(CurrencyCode::parse("USD").is_ok());
         assert!(CurrencyCode::parse("US1").is_err());
         assert!(CurrencyCode::parse("USDT").is_err());
+    }
+
+    #[test]
+    fn cik_rules() {
+        assert_eq!(Cik::parse("0001045810").unwrap().as_str(), "0001045810");
+        for invalid in [
+            "1045810",     // not padded: not canonical
+            "00001045810", // 11 digits
+            "0000000000",  // zero is never assigned
+            "000104581A",
+            " 0001045810",
+            "",
+        ] {
+            assert!(Cik::parse(invalid).is_err(), "{invalid:?}");
+        }
+        for (raw, canonical) in [
+            ("1045810", "0001045810"),
+            (" 0001045810 ", "0001045810"),
+            ("320193", "0000320193"),
+            ("9999999999", "9999999999"),
+        ] {
+            assert_eq!(Cik::normalize(raw).unwrap().as_str(), canonical, "{raw:?}");
+        }
+        for invalid in [
+            "0",
+            "CIK0001045810",
+            "-1045810",
+            "+1045810",
+            "1,045,810",
+            "10458100000",
+            "",
+        ] {
+            assert!(Cik::normalize(invalid).is_err(), "{invalid:?}");
+        }
+        let cik = ExternalIdentifier::Cik(Cik::parse("0001045810").unwrap());
+        assert_eq!(
+            (cik.namespace().as_str(), cik.value()),
+            ("cik", "0001045810")
+        );
+        assert_eq!(Namespace::Cik.categories(), &[Category::Entity]);
     }
 
     fn provenance() -> Provenance {

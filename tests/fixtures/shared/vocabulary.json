@@ -81,6 +81,9 @@
     ],
     "iso4217": [
       "currency"
+    ],
+    "cik": [
+      "entity"
     ]
   }
 }

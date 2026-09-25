@@ -28,7 +28,7 @@ pub use id::{
     CanonicalId, Category, CurrencyId, EntityId, IdError, InstrumentId, ListingId, VenueId,
 };
 pub use identifier::{
-    CurrencyCode, ExternalIdentifier, Figi, IdentifierAssignment, IdentifierError, Isin, Lei,
+    Cik, CurrencyCode, ExternalIdentifier, Figi, IdentifierAssignment, IdentifierError, Isin, Lei,
     ListingSymbol, Mic, Namespace,
 };
 pub use observation::{MarketObservation, ObservationBasis, PriceUnit};

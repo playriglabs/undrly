@@ -17,7 +17,7 @@ extension (created by migration 0001).
 | 0002 | `nodes` | every canonical id (`uuid` v7) and its immutable category |
 | 0002 | `entities`, `instruments`, `venues`, `currencies`, `listings` | one table per category; names are display data |
 | 0003 | `identifier_schemes` | which global namespaces may identify which categories |
-| 0003 | `identifiers` | ISIN / FIGI / LEI / MIC / ISO 4217 → node, with validity periods |
+| 0003 | `identifiers` | ISIN / FIGI / LEI / MIC / ISO 4217 / CIK (0008) → node, with validity periods |
 | 0003 | `listing_symbols` | venue-scoped symbols → listing, with validity periods |
 | 0003 | `identifier_conflicts` | quarantined conflicting identifier claims |
 | 0004 | `relationship_rules` | storable relationship types and endpoint categories |
@@ -26,6 +26,7 @@ extension (created by migration 0001).
 | 0006 | `source_records` | raw payloads (bytes) as received, deduplicated by source, record key, SHA-256 |
 | 0006 | — | `identifier_conflicts_replay_key`: replaying a conflicting claim adds no duplicate |
 | 0007 | — | `source_record_id` on every source-derived fact (see [Source-record provenance](#source-record-provenance)) |
+| 0008 | — | SEC CIK namespace: `identifier_schemes` (`cik` → entity), shape `^[0-9]{10}$` and not zero, allowed in `identifier_conflicts` |
 
 Shared domains: `display_name`, `financial_decimal` (numeric within
 `rust_decimal` range, scale preserved), `validity` (half-open non-empty

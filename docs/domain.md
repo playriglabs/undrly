@@ -34,6 +34,7 @@ uppercases (these namespaces are case-insensitive by specification).
 | `Lei` | ISO 17442 | 18 alnum + ISO 7064 MOD 97-10 check digits | entity |
 | `Mic` | ISO 10383 | 4 uppercase alnum | venue |
 | `CurrencyCode` | ISO 4217 | 3 uppercase letters | currency |
+| `Cik` | SEC Central Index Key | 10 digits zero-padded, not all zeros, no check digit; `normalize` trims and left-pads 1–10 digits | entity |
 | `VenueSymbol` | venue-local | no whitespace/control chars; **no normalization**, case preserved | listing (via `ListingSymbol`, scoped to its venue) |
 
 Registry membership (is this MIC assigned?) is reference data, not syntax.

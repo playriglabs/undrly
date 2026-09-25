@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde_json::Value;
 use undrly_core::{
-    Category, CurrencyCode, EntityKind, Figi, InstrumentClass, Isin, Lei, Mic, Namespace,
+    Category, Cik, CurrencyCode, EntityKind, Figi, InstrumentClass, Isin, Lei, Mic, Namespace,
     ObservationBasis, RelationshipType,
 };
 
@@ -35,7 +35,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 7);
+    assert_eq!(applied.len(), 8);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -243,6 +243,7 @@ async fn rust_valid_identifiers_pass_database_shape_checks() {
         ("lei", strings("lei")),
         ("mic", strings("mic")),
         ("iso4217", strings("iso4217")),
+        ("cik", strings("cik")),
     ] {
         for value in values {
             let rust_ok = match scheme {
@@ -250,6 +251,7 @@ async fn rust_valid_identifiers_pass_database_shape_checks() {
                 "figi" => Figi::parse(&value).is_ok(),
                 "lei" => Lei::parse(&value).is_ok(),
                 "mic" => Mic::parse(&value).is_ok(),
+                "cik" => Cik::parse(&value).is_ok(),
                 _ => CurrencyCode::parse(&value).is_ok(),
             };
             assert!(rust_ok, "{scheme} {value}");
@@ -260,6 +262,7 @@ async fn rust_valid_identifiers_pass_database_shape_checks() {
                    WHEN 'lei'     THEN $2 ~ '^[A-Z0-9]{18}[0-9]{2}$'
                    WHEN 'mic'     THEN $2 ~ '^[A-Z0-9]{4}$'
                    WHEN 'iso4217' THEN $2 ~ '^[A-Z]{3}$'
+                   WHEN 'cik'     THEN $2 ~ '^[0-9]{10}$' AND $2 <> '0000000000'
                  END",
             )
             .bind(scheme)
@@ -286,6 +289,7 @@ async fn rust_valid_identifiers_pass_database_shape_checks() {
         "^[A-Z0-9]{18}[0-9]{2}$",
         "^[A-Z0-9]{4}$",
         "^[A-Z]{3}$",
+        "^[0-9]{10}$",
     ] {
         assert!(installed.contains(pattern), "{pattern} not in {installed}");
     }

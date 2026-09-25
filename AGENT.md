@@ -392,8 +392,9 @@ External identifiers map to canonical IDs through the **identifier layer**:
 - identifier history is preserved, not overwritten
 - validation and normalization are namespace-specific: ISIN (check digit),
   FIGI (format and check digit), LEI (ISO 17442 mod 97), MIC (ISO 10383
-  code), ISO 4217 codes, and venue symbols (case and punctuation preserved,
-  meaningful only with their venue) each have their own type and rules;
+  code), ISO 4217 codes, SEC CIK (10-digit zero-padded, no check digit),
+  and venue symbols (case and punctuation preserved, meaningful only with
+  their venue) each have their own type and rules;
   there is no generic "checksummed identifier"
 - a conflicting mapping (an external identifier already mapped to a
   different node for an overlapping period) is rejected and quarantined

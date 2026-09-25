@@ -7,7 +7,7 @@ use std::path::Path;
 
 use serde_json::Value;
 use undrly_core::{
-    CanonicalId, Category, CurrencyCode, EntityKind, Figi, InstrumentClass, Isin, Lei, Mic,
+    CanonicalId, Category, Cik, CurrencyCode, EntityKind, Figi, InstrumentClass, Isin, Lei, Mic,
     Namespace, ObservationBasis, RelationshipType, SourceId, Timestamp, VenueSymbol, decimal,
 };
 use uuid::Uuid;
@@ -79,12 +79,13 @@ fn scalar_primitives_match_fixture() {
 fn identifiers_match_fixture() {
     let fixture = fixture("identifiers.json");
     type Check = fn(&str) -> bool;
-    let checks: [(&str, Check); 6] = [
+    let checks: [(&str, Check); 7] = [
         ("isin", |s| Isin::parse(s).is_ok()),
         ("figi", |s| Figi::parse(s).is_ok()),
         ("lei", |s| Lei::parse(s).is_ok()),
         ("mic", |s| Mic::parse(s).is_ok()),
         ("iso4217", |s| CurrencyCode::parse(s).is_ok()),
+        ("cik", |s| Cik::parse(s).is_ok()),
         ("venueSymbols", |s| VenueSymbol::new(s).is_ok()),
     ];
     for (group, accepts) in checks {

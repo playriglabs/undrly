@@ -213,6 +213,31 @@ async fn identifier_schemes_restrict_categories() {
         FOREIGN_KEY_VIOLATION,
         Some("identifiers_scheme_node_category_fkey"),
     );
+    // A CIK identifies an SEC filer (entity), never a security.
+    assert_rejected(
+        assign(
+            &db,
+            "cik",
+            "0001045810",
+            instrument,
+            Category::Instrument,
+            Validity::UNBOUNDED,
+        )
+        .await,
+        FOREIGN_KEY_VIOLATION,
+        Some("identifiers_scheme_node_category_fkey"),
+    );
+    let entity = db.node(Category::Entity).await;
+    assign(
+        &db,
+        "cik",
+        "0001045810",
+        entity,
+        Category::Entity,
+        Validity::UNBOUNDED,
+    )
+    .await
+    .unwrap();
     // Declaring a false category is caught by the node FK.
     assert_rejected(
         assign(
@@ -235,12 +260,16 @@ async fn identifier_values_are_shape_checked_per_namespace() {
     let Some(db) = fresh().await else { return };
     let instrument = db.node(Category::Instrument).await;
     let venue = db.node(Category::Venue).await;
+    let entity = db.node(Category::Entity).await;
     for (scheme, value, node, category) in [
         ("isin", "us0378331005", instrument, Category::Instrument),
         ("isin", "US037833100", instrument, Category::Instrument),
         ("figi", "BBG000BLANH6", instrument, Category::Instrument),
         ("mic", "xnas", venue, Category::Venue),
         ("mic", "XNASD", venue, Category::Venue),
+        ("cik", "1045810", entity, Category::Entity),
+        ("cik", "0000000000", entity, Category::Entity),
+        ("cik", "00001045810", entity, Category::Entity),
     ] {
         assert_rejected(
             assign(&db, scheme, value, node, category, Validity::UNBOUNDED).await,

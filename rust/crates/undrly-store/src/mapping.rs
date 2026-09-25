@@ -16,8 +16,8 @@ use undrly_core::decimal::{self, DecimalError};
 use undrly_core::identifier::IdentifierError;
 use undrly_core::time::TimestampError;
 use undrly_core::{
-    CanonicalId, Category, CurrencyCode, Decimal, EntityKind, ExternalIdentifier, Figi, IdError,
-    InstrumentClass, Isin, Lei, Mic, Namespace, Redistribution, Timestamp, Validity,
+    CanonicalId, Category, Cik, CurrencyCode, Decimal, EntityKind, ExternalIdentifier, Figi,
+    IdError, InstrumentClass, Isin, Lei, Mic, Namespace, Redistribution, Timestamp, Validity,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -99,6 +99,7 @@ pub fn external_identifier_from_sql(
         Namespace::Lei => ExternalIdentifier::Lei(Lei::parse(value)?),
         Namespace::Mic => ExternalIdentifier::Mic(Mic::parse(value)?),
         Namespace::Iso4217 => ExternalIdentifier::Iso4217(CurrencyCode::parse(value)?),
+        Namespace::Cik => ExternalIdentifier::Cik(Cik::parse(value)?),
     })
 }
 
