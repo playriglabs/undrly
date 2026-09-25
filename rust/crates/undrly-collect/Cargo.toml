@@ -7,6 +7,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["time"] }
 undrly-core.workspace = true
@@ -14,6 +16,7 @@ undrly-ingest = { path = "../undrly-ingest" }
 undrly-normalize.workspace = true
 undrly-provider = { workspace = true, features = ["http"] }
 undrly-store.workspace = true
+undrly-universe = { version = "0.1.0", path = "../undrly-universe" }
 
 [lints]
 workspace = true
