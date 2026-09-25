@@ -35,7 +35,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 6);
+    assert_eq!(applied.len(), 7);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -188,14 +188,16 @@ async fn check_constraint_vocabularies_equal_core() {
 
     let entity_sql =
         "WITH n AS (INSERT INTO nodes (id, category) VALUES (uuidv7_test(), 'entity') RETURNING id)
-                      INSERT INTO entities (id, entity_kind, name) SELECT id, $1, 'x' FROM n";
+                      INSERT INTO entities (id, entity_kind, name, source_record_id)
+                      SELECT id, $1, 'x', (SELECT min(id) FROM source_records) FROM n";
     for k in EntityKind::ALL {
         assert!(accepted(&db, entity_sql, k.as_str()).await);
     }
     assert!(!accepted(&db, entity_sql, "person").await);
 
     let instrument_sql = "WITH n AS (INSERT INTO nodes (id, category) VALUES (uuidv7_test(), 'instrument') RETURNING id)
-                          INSERT INTO instruments (id, instrument_class, name) SELECT id, $1, 'x' FROM n";
+                          INSERT INTO instruments (id, instrument_class, name, source_record_id)
+                          SELECT id, $1, 'x', (SELECT min(id) FROM source_records) FROM n";
     for c in InstrumentClass::ALL {
         assert!(accepted(&db, instrument_sql, c.as_str()).await);
     }
@@ -288,5 +290,47 @@ async fn rust_valid_identifiers_pass_database_shape_checks() {
         assert!(installed.contains(pattern), "{pattern} not in {installed}");
     }
 
+    db.teardown().await;
+}
+
+/// 0007 adds a mandatory `source_record_id` to fact tables. Facts stored
+/// before it cannot be traced to a record, so the migration refuses to run
+/// over them instead of inventing a link.
+#[tokio::test]
+async fn source_record_migration_refuses_untraceable_facts() {
+    let Some(db) = common::fresh().await else {
+        return;
+    };
+    let mut conn = db.pool.acquire().await.unwrap();
+    // Replay 0001–0006 into a separate schema, add a pre-0007 fact, then 0007.
+    sqlx::raw_sql("CREATE SCHEMA pre_0007; SET search_path = pre_0007, public")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let (before, rest) = undrly_store::MIGRATOR.migrations.split_at(6);
+    for migration in before {
+        sqlx::raw_sql(migration.sql.clone())
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO sources (id, name) VALUES ('example-source', 'Example');
+         INSERT INTO nodes (id, category) VALUES ('01920000-0000-7000-8000-000000000000', 'venue');
+         INSERT INTO venues (id, name) VALUES ('01920000-0000-7000-8000-000000000000', 'Venue');",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(rest[0].version, 7);
+    let err = sqlx::raw_sql(rest[0].sql.clone())
+        .execute(&mut *conn)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("requires empty fact tables"),
+        "{err}"
+    );
+    drop(conn);
     db.teardown().await;
 }

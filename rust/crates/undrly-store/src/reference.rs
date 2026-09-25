@@ -5,6 +5,9 @@
 //! its object. Inserts are idempotent: re-inserting identical content returns
 //! [`Write::Unchanged`]; different content for an existing id is an error, never
 //! an overwrite.
+//!
+//! Every object row names the raw source record that minted it
+//! (`source_record_id`). A replay from another record keeps the original.
 
 use chrono::{DateTime, Utc};
 use sqlx::{Acquire, PgConnection};
@@ -18,6 +21,7 @@ use crate::error::{StoreError, corrupt};
 use crate::mapping::{
     canonical_id_from_sql, entity_kind_from_sql, instrument_class_from_sql, timestamp_from_sql,
 };
+use crate::sources::SourceRecordId;
 
 /// Registers `id` in `nodes`. Must run inside the transaction that inserts the
 /// category row.
@@ -70,6 +74,25 @@ pub async fn has_object(conn: &mut PgConnection, id: CanonicalId) -> Result<bool
         .await?)
 }
 
+/// The raw record that minted `id`'s object row, if the object exists.
+pub async fn object_source_record(
+    conn: &mut PgConnection,
+    id: CanonicalId,
+) -> Result<Option<SourceRecordId>, StoreError> {
+    let sql = match id.category() {
+        Category::Entity => "SELECT source_record_id FROM entities WHERE id = $1",
+        Category::Instrument => "SELECT source_record_id FROM instruments WHERE id = $1",
+        Category::Listing => "SELECT source_record_id FROM listings WHERE id = $1",
+        Category::Venue => "SELECT source_record_id FROM venues WHERE id = $1",
+        Category::Currency => "SELECT source_record_id FROM currencies WHERE id = $1",
+    };
+    let id: Option<i64> = sqlx::query_scalar(sql)
+        .bind(id.uuid())
+        .fetch_optional(conn)
+        .await?;
+    Ok(id.map(SourceRecordId))
+}
+
 fn name(value: &str) -> Result<DisplayName, StoreError> {
     DisplayName::new(value).map_err(|e| corrupt("display name", e))
 }
@@ -95,15 +118,21 @@ fn outcome<T: PartialEq>(
 
 // --- entities ------------------------------------------------------------------
 
-pub async fn insert_entity(conn: &mut PgConnection, entity: &Entity) -> Result<Write, StoreError> {
+pub async fn insert_entity(
+    conn: &mut PgConnection,
+    entity: &Entity,
+    source_record: SourceRecordId,
+) -> Result<Write, StoreError> {
     let mut tx = conn.begin().await?;
     insert_node(&mut tx, entity.id.canonical()).await?;
     let inserted = sqlx::query(
-        "INSERT INTO entities (id, entity_kind, name) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO entities (id, entity_kind, name, source_record_id) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO NOTHING",
     )
     .bind(entity.id.uuid())
     .bind(entity.kind.as_str())
     .bind(entity.name.as_str())
+    .bind(source_record.0)
     .execute(&mut *tx)
     .await?
     .rows_affected()
@@ -142,16 +171,18 @@ pub async fn get_entity(
 pub async fn insert_instrument(
     conn: &mut PgConnection,
     instrument: &Instrument,
+    source_record: SourceRecordId,
 ) -> Result<Write, StoreError> {
     let mut tx = conn.begin().await?;
     insert_node(&mut tx, instrument.id.canonical()).await?;
     let inserted = sqlx::query(
-        "INSERT INTO instruments (id, instrument_class, name) VALUES ($1, $2, $3)
-         ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO instruments (id, instrument_class, name, source_record_id)
+         VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
     )
     .bind(instrument.id.uuid())
     .bind(instrument.class.as_str())
     .bind(instrument.name.as_str())
+    .bind(source_record.0)
     .execute(&mut *tx)
     .await?
     .rows_affected()
@@ -187,17 +218,24 @@ pub async fn get_instrument(
 
 // --- venues --------------------------------------------------------------------
 
-pub async fn insert_venue(conn: &mut PgConnection, venue: &Venue) -> Result<Write, StoreError> {
+pub async fn insert_venue(
+    conn: &mut PgConnection,
+    venue: &Venue,
+    source_record: SourceRecordId,
+) -> Result<Write, StoreError> {
     let mut tx = conn.begin().await?;
     insert_node(&mut tx, venue.id.canonical()).await?;
-    let inserted =
-        sqlx::query("INSERT INTO venues (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
-            .bind(venue.id.uuid())
-            .bind(venue.name.as_str())
-            .execute(&mut *tx)
-            .await?
-            .rows_affected()
-            == 1;
+    let inserted = sqlx::query(
+        "INSERT INTO venues (id, name, source_record_id) VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(venue.id.uuid())
+    .bind(venue.name.as_str())
+    .bind(source_record.0)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
     let existing = if inserted {
         None
     } else {
@@ -227,14 +265,17 @@ pub async fn get_venue(conn: &mut PgConnection, id: VenueId) -> Result<Option<Ve
 pub async fn insert_currency(
     conn: &mut PgConnection,
     currency: &Currency,
+    source_record: SourceRecordId,
 ) -> Result<Write, StoreError> {
     let mut tx = conn.begin().await?;
     insert_node(&mut tx, currency.id.canonical()).await?;
     let inserted = sqlx::query(
-        "INSERT INTO currencies (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO currencies (id, name, source_record_id) VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO NOTHING",
     )
     .bind(currency.id.uuid())
     .bind(currency.name.as_str())
+    .bind(source_record.0)
     .execute(&mut *tx)
     .await?
     .rows_affected()
@@ -291,23 +332,26 @@ fn listing_from_row(
     })
 }
 
-/// Inserts a listing. A replay with the same instrument and venue is
-/// [`Write::Unchanged`] and keeps the original provenance.
+/// Inserts a listing asserted by `source_record`, whose source and receipt
+/// time must equal `listing.provenance`. A replay with the same instrument and
+/// venue is [`Write::Unchanged`] and keeps the original provenance and record.
 pub async fn insert_listing(
     conn: &mut PgConnection,
     listing: &Listing,
+    source_record: SourceRecordId,
 ) -> Result<Write, StoreError> {
     let mut tx = conn.begin().await?;
     insert_node(&mut tx, listing.id.canonical()).await?;
     let inserted = sqlx::query(
-        "INSERT INTO listings (id, instrument_id, venue_id, source_id, received_at)
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO listings (id, instrument_id, venue_id, source_id, received_at, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
     )
     .bind(listing.id.uuid())
     .bind(listing.instrument_id.uuid())
     .bind(listing.venue_id.uuid())
     .bind(listing.provenance.source_id.as_str())
     .bind(listing.provenance.received_at.as_datetime())
+    .bind(source_record.0)
     .execute(&mut *tx)
     .await?
     .rows_affected()

@@ -25,6 +25,7 @@ extension (created by migration 0001).
 | 0005 | `market_observations` | normalized prices with basis, unit, provenance, two timestamps |
 | 0006 | `source_records` | raw payloads (bytes) as received, deduplicated by source, record key, SHA-256 |
 | 0006 | — | `identifier_conflicts_replay_key`: replaying a conflicting claim adds no duplicate |
+| 0007 | — | `source_record_id` on every source-derived fact (see [Source-record provenance](#source-record-provenance)) |
 
 Shared domains: `display_name`, `financial_decimal` (numeric within
 `rust_decimal` range, scale preserved), `validity` (half-open non-empty
@@ -55,6 +56,9 @@ No JSON/JSONB columns exist; a test enforces this.
 | Prices fit `Decimal` exactly; no NaN/Infinity | `financial_decimal_check` |
 | Observation replays are idempotent (NULL venues included) | `market_observations_replay_key` (`UNIQUE NULLS NOT DISTINCT`) |
 | Every edge, listing, identifier, observation has provenance | `source_id NOT NULL REFERENCES sources`, `received_at NOT NULL` |
+| Every source-derived fact names the raw record that asserted it | `source_record_id NOT NULL` on node objects, listings, identifiers, listing symbols, edges, conflicts |
+| A fact's `source_id` and `received_at` are its record's | composite FK `(source_record_id, source_id, received_at) → source_records` (`*_source_record_fkey`) |
+| Raw records with derived facts cannot be deleted | the same FKs (`NO ACTION`) |
 
 Rust-only checks (the database cannot see them): ISIN/FIGI/LEI check digits,
 that an asset unit is a `crypto_asset`, and that a node row is created in its
@@ -95,11 +99,11 @@ provider logic. No generic CRUD abstraction.
 
 | Module | Operations |
 | --- | --- |
-| `sources` | `insert_source`, `get_source`, `insert_source_record`, `get_source_record` |
-| `reference` | `get_node`, `has_object`, `insert_entity`/`get_entity`, `insert_instrument`/`get_instrument`, `insert_venue`/`get_venue`, `insert_currency`/`get_currency`, `insert_listing`/`get_listing`, `listings_for_instrument` |
+| `sources` | `insert_source`, `get_source`, `insert_source_record` → `RecordProvenance`, `get_source_record`, `facts_from_source_record` → `DerivedFacts` |
+| `reference` | `get_node`, `has_object`, `object_source_record`, `insert_entity`/`get_entity`, `insert_instrument`/`get_instrument`, `insert_venue`/`get_venue`, `insert_currency`/`get_currency`, `insert_listing`/`get_listing`, `listings_for_instrument` |
 | `identifiers` | `assign_identifier` → `AssignOutcome`, `resolve_identifier(at)`, `identifier_history`, `identifiers_for_node` |
 | `listing_symbols` | `assign_listing_symbol` → `SymbolAssignOutcome`, `resolve_listing_symbol(venue, at)`, `listings_with_symbol(at)`, `symbols_for_listing` |
-| `graph` | `insert_relationship`, `relationships_from` (forward), `relationships_to` (inverse) |
+| `graph` | `insert_relationship`, `relationships_from` (forward), `relationships_to` (inverse) → `StoredRelationship` |
 | `conflicts` | `record_identifier_conflict`, `conflicts_for_identifier`, `conflicts_for_listing_symbol` |
 
 Semantics:
@@ -115,8 +119,13 @@ Semantics:
   (same node, different overlapping period) and, for symbols,
   `ListingHasOtherSymbol`. None of them overwrites a mapping.
 - **Replays keep the first provenance** for single-row facts (identifier
-  assignments, listing symbols, listings). Graph edges are per source, so a
-  second source's assertion is its own row.
+  assignments, listing symbols, listings, node objects), including the first
+  `source_record_id`. Graph edges are per source, so a second source's
+  assertion is its own row.
+- **Every write of a source-derived fact takes a `SourceRecordId`.** Reads
+  return it (`StoredIdentifier`, `StoredListingSymbol`, `StoredRelationship`,
+  `StoredConflict` have a `source_record` field; `object_source_record` for
+  node objects and listings).
 
 ### Transaction boundaries
 
@@ -130,18 +139,55 @@ Each repository operation opens its own transaction. Called inside a
 caller's transaction, it becomes a savepoint, so ingestion composes
 repositories into one per-record transaction.
 
+## Source-record provenance
+
+Migration 0007. Lineage of every fact ingestion writes:
+
+```text
+fact --source_record_id--> source_records --source_id--> sources
+```
+
+| Table | `source_record_id` means | Also tied by composite FK |
+| --- | --- | --- |
+| `entities`, `instruments`, `venues`, `currencies` | record that minted the node and supplied its attributes | — (no `source_id` column) |
+| `listings` | record that created the listing | `source_id`, `received_at` |
+| `identifiers`, `listing_symbols` | record whose ingestion wrote the mapping | `source_id`, `received_at` |
+| `graph_edges` | record that first asserted the edge for this source | `source_id`, `received_at` |
+| `identifier_conflicts` | record that made the rejected claim; part of `identifier_conflicts_replay_key` | `source_id`, `received_at` |
+
+- **Originating record only.** The column names the record whose ingestion
+  wrote the row. A later record that asserts the same fact leaves the row
+  unchanged.
+- **Payloads are not copied.** They stay in `source_records`.
+- **Same transaction.** Ingestion writes the record and every fact derived
+  from it in one per-record transaction; a rollback removes both.
+- **Replay is idempotent.** The same payload maps to the same record, and a
+  replay carries that record's original `received_at`, so no row changes.
+- **Quarantine is per record.** Replaying a record adds no conflict rows. A
+  different record making the same claim is separate evidence and gets its
+  own row.
+- **Not yet covered:** `market_observations` (not produced by ingestion yet;
+  raw-record retention for high-volume feeds is undecided).
+- **Migration precondition:** 0007 raises an error if any fact table has
+  rows, because pre-existing facts cannot be linked to a record. Nothing has
+  been stored outside tests.
+- **Room for corroboration.** Supporting assertions can later go in a
+  separate `(fact, source_record)` table. `source_record_id` would stay the
+  originating record, and the repository APIs already take the asserting
+  record on every write, including `Unchanged` outcomes.
+
 ## Schema limitations found in Phase 3
 
 - **A listing claiming a different symbol can't be quarantined.**
   (`ListingHasOtherSymbol`: the listing already has another symbol for the
   period.) `identifier_conflicts` references a collision on the same symbol
   value. The outcome is reported to the caller but not persisted.
-- **Corroboration is not recorded.** A second source asserting the same
-  identifier, symbol or listing leaves the single existing row, with the
-  first source's provenance.
-- **Facts are not linked to their raw record.** Provenance is `source_id` +
-  `received_at`. There is no `source_record_id` on facts, so which record
-  asserted a fact is inferred, not stored.
+- **Corroboration is not recorded (deferred to reconciliation).** When
+  another record (from the same or another source) asserts an identifier,
+  symbol, listing, node, or same-source edge that already exists, the
+  outcome is `Unchanged`. The row keeps its originating record, and the
+  confirmation is not stored as independent supporting evidence. No
+  multi-source corroboration or source-priority policy exists.
 - **No listing-level trading currency.** The slice asserts `DENOMINATED_IN`
   on the instrument. A listing's quote currency (listing → currency) has no
   rule yet.
@@ -153,8 +199,14 @@ repositories into one per-record transaction.
 - **No claims for nodes that don't exist.** Conflicts reference an existing
   claimed node. A claim about a node that was never created can't be
   quarantined.
-- **No conflict detection for edges.** Contradictory edges (e.g. two issuers
-  for one instrument) are both stored, per source.
+- **No reconciliation of contradictory edges.** Contradictory assertions
+  (for example two different `ISSUED_BY` objects for one instrument, from one
+  source or several) are stored side by side as source assertions. Each names
+  its `source_record_id`. None is chosen as canonical truth, and nothing is
+  flagged as contradictory. A reader must not treat any one of them as
+  authoritative until reconciliation exists.
+- **Deferred:** full temporal edge semantics (edge validity is pinned to
+  unbounded) and node merge.
 
 ## Deferred
 

@@ -6,8 +6,8 @@ mod common;
 use std::str::FromStr;
 
 use common::{
-    CHECK_VIOLATION, EXCLUSION_VIOLATION, FOREIGN_KEY_VIOLATION, NOT_NULL_VIOLATION, SOURCE,
-    TestDb, UNIQUE_VIOLATION, assert_rejected, fresh, ts,
+    CHECK_VIOLATION, EXCLUSION_VIOLATION, FOREIGN_KEY_VIOLATION, NOT_NULL_VIOLATION, RECEIVED_AT,
+    SOURCE, TestDb, UNIQUE_VIOLATION, assert_rejected, fresh, ts,
 };
 use rust_decimal::Decimal;
 use sqlx::postgres::types::PgRange;
@@ -53,18 +53,24 @@ async fn category_rows_must_match_node_category() {
     let venue = db.node(Category::Venue).await;
     // A venue node cannot get an entity row.
     assert_rejected(
-        sqlx::query("INSERT INTO entities (id, entity_kind, name) VALUES ($1, 'company', 'X')")
-            .bind(venue)
-            .execute(&db.pool)
+        sqlx::query(
+            "INSERT INTO entities (id, entity_kind, name, source_record_id) VALUES ($1, 'company', 'X', $2)",
+        )
+        .bind(venue)
+        .bind(db.record)
+        .execute(&db.pool)
             .await,
         FOREIGN_KEY_VIOLATION,
         Some("entities_id_category_fkey"),
     );
     // A category row cannot claim a different category.
     assert_rejected(
-        sqlx::query("INSERT INTO venues (id, category, name) VALUES ($1, 'entity', 'X')")
-            .bind(Uuid::now_v7())
-            .execute(&db.pool)
+        sqlx::query(
+            "INSERT INTO venues (id, category, name, source_record_id) VALUES ($1, 'entity', 'X', $2)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(db.record)
+        .execute(&db.pool)
             .await,
         CHECK_VIOLATION,
         Some("venues_category_check"),
@@ -155,8 +161,9 @@ async fn assign(
     valid_during: Validity,
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO identifiers (scheme, value, node_id, node_category, valid_during, source_id, received_at)
-         VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING id",
+        "INSERT INTO identifiers
+           (scheme, value, node_id, node_category, valid_during, source_id, received_at, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
     )
     .bind(scheme)
     .bind(value)
@@ -164,6 +171,8 @@ async fn assign(
     .bind(category.as_str())
     .bind(validity_to_range(valid_during))
     .bind(SOURCE)
+    .bind(ts(RECEIVED_AT))
+    .bind(db.record)
     .fetch_one(&db.pool)
     .await
 }
@@ -320,12 +329,15 @@ async fn validity_periods_must_be_half_open_and_non_empty() {
     ] {
         assert_rejected(
             sqlx::query(
-                "INSERT INTO identifiers (scheme, value, node_id, node_category, valid_during, source_id, received_at)
-                 VALUES ('iso4217', 'USD', $1, 'currency', $2::tstzrange, $3, now())",
+                "INSERT INTO identifiers
+                   (scheme, value, node_id, node_category, valid_during, source_id, received_at, source_record_id)
+                 VALUES ('iso4217', 'USD', $1, 'currency', $2::tstzrange, $3, $4, $5)",
             )
             .bind(usd)
             .bind(bad)
             .bind(SOURCE)
+            .bind(ts(RECEIVED_AT))
+            .bind(db.record)
             .execute(&db.pool)
             .await,
             CHECK_VIOLATION,
@@ -345,14 +357,17 @@ async fn symbol(
     valid_during: Validity,
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO listing_symbols (listing_id, venue_id, symbol, valid_during, source_id, received_at)
-         VALUES ($1, $2, $3, $4, $5, now()) RETURNING id",
+        "INSERT INTO listing_symbols
+           (listing_id, venue_id, symbol, valid_during, source_id, received_at, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
     )
     .bind(listing)
     .bind(venue)
     .bind(symbol)
     .bind(validity_to_range(valid_during))
     .bind(SOURCE)
+    .bind(ts(RECEIVED_AT))
+    .bind(db.record)
     .fetch_one(&db.pool)
     .await
 }
@@ -469,13 +484,15 @@ async fn conflicting_identifier_claims_are_quarantined_with_context() {
         sqlx::query(
             "INSERT INTO identifier_conflicts
                (namespace, value, claimed_node_id, claimed_node_category, claimed_valid_during,
-                source_id, received_at, conflicting_identifier_id)
-             VALUES ('isin', $1, $2, 'instrument', '(,)', $3, now(), $4)",
+                source_id, received_at, conflicting_identifier_id, source_record_id)
+             VALUES ('isin', $1, $2, 'instrument', '(,)', $3, $4, $5, $6)",
         )
         .bind(value)
         .bind(claimed_node)
         .bind(SOURCE)
+        .bind(ts(RECEIVED_AT))
         .bind(existing)
+        .bind(db.record)
     };
     insert_conflict("US0378331005", existing)
         .execute(&db.pool)
@@ -521,8 +538,8 @@ async fn quarantine_rows_must_describe_a_coherent_claim() {
             "INSERT INTO identifier_conflicts
                (namespace, value, scope_venue_id, claimed_node_id, claimed_node_category,
                 claimed_valid_during, source_id, received_at,
-                conflicting_identifier_id, conflicting_listing_symbol_id)
-             VALUES ($1, $2, $3, $4, $5, '(,)', $6, now(), $7, $8)",
+                conflicting_identifier_id, conflicting_listing_symbol_id, source_record_id)
+             VALUES ($1, $2, $3, $4, $5, '(,)', $6, $7, $8, $9, $10)",
         )
         .bind(namespace)
         .bind(value)
@@ -530,8 +547,10 @@ async fn quarantine_rows_must_describe_a_coherent_claim() {
         .bind(node)
         .bind(category)
         .bind(SOURCE)
+        .bind(ts(RECEIVED_AT))
         .bind(identifier)
         .bind(symbol)
+        .bind(db.record)
     };
 
     // A venue-symbol conflict: another listing claimed NVDA on the same venue.
@@ -635,8 +654,9 @@ async fn edge(
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "INSERT INTO graph_edges
-           (subject_id, subject_category, relationship_type, object_id, object_category, source_id, received_at)
-         VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING id",
+           (subject_id, subject_category, relationship_type, object_id, object_category,
+            source_id, received_at, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
     )
     .bind(subject.0)
     .bind(subject.1.as_str())
@@ -644,6 +664,8 @@ async fn edge(
     .bind(object.0)
     .bind(object.1.as_str())
     .bind(SOURCE)
+    .bind(ts(RECEIVED_AT))
+    .bind(db.record)
     .fetch_one(&db.pool)
     .await
 }
@@ -750,24 +772,38 @@ async fn edges_have_provenance_and_no_self_or_duplicate_assertions() {
         .execute(&db.pool)
         .await
         .unwrap();
+    let second_record: i64 = sqlx::query_scalar(
+        "INSERT INTO source_records (source_id, record_key, payload, received_at)
+         VALUES ('second-source', 'k', 'p', $1) RETURNING id",
+    )
+    .bind(ts(RECEIVED_AT))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO graph_edges
-           (subject_id, subject_category, relationship_type, object_id, object_category, source_id, received_at)
-         VALUES ($1, 'instrument', 'SETTLES_IN', $2, 'instrument', 'second-source', now())",
+           (subject_id, subject_category, relationship_type, object_id, object_category,
+            source_id, received_at, source_record_id)
+         VALUES ($1, 'instrument', 'SETTLES_IN', $2, 'instrument', 'second-source', $3, $4)",
     )
     .bind(a.0)
     .bind(b.0)
+    .bind(ts(RECEIVED_AT))
+    .bind(second_record)
     .execute(&db.pool)
     .await
     .unwrap();
     assert_rejected(
         sqlx::query(
             "INSERT INTO graph_edges
-               (subject_id, subject_category, relationship_type, object_id, object_category, received_at)
-             VALUES ($1, 'instrument', 'DENOMINATED_IN', $2, 'instrument', now())",
+               (subject_id, subject_category, relationship_type, object_id, object_category,
+                received_at, source_record_id)
+             VALUES ($1, 'instrument', 'DENOMINATED_IN', $2, 'instrument', $3, $4)",
         )
         .bind(a.0)
         .bind(b.0)
+        .bind(ts(RECEIVED_AT))
+        .bind(db.record)
         .execute(&db.pool)
         .await,
         NOT_NULL_VIOLATION,
@@ -788,13 +824,15 @@ async fn edge_validity_is_deferred_without_blocking_multiple_periods() {
         sqlx::query(
             "INSERT INTO graph_edges
                (subject_id, subject_category, relationship_type, object_id, object_category,
-                valid_during, source_id, received_at)
-             VALUES ($1, 'instrument', 'SETTLES_IN', $2, 'instrument', $3::tstzrange, $4, now())",
+                valid_during, source_id, received_at, source_record_id)
+             VALUES ($1, 'instrument', 'SETTLES_IN', $2, 'instrument', $3::tstzrange, $4, $5, $6)",
         )
         .bind(a)
         .bind(b)
         .bind(period)
         .bind(SOURCE)
+        .bind(ts(RECEIVED_AT))
+        .bind(db.record)
     };
     // Phase 2: only unbounded (current) assertions.
     assert_rejected(
@@ -822,6 +860,129 @@ async fn edge_validity_is_deferred_without_blocking_multiple_periods() {
         Some("graph_edges_one_assertion_per_period"),
     );
     tx.rollback().await.unwrap();
+    db.teardown().await;
+}
+
+// --- source-record provenance ------------------------------------------------
+
+/// Every source-derived fact names the raw record that asserted it, and its
+/// `source_id` / `received_at` are that record's.
+#[tokio::test]
+async fn facts_name_a_matching_source_record() {
+    let Some(db) = fresh().await else { return };
+    let usd = db.node(Category::Currency).await;
+    sqlx::query("INSERT INTO sources (id, name) VALUES ('second-source', 'Second')")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let other_source_record: i64 = sqlx::query_scalar(
+        "INSERT INTO source_records (source_id, record_key, payload, received_at)
+         VALUES ('second-source', 'k', 'p', $1) RETURNING id",
+    )
+    .bind(ts(RECEIVED_AT))
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    let insert = |source: &'static str, received_at: &'static str, record: Option<i64>| {
+        sqlx::query(
+            "INSERT INTO identifiers
+               (scheme, value, node_id, node_category, source_id, received_at, source_record_id)
+             VALUES ('iso4217', 'USD', $1, 'currency', $2, $3, $4)",
+        )
+        .bind(usd)
+        .bind(source)
+        .bind(ts(received_at))
+        .bind(record)
+    };
+    let fk = Some("identifiers_source_record_fkey");
+    // No record.
+    assert_rejected(
+        insert(SOURCE, RECEIVED_AT, None).execute(&db.pool).await,
+        NOT_NULL_VIOLATION,
+        None,
+    );
+    // A record that does not exist.
+    assert_rejected(
+        insert(SOURCE, RECEIVED_AT, Some(i64::MAX))
+            .execute(&db.pool)
+            .await,
+        FOREIGN_KEY_VIOLATION,
+        fk,
+    );
+    // Another source's record.
+    assert_rejected(
+        insert(SOURCE, RECEIVED_AT, Some(other_source_record))
+            .execute(&db.pool)
+            .await,
+        FOREIGN_KEY_VIOLATION,
+        fk,
+    );
+    // The record's source, but a receipt time the record does not have.
+    assert_rejected(
+        insert(SOURCE, "2026-09-25T00:00:00Z", Some(db.record))
+            .execute(&db.pool)
+            .await,
+        FOREIGN_KEY_VIOLATION,
+        fk,
+    );
+    insert(SOURCE, RECEIVED_AT, Some(db.record))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // Node objects name the record that minted them.
+    let entity = Uuid::now_v7();
+    sqlx::query("INSERT INTO nodes (id, category) VALUES ($1, 'entity')")
+        .bind(entity)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_rejected(
+        sqlx::query(
+            "INSERT INTO entities (id, entity_kind, name, source_record_id)
+             VALUES ($1, 'company', 'X', $2)",
+        )
+        .bind(entity)
+        .bind(i64::MAX)
+        .execute(&db.pool)
+        .await,
+        FOREIGN_KEY_VIOLATION,
+        Some("entities_source_record_fkey"),
+    );
+
+    // Every fact table carries a mandatory source_record_id.
+    let nullable: Vec<(String, String)> = sqlx::query_as(
+        "SELECT table_name::text, is_nullable::text FROM information_schema.columns
+         WHERE table_schema = 'public' AND column_name = 'source_record_id' ORDER BY table_name",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    let expected: Vec<(String, String)> = [
+        "currencies",
+        "entities",
+        "graph_edges",
+        "identifier_conflicts",
+        "identifiers",
+        "instruments",
+        "listing_symbols",
+        "listings",
+        "venues",
+    ]
+    .into_iter()
+    .map(|t| (t.to_owned(), "NO".to_owned()))
+    .collect();
+    assert_eq!(nullable, expected);
+
+    // Raw evidence cannot be deleted while facts derive from it.
+    assert_rejected(
+        sqlx::query("DELETE FROM source_records WHERE id = $1")
+            .bind(db.record)
+            .execute(&db.pool)
+            .await,
+        FOREIGN_KEY_VIOLATION,
+        None,
+    );
     db.teardown().await;
 }
 

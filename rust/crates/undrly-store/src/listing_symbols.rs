@@ -13,6 +13,7 @@ use crate::conflicts::{ConflictClaim, ConflictId, record_identifier_conflict};
 use crate::error::{StoreError, corrupt, is_exclusion_violation};
 use crate::mapping::{timestamp_from_sql, validity_from_range, validity_to_range};
 use crate::reference::get_listing;
+use crate::sources::SourceRecordId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ListingSymbolId(pub i64);
@@ -21,6 +22,9 @@ pub struct ListingSymbolId(pub i64);
 pub struct StoredListingSymbol {
     pub id: ListingSymbolId,
     pub symbol: ListingSymbol,
+    /// The raw record whose ingestion wrote this mapping (see
+    /// [`crate::identifiers::StoredIdentifier::source_record`]).
+    pub source_record: SourceRecordId,
 }
 
 /// Result of [`assign_listing_symbol`]. Only `Assigned` writes a mapping.
@@ -56,13 +60,15 @@ type SymbolRow = (
     PgRange<DateTime<Utc>>,
     String,
     DateTime<Utc>,
+    i64,
 );
 
-const SELECT: &str = "SELECT id, listing_id, venue_id, symbol, valid_during, source_id, received_at
-    FROM listing_symbols";
+const SELECT: &str =
+    "SELECT id, listing_id, venue_id, symbol, valid_during, source_id, received_at,
+    source_record_id FROM listing_symbols";
 
 fn from_row(
-    (id, listing, venue, symbol, validity, source, received): SymbolRow,
+    (id, listing, venue, symbol, validity, source, received, record): SymbolRow,
 ) -> Result<StoredListingSymbol, StoreError> {
     Ok(StoredListingSymbol {
         id: ListingSymbolId(id),
@@ -76,6 +82,7 @@ fn from_row(
                 received_at: timestamp_from_sql(received)?,
             },
         },
+        source_record: SourceRecordId(record),
     })
 }
 
@@ -113,6 +120,7 @@ async fn overlapping_listing(
 async fn classify(
     conn: &mut PgConnection,
     claim: &ListingSymbol,
+    source_record: SourceRecordId,
 ) -> Result<Option<SymbolAssignOutcome>, StoreError> {
     let same_symbol = overlapping_symbol(conn, claim).await?;
     let other_listings: Vec<&StoredListingSymbol> = same_symbol
@@ -126,7 +134,11 @@ async fn classify(
                 claim: claim.clone(),
                 existing: collided.id,
             };
-            quarantined.push(record_identifier_conflict(conn, &conflict).await?.0);
+            quarantined.push(
+                record_identifier_conflict(conn, &conflict, source_record)
+                    .await?
+                    .0,
+            );
         }
         return Ok(Some(SymbolAssignOutcome::Conflict {
             quarantined,
@@ -155,12 +167,13 @@ async fn classify(
     })
 }
 
-/// Assigns a venue symbol to a listing, atomically (see
-/// [`crate::identifiers::assign_identifier`]). The symbol's venue must be the
-/// listing's venue.
+/// Assigns a venue symbol to a listing, atomically, as asserted by
+/// `source_record` (see [`crate::identifiers::assign_identifier`]). The
+/// symbol's venue must be the listing's venue.
 pub async fn assign_listing_symbol(
     conn: &mut PgConnection,
     claim: &ListingSymbol,
+    source_record: SourceRecordId,
 ) -> Result<SymbolAssignOutcome, StoreError> {
     let mut tx = conn.begin().await?;
     let listing = get_listing(&mut tx, claim.listing_id)
@@ -176,14 +189,15 @@ pub async fn assign_listing_symbol(
             claimed: claim.venue_id.to_string(),
         });
     }
-    let outcome = match classify(&mut tx, claim).await? {
+    let outcome = match classify(&mut tx, claim, source_record).await? {
         Some(outcome) => outcome,
         None => {
             let mut attempt = tx.begin().await?;
             let inserted: Result<i64, sqlx::Error> = sqlx::query_scalar(
                 "INSERT INTO listing_symbols
-                   (listing_id, venue_id, symbol, valid_during, source_id, received_at)
-                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+                   (listing_id, venue_id, symbol, valid_during, source_id, received_at,
+                    source_record_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
             )
             .bind(claim.listing_id.uuid())
             .bind(claim.venue_id.uuid())
@@ -191,6 +205,7 @@ pub async fn assign_listing_symbol(
             .bind(validity_to_range(claim.valid_during))
             .bind(claim.provenance.source_id.as_str())
             .bind(claim.provenance.received_at.as_datetime())
+            .bind(source_record.0)
             .fetch_one(&mut *attempt)
             .await;
             match inserted {
@@ -200,7 +215,7 @@ pub async fn assign_listing_symbol(
                 }
                 Err(err) if is_exclusion_violation(&err) => {
                     attempt.rollback().await?;
-                    classify(&mut tx, claim)
+                    classify(&mut tx, claim, source_record)
                         .await?
                         .ok_or_else(|| StoreError::Database(err))?
                 }

@@ -19,9 +19,14 @@ use sqlx::{AssertSqlSafe, ConnectOptions, Connection, PgPool};
 use undrly_core::{Category, Timestamp};
 
 pub const SOURCE: &str = "example-source";
+/// Receipt time of [`TestDb::record`].
+pub const RECEIVED_AT: &str = "2026-09-24T12:00:00Z";
 
 pub struct TestDb {
     pub pool: PgPool,
+    /// A raw record from [`SOURCE`] received at [`RECEIVED_AT`]. Rows the
+    /// harness inserts directly name it as their `source_record_id`.
+    pub record: i64,
     admin: PgConnectOptions,
     name: String,
 }
@@ -55,13 +60,27 @@ pub async fn fresh() -> Option<TestDb> {
         .run(&pool)
         .await
         .expect("migrations apply to an empty database");
-    // Seed the source used by most tests.
+    // Seed the source and raw record used by most tests.
     sqlx::query("INSERT INTO sources (id, name) VALUES ($1, 'Example Source')")
         .bind(SOURCE)
         .execute(&pool)
         .await
         .unwrap();
-    Some(TestDb { pool, admin, name })
+    let record = sqlx::query_scalar(
+        "INSERT INTO source_records (source_id, record_key, payload, received_at)
+         VALUES ($1, 'harness', 'harness', $2) RETURNING id",
+    )
+    .bind(SOURCE)
+    .bind(ts(RECEIVED_AT))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    Some(TestDb {
+        pool,
+        record,
+        admin,
+        name,
+    })
 }
 
 impl TestDb {
@@ -90,16 +109,27 @@ impl TestDb {
             .unwrap();
         let sql = match category {
             Category::Entity => {
-                "INSERT INTO entities (id, entity_kind, name) VALUES ($1, 'company', 'Test Entity')"
+                "INSERT INTO entities (id, entity_kind, name, source_record_id)
+                 VALUES ($1, 'company', 'Test Entity', $2)"
             }
             Category::Instrument => {
-                "INSERT INTO instruments (id, instrument_class, name) VALUES ($1, 'equity', 'Test Instrument')"
+                "INSERT INTO instruments (id, instrument_class, name, source_record_id)
+                 VALUES ($1, 'equity', 'Test Instrument', $2)"
             }
-            Category::Venue => "INSERT INTO venues (id, name) VALUES ($1, 'Test Venue')",
-            Category::Currency => "INSERT INTO currencies (id, name) VALUES ($1, 'Test Currency')",
+            Category::Venue => {
+                "INSERT INTO venues (id, name, source_record_id) VALUES ($1, 'Test Venue', $2)"
+            }
+            Category::Currency => {
+                "INSERT INTO currencies (id, name, source_record_id) VALUES ($1, 'Test Currency', $2)"
+            }
             Category::Listing => panic!("use TestDb::listing"),
         };
-        sqlx::query(sql).bind(id).execute(&self.pool).await.unwrap();
+        sqlx::query(sql)
+            .bind(id)
+            .bind(self.record)
+            .execute(&self.pool)
+            .await
+            .unwrap();
         id
     }
 
@@ -111,9 +141,11 @@ impl TestDb {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO instruments (id, instrument_class, name) VALUES ($1, 'crypto_asset', 'Test Asset')",
+            "INSERT INTO instruments (id, instrument_class, name, source_record_id)
+             VALUES ($1, 'crypto_asset', 'Test Asset', $2)",
         )
         .bind(id)
+        .bind(self.record)
         .execute(&self.pool)
         .await
         .unwrap();
@@ -128,13 +160,15 @@ impl TestDb {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO listings (id, instrument_id, venue_id, source_id, received_at)
-             VALUES ($1, $2, $3, $4, now())",
+            "INSERT INTO listings (id, instrument_id, venue_id, source_id, received_at, source_record_id)
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(id)
         .bind(instrument_id)
         .bind(venue_id)
         .bind(SOURCE)
+        .bind(ts(RECEIVED_AT))
+        .bind(self.record)
         .execute(&self.pool)
         .await
         .unwrap();

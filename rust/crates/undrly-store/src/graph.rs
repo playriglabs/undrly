@@ -1,5 +1,10 @@
 //! Graph edges in canonical direction. Inverse traversal is a query over the
 //! same rows ([`relationships_to`]), never a stored duplicate.
+//!
+//! A row is one source's assertion of an edge and names the raw record that
+//! first asserted it. Contradictory assertions (e.g. two different `ISSUED_BY`
+//! objects for one instrument) are stored side by side, each with its record;
+//! none is chosen as canonical truth until reconciliation exists.
 
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
@@ -9,13 +14,31 @@ use undrly_core::{CanonicalId, Provenance, Relationship, RelationshipType, Sourc
 use crate::Write;
 use crate::error::{StoreError, corrupt};
 use crate::mapping::{canonical_id_from_sql, timestamp_from_sql};
+use crate::sources::SourceRecordId;
 
-/// Stores a source's current assertion of an edge. Replaying the same
-/// assertion from the same source is [`Write::Unchanged`] and keeps the
-/// original `received_at`; another source's assertion is a separate row.
+/// Database id of one stored edge assertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RelationshipAssertionId(pub i64);
+
+/// An edge as asserted by one source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredRelationship {
+    pub id: RelationshipAssertionId,
+    pub relationship: Relationship,
+    /// The raw record that first asserted this edge for this source. Later
+    /// records from the same source asserting it again are not recorded.
+    pub source_record: SourceRecordId,
+}
+
+/// Stores a source's current assertion of an edge, made by `source_record`
+/// (whose source and receipt time must equal the relationship's provenance).
+/// Replaying the same assertion from the same source is [`Write::Unchanged`]
+/// and keeps the original `received_at` and record; another source's
+/// assertion is a separate row.
 pub async fn insert_relationship(
     conn: &mut PgConnection,
     relationship: &Relationship,
+    source_record: SourceRecordId,
 ) -> Result<Write, StoreError> {
     let subject = relationship.subject();
     let object = relationship.object();
@@ -24,8 +47,8 @@ pub async fn insert_relationship(
     let inserted = sqlx::query(
         "INSERT INTO graph_edges
            (subject_id, subject_category, relationship_type, object_id, object_category,
-            source_id, received_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+            source_id, received_at, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT DO NOTHING",
     )
     .bind(subject.uuid())
@@ -35,6 +58,7 @@ pub async fn insert_relationship(
     .bind(object.category().as_str())
     .bind(provenance.source_id.as_str())
     .bind(provenance.received_at.as_datetime())
+    .bind(source_record.0)
     .execute(conn)
     .await?
     .rows_affected()
@@ -46,15 +70,25 @@ pub async fn insert_relationship(
     })
 }
 
-type EdgeRow = (Uuid, String, String, Uuid, String, String, DateTime<Utc>);
+type EdgeRow = (
+    i64,
+    Uuid,
+    String,
+    String,
+    Uuid,
+    String,
+    String,
+    DateTime<Utc>,
+    i64,
+);
 
-const SELECT: &str = "SELECT subject_id, subject_category, relationship_type, object_id,
-    object_category, source_id, received_at FROM graph_edges";
+const SELECT: &str = "SELECT id, subject_id, subject_category, relationship_type, object_id,
+    object_category, source_id, received_at, source_record_id FROM graph_edges";
 
 fn from_row(
-    (subject, subject_category, kind, object, object_category, source, received): EdgeRow,
-) -> Result<Relationship, StoreError> {
-    Relationship::new(
+    (id, subject, subject_category, kind, object, object_category, source, received, record): EdgeRow,
+) -> Result<StoredRelationship, StoreError> {
+    let relationship = Relationship::new(
         canonical_id_from_sql(subject, &subject_category)?,
         kind.parse::<RelationshipType>()
             .map_err(|e| corrupt("relationship type", e))?,
@@ -64,7 +98,12 @@ fn from_row(
             received_at: timestamp_from_sql(received)?,
         },
     )
-    .map_err(|e| corrupt("relationship", e))
+    .map_err(|e| corrupt("relationship", e))?;
+    Ok(StoredRelationship {
+        id: RelationshipAssertionId(id),
+        relationship,
+        source_record: SourceRecordId(record),
+    })
 }
 
 /// Edges where `subject` is the subject (forward traversal), in id order.
@@ -72,7 +111,7 @@ pub async fn relationships_from(
     conn: &mut PgConnection,
     subject: CanonicalId,
     relationship_type: Option<RelationshipType>,
-) -> Result<Vec<Relationship>, StoreError> {
+) -> Result<Vec<StoredRelationship>, StoreError> {
     let rows: Vec<EdgeRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE subject_id = $1 AND ($2::text IS NULL OR relationship_type = $2) ORDER BY id"
     )))
@@ -88,7 +127,7 @@ pub async fn relationships_to(
     conn: &mut PgConnection,
     object: CanonicalId,
     relationship_type: Option<RelationshipType>,
-) -> Result<Vec<Relationship>, StoreError> {
+) -> Result<Vec<StoredRelationship>, StoreError> {
     let rows: Vec<EdgeRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE object_id = $1 AND ($2::text IS NULL OR relationship_type = $2) ORDER BY id"
     )))

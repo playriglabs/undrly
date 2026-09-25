@@ -11,6 +11,16 @@
 //! back every write of the record, leaving no partial canonical state.
 //! Quarantined conflicts are an outcome, not an error, and are committed.
 //!
+//! # Provenance
+//!
+//! Every fact written (node objects, listing, identifier and symbol
+//! assignments, edges, quarantined claims) names the stored raw record as its
+//! `source_record_id`, and carries that record's source and stored receipt
+//! time. A replay of a stored record therefore reuses its original receipt
+//! time. A fact that already exists is left as is: a second record asserting
+//! it is not recorded as supporting evidence (corroboration is deferred to
+//! reconciliation).
+//!
 //! # Identity resolution
 //!
 //! Each object is found by its **primary identifier** only: entity by LEI,
@@ -30,15 +40,17 @@ use sqlx::{Acquire, PgConnection};
 use undrly_core::identifier::AssignmentError;
 use undrly_core::{
     CanonicalId, Currency, CurrencyId, Entity, EntityId, ExternalIdentifier, IdentifierAssignment,
-    Instrument, InstrumentId, Listing, ListingId, ListingSymbol, Provenance, Relationship,
-    RelationshipError, RelationshipType, SourceId, Timestamp, Validity, Venue, VenueId,
+    Instrument, InstrumentId, Listing, ListingId, ListingSymbol, Relationship, RelationshipError,
+    RelationshipType, SourceId, Timestamp, Validity, Venue, VenueId,
 };
 use undrly_normalize::{NormalizeError, NormalizedReference, ReferenceNormalizer};
 use undrly_provider::{DecodeError, ReferenceDataProvider};
 use undrly_store::conflicts::ConflictId;
 use undrly_store::identifiers::{AssignOutcome, assign_identifier, identifier_history};
 use undrly_store::listing_symbols::{SymbolAssignOutcome, assign_listing_symbol};
-use undrly_store::sources::{SourceRecord, SourceRecordId, get_source, insert_source_record};
+use undrly_store::sources::{
+    RecordProvenance, SourceRecord, SourceRecordId, get_source, insert_source_record,
+};
 use undrly_store::{StoreError, Write, graph, reference};
 
 /// A payload as received from a source.
@@ -156,21 +168,17 @@ where
     if get_source(&mut tx, &source_id).await?.is_none() {
         return Err(IngestError::UnknownSource(source_id));
     }
-    let source_record = insert_source_record(
+    let (record, write) = insert_source_record(
         &mut tx,
         &SourceRecord {
-            source_id: source_id.clone(),
+            source_id,
             record_key: raw.record_key.clone(),
             payload: raw.payload.clone(),
             received_at: raw.received_at,
         },
     )
     .await?;
-    let provenance = Provenance {
-        source_id,
-        received_at: raw.received_at,
-    };
-    let report = persist(&mut tx, &reference, &provenance, source_record).await?;
+    let report = persist(&mut tx, &reference, &record, write).await?;
     tx.commit().await?;
     Ok(report)
 }
@@ -178,9 +186,10 @@ where
 async fn persist(
     tx: &mut PgConnection,
     r: &NormalizedReference,
-    provenance: &Provenance,
-    source_record: (SourceRecordId, Write),
+    record: &RecordProvenance,
+    record_write: Write,
 ) -> Result<IngestReport, IngestError> {
+    let (record_id, provenance) = (record.id, &record.provenance);
     let mut identifiers = Vec::new();
 
     // Entity, by LEI.
@@ -196,12 +205,13 @@ async fn persist(
                     kind: r.issuer.kind,
                     name: r.issuer.name.clone(),
                 },
+                record_id,
             )
             .await?;
             Resolution::Created(id)
         }
     };
-    assign_primary(tx, lei, entity.id().into(), provenance, &mut identifiers).await?;
+    assign_primary(tx, lei, entity.id().into(), record, &mut identifiers).await?;
 
     // Instrument, by ISIN.
     let isin = ExternalIdentifier::Isin(r.instrument.isin.clone());
@@ -216,29 +226,16 @@ async fn persist(
                     class: r.instrument.class,
                     name: r.instrument.name.clone(),
                 },
+                record_id,
             )
             .await?;
             Resolution::Created(id)
         }
     };
-    assign_primary(
-        tx,
-        isin,
-        instrument.id().into(),
-        provenance,
-        &mut identifiers,
-    )
-    .await?;
+    assign_primary(tx, isin, instrument.id().into(), record, &mut identifiers).await?;
     if let Some(figi) = &r.instrument.share_class_figi {
         let figi = ExternalIdentifier::Figi(figi.clone());
-        assign_secondary(
-            tx,
-            figi,
-            instrument.id().into(),
-            provenance,
-            &mut identifiers,
-        )
-        .await?;
+        assign_secondary(tx, figi, instrument.id().into(), record, &mut identifiers).await?;
     }
 
     // Currency, by ISO 4217 code.
@@ -253,12 +250,13 @@ async fn persist(
                     id,
                     name: r.denomination.name.clone(),
                 },
+                record_id,
             )
             .await?;
             Resolution::Created(id)
         }
     };
-    assign_primary(tx, code, currency.id().into(), provenance, &mut identifiers).await?;
+    assign_primary(tx, code, currency.id().into(), record, &mut identifiers).await?;
 
     // Venue, by MIC.
     let mic = ExternalIdentifier::Mic(r.listing.mic.clone());
@@ -272,12 +270,13 @@ async fn persist(
                     id,
                     name: r.listing.venue_name.clone(),
                 },
+                record_id,
             )
             .await?;
             Resolution::Created(id)
         }
     };
-    assign_primary(tx, mic, venue.id().into(), provenance, &mut identifiers).await?;
+    assign_primary(tx, mic, venue.id().into(), record, &mut identifiers).await?;
 
     // Listing, by (instrument, venue).
     let candidates: Vec<Listing> = reference::listings_for_instrument(tx, instrument.id())
@@ -296,6 +295,7 @@ async fn persist(
                     venue_id: venue.id(),
                     provenance: provenance.clone(),
                 },
+                record_id,
             )
             .await?;
             Resolution::Created(id)
@@ -310,7 +310,7 @@ async fn persist(
     };
     if let Some(figi) = &r.listing.exchange_figi {
         let figi = ExternalIdentifier::Figi(figi.clone());
-        assign_secondary(tx, figi, listing.id().into(), provenance, &mut identifiers).await?;
+        assign_secondary(tx, figi, listing.id().into(), record, &mut identifiers).await?;
     }
     let listing_symbol = assign_listing_symbol(
         tx,
@@ -321,6 +321,7 @@ async fn persist(
             valid_during: r.listing.symbol_valid_during,
             provenance: provenance.clone(),
         },
+        record_id,
     )
     .await?;
 
@@ -336,11 +337,14 @@ async fn persist(
             object,
             provenance.clone(),
         )?;
-        relationships.push((kind, graph::insert_relationship(tx, &edge).await?));
+        relationships.push((
+            kind,
+            graph::insert_relationship(tx, &edge, record_id).await?,
+        ));
     }
 
     Ok(IngestReport {
-        source_record,
+        source_record: (record_id, record_write),
         entity,
         instrument,
         currency,
@@ -391,11 +395,15 @@ async fn assign(
     tx: &mut PgConnection,
     identifier: ExternalIdentifier,
     node: CanonicalId,
-    provenance: &Provenance,
+    record: &RecordProvenance,
 ) -> Result<AssignOutcome, IngestError> {
-    let claim =
-        IdentifierAssignment::new(identifier, node, Validity::UNBOUNDED, provenance.clone())?;
-    Ok(assign_identifier(tx, &claim).await?)
+    let claim = IdentifierAssignment::new(
+        identifier,
+        node,
+        Validity::UNBOUNDED,
+        record.provenance.clone(),
+    )?;
+    Ok(assign_identifier(tx, &claim, record.id).await?)
 }
 
 /// A primary identifier must end up mapped to the node it resolved to.
@@ -403,10 +411,10 @@ async fn assign_primary(
     tx: &mut PgConnection,
     identifier: ExternalIdentifier,
     node: CanonicalId,
-    provenance: &Provenance,
+    record: &RecordProvenance,
     report: &mut Vec<(ExternalIdentifier, AssignOutcome)>,
 ) -> Result<(), IngestError> {
-    let outcome = assign(tx, identifier.clone(), node, provenance).await?;
+    let outcome = assign(tx, identifier.clone(), node, record).await?;
     if let AssignOutcome::Conflict { .. } = outcome {
         return Err(IngestError::PrimaryIdentifierRejected {
             identifier,
@@ -422,10 +430,10 @@ async fn assign_secondary(
     tx: &mut PgConnection,
     identifier: ExternalIdentifier,
     node: CanonicalId,
-    provenance: &Provenance,
+    record: &RecordProvenance,
     report: &mut Vec<(ExternalIdentifier, AssignOutcome)>,
 ) -> Result<(), IngestError> {
-    let outcome = assign(tx, identifier.clone(), node, provenance).await?;
+    let outcome = assign(tx, identifier.clone(), node, record).await?;
     report.push((identifier, outcome));
     Ok(())
 }

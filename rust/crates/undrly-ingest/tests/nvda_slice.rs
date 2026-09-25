@@ -25,7 +25,9 @@ use undrly_store::listing_symbols::{
     SymbolAssignOutcome, assign_listing_symbol, listings_with_symbol, resolve_listing_symbol,
     symbols_for_listing,
 };
-use undrly_store::sources::{get_source_record, insert_source};
+use undrly_store::sources::{
+    RecordProvenance, SourceRecord, get_source_record, insert_source, insert_source_record,
+};
 use undrly_store::testing::{TestDb, fresh};
 use undrly_store::{Write, graph, reference};
 
@@ -89,6 +91,27 @@ async fn register(conn: &mut PgConnection, id: &str) {
     )
     .await
     .unwrap();
+}
+
+/// Stores a raw record for facts a test writes through repositories directly.
+async fn manual_record(
+    conn: &mut PgConnection,
+    source: &str,
+    key: &str,
+    received_at: &str,
+) -> RecordProvenance {
+    insert_source_record(
+        conn,
+        &SourceRecord {
+            source_id: SourceId::parse(source).unwrap(),
+            record_key: key.to_owned(),
+            payload: key.as_bytes().to_vec(),
+            received_at: Timestamp::parse(received_at).unwrap(),
+        },
+    )
+    .await
+    .unwrap()
+    .0
 }
 
 /// A migrated database with both fixture sources registered.
@@ -274,6 +297,7 @@ async fn nvda_is_scoped_to_nasdaq_not_global_identity() {
     assert_eq!(global, 0);
 
     // Another venue may use NVDA for an unrelated listing without conflict.
+    let record = manual_record(&mut conn, FIXTURE_SOURCE, "other-venue", RECEIVED_AT).await;
     let other_venue = VenueId::generate();
     reference::insert_venue(
         &mut conn,
@@ -281,6 +305,7 @@ async fn nvda_is_scoped_to_nasdaq_not_global_identity() {
             id: other_venue,
             name: DisplayName::new("Other Venue").unwrap(),
         },
+        record.id,
     )
     .await
     .unwrap();
@@ -298,13 +323,11 @@ async fn nvda_is_scoped_to_nasdaq_not_global_identity() {
             class: InstrumentClass::Equity,
             name: DisplayName::new("Unrelated Test Instrument").unwrap(),
         },
+        record.id,
     )
     .await
     .unwrap();
-    let provenance = Provenance {
-        source_id: SourceId::parse(FIXTURE_SOURCE).unwrap(),
-        received_at: Timestamp::parse(RECEIVED_AT).unwrap(),
-    };
+    let provenance = record.provenance.clone();
     let other_listing = ListingId::generate();
     reference::insert_listing(
         &mut conn,
@@ -314,6 +337,7 @@ async fn nvda_is_scoped_to_nasdaq_not_global_identity() {
             venue_id: other_venue,
             provenance: provenance.clone(),
         },
+        record.id,
     )
     .await
     .unwrap();
@@ -326,6 +350,7 @@ async fn nvda_is_scoped_to_nasdaq_not_global_identity() {
             valid_during: Validity::UNBOUNDED,
             provenance,
         },
+        record.id,
     )
     .await
     .unwrap();
@@ -445,6 +470,7 @@ async fn repository_quarantines_a_conflicting_isin_claim() {
         return;
     };
     let report = ingest(&mut conn, FIXTURE_SOURCE, "nvda.json", RECEIVED_AT).await;
+    let record = manual_record(&mut conn, SECOND_SOURCE, "other", "2026-09-25T08:00:00Z").await;
     let other = InstrumentId::generate();
     reference::insert_instrument(
         &mut conn,
@@ -453,6 +479,7 @@ async fn repository_quarantines_a_conflicting_isin_claim() {
             class: InstrumentClass::Equity,
             name: DisplayName::new("Other Test Instrument").unwrap(),
         },
+        record.id,
     )
     .await
     .unwrap();
@@ -460,13 +487,12 @@ async fn repository_quarantines_a_conflicting_isin_claim() {
         isin(),
         other.into(),
         Validity::UNBOUNDED,
-        Provenance {
-            source_id: SourceId::parse(SECOND_SOURCE).unwrap(),
-            received_at: Timestamp::parse("2026-09-25T08:00:00Z").unwrap(),
-        },
+        record.provenance.clone(),
     )
     .unwrap();
-    let outcome = assign_identifier(&mut conn, &claim).await.unwrap();
+    let outcome = assign_identifier(&mut conn, &claim, record.id)
+        .await
+        .unwrap();
     let AssignOutcome::Conflict {
         quarantined,
         existing,
@@ -489,6 +515,7 @@ async fn repository_quarantines_a_conflicting_isin_claim() {
     );
     let stored = conflicts_for_identifier(&mut conn, &isin()).await.unwrap();
     assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].source_record, record.id);
     assert_eq!(
         stored[0].claim,
         ConflictClaim::Identifier {
@@ -534,7 +561,7 @@ async fn graph_is_reconstructed_from_storage() {
     .await
     .unwrap();
     assert_eq!(issued.len(), 1);
-    let instrument_id = InstrumentId::try_from(issued[0].subject()).unwrap();
+    let instrument_id = InstrumentId::try_from(issued[0].relationship.subject()).unwrap();
     let instrument = reference::get_instrument(&mut conn, instrument_id)
         .await
         .unwrap()
@@ -561,7 +588,7 @@ async fn graph_is_reconstructed_from_storage() {
     .await
     .unwrap();
     assert_eq!(denominated.len(), 1);
-    let currency_id = denominated[0].object().try_into().unwrap();
+    let currency_id = denominated[0].relationship.object().try_into().unwrap();
     let currency = reference::get_currency(&mut conn, currency_id)
         .await
         .unwrap()
@@ -612,7 +639,7 @@ async fn graph_is_reconstructed_from_storage() {
         .unwrap();
     let kinds: Vec<RelationshipType> = all_from_instrument
         .iter()
-        .map(|r| r.relationship_type())
+        .map(|r| r.relationship.relationship_type())
         .collect();
     assert_eq!(
         kinds,
@@ -661,7 +688,7 @@ async fn provenance_survives_the_round_trip() {
         .await
         .unwrap()
     {
-        assert_eq!(edge.provenance(), &expected);
+        assert_eq!(edge.relationship.provenance(), &expected);
     }
     let listing = reference::get_listing(&mut conn, report.listing.id())
         .await
@@ -691,7 +718,7 @@ async fn provenance_survives_the_round_trip() {
     .await
     .unwrap()
     .iter()
-    .map(|r| r.provenance().source_id.to_string())
+    .map(|r| r.relationship.provenance().source_id.to_string())
     .collect();
     assert_eq!(sources, vec![FIXTURE_SOURCE, SECOND_SOURCE]);
     drop(conn);
@@ -757,12 +784,17 @@ async fn repository_writes_are_atomic() {
     .execute(&mut *conn)
     .await
     .unwrap();
+    let record = manual_record(&mut conn, FIXTURE_SOURCE, "entity", RECEIVED_AT).await;
     let entity = undrly_core::Entity {
         id: EntityId::generate(),
         kind: undrly_core::EntityKind::Company,
         name: DisplayName::new("Test Entity").unwrap(),
     };
-    assert!(reference::insert_entity(&mut conn, &entity).await.is_err());
+    assert!(
+        reference::insert_entity(&mut conn, &entity, record.id)
+            .await
+            .is_err()
+    );
     // The node row written before the failing entity row was rolled back.
     assert!(
         reference::get_node(&mut conn, entity.id.uuid())

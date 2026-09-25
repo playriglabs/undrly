@@ -3,6 +3,10 @@
 //! A conflict row records a claim that collided with an existing mapping. It
 //! is evidence for investigation, never authoritative: nothing here changes
 //! canonical identity, merges nodes, or picks a winning source.
+//!
+//! Each row names the raw source record that made the claim. The same claim
+//! from a different record is separate evidence and gets its own row; a replay
+//! of the same record finds the existing row.
 
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
@@ -21,6 +25,7 @@ use crate::mapping::{
     canonical_id_from_sql, external_identifier_from_sql, timestamp_from_sql, validity_from_range,
     validity_to_range,
 };
+use crate::sources::SourceRecordId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConflictId(pub i64);
@@ -42,13 +47,18 @@ pub enum ConflictClaim {
 pub struct StoredConflict {
     pub id: ConflictId,
     pub claim: ConflictClaim,
+    /// The raw record that made the claim.
+    pub source_record: SourceRecordId,
     pub detected_at: Timestamp,
 }
 
-/// Records a conflict. Replaying the same claim returns the existing row.
+/// Records a conflict claimed by `source_record`, whose source and receipt
+/// time must equal the claim's provenance. Replaying the same claim from the
+/// same record returns the existing row.
 pub async fn record_identifier_conflict(
     conn: &mut PgConnection,
     conflict: &ConflictClaim,
+    source_record: SourceRecordId,
 ) -> Result<(ConflictId, Write), StoreError> {
     let (namespace, value, scope, node, category, validity, provenance, identifier, symbol) =
         match conflict {
@@ -79,8 +89,8 @@ pub async fn record_identifier_conflict(
         "INSERT INTO identifier_conflicts
            (namespace, value, scope_venue_id, claimed_node_id, claimed_node_category,
             claimed_valid_during, source_id, received_at,
-            conflicting_identifier_id, conflicting_listing_symbol_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            conflicting_identifier_id, conflicting_listing_symbol_id, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT ON CONSTRAINT identifier_conflicts_replay_key DO NOTHING
          RETURNING id",
     )
@@ -94,6 +104,7 @@ pub async fn record_identifier_conflict(
     .bind(provenance.received_at.as_datetime())
     .bind(identifier)
     .bind(symbol)
+    .bind(source_record.0)
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = inserted {
@@ -104,7 +115,8 @@ pub async fn record_identifier_conflict(
          WHERE namespace = $1 AND value = $2 AND scope_venue_id IS NOT DISTINCT FROM $3
            AND claimed_node_id = $4 AND claimed_valid_during = $5 AND source_id = $6
            AND conflicting_identifier_id IS NOT DISTINCT FROM $7
-           AND conflicting_listing_symbol_id IS NOT DISTINCT FROM $8",
+           AND conflicting_listing_symbol_id IS NOT DISTINCT FROM $8
+           AND source_record_id = $9",
     )
     .bind(namespace)
     .bind(&value)
@@ -114,6 +126,7 @@ pub async fn record_identifier_conflict(
     .bind(provenance.source_id.as_str())
     .bind(identifier)
     .bind(symbol)
+    .bind(source_record.0)
     .fetch_one(conn)
     .await?;
     Ok((ConflictId(id), Write::Unchanged))
@@ -131,12 +144,13 @@ type ConflictRow = (
     DateTime<Utc>,
     Option<i64>,
     Option<i64>,
+    i64,
     DateTime<Utc>,
 );
 
 const SELECT: &str = "SELECT id, namespace, value, scope_venue_id, claimed_node_id,
     claimed_node_category, claimed_valid_during, source_id, received_at,
-    conflicting_identifier_id, conflicting_listing_symbol_id, detected_at
+    conflicting_identifier_id, conflicting_listing_symbol_id, source_record_id, detected_at
     FROM identifier_conflicts";
 
 fn conflict_from_row(row: ConflictRow) -> Result<StoredConflict, StoreError> {
@@ -152,6 +166,7 @@ fn conflict_from_row(row: ConflictRow) -> Result<StoredConflict, StoreError> {
         received,
         ident,
         symbol,
+        record,
         detected,
     ) = row;
     let provenance = Provenance {
@@ -190,6 +205,7 @@ fn conflict_from_row(row: ConflictRow) -> Result<StoredConflict, StoreError> {
     Ok(StoredConflict {
         id: ConflictId(id),
         claim,
+        source_record: SourceRecordId(record),
         detected_at: timestamp_from_sql(detected)?,
     })
 }

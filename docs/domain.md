@@ -52,7 +52,9 @@ conflicts are quarantined by storage, never auto-resolved.
   precision (matches `timestamptz`) and years 0001–9999. `Validity` is a
   half-open, non-empty `[from, until)` with optional bounds.
 - **Sources:** `SourceId` slug; `Redistribution::Unknown` is treated as
-  restricted. `Provenance` = source + received time.
+  restricted. `Provenance` = source + received time. The raw record a fact
+  came from is a storage concern (`source_record_id`, see `persistence.md`);
+  core has no database ids.
 
 ## Reference objects
 

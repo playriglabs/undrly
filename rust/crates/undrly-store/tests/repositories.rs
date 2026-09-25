@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{SOURCE, fresh};
+use common::{RECEIVED_AT, SOURCE, fresh};
 use undrly_core::{
     CurrencyCode, DisplayName, Entity, EntityId, EntityKind, ExternalIdentifier,
     IdentifierAssignment, Instrument, InstrumentClass, InstrumentId, Listing, ListingId,
@@ -11,13 +11,15 @@ use undrly_core::{
 };
 use undrly_store::identifiers::{AssignOutcome, assign_identifier};
 use undrly_store::listing_symbols::{SymbolAssignOutcome, assign_listing_symbol};
-use undrly_store::sources::{SourceRecord, get_source, insert_source, insert_source_record};
+use undrly_store::sources::{
+    SourceRecord, SourceRecordId, get_source, insert_source, insert_source_record,
+};
 use undrly_store::{StoreError, Write, reference};
 
 fn provenance() -> Provenance {
     Provenance {
         source_id: SourceId::parse(SOURCE).unwrap(),
-        received_at: Timestamp::parse("2026-09-24T12:00:00Z").unwrap(),
+        received_at: Timestamp::parse(RECEIVED_AT).unwrap(),
     }
 }
 
@@ -33,6 +35,7 @@ fn t(s: &str) -> Option<Timestamp> {
 async fn inserts_are_idempotent_and_never_overwrite() {
     let Some(db) = fresh().await else { return };
     let mut conn = db.pool.acquire().await.unwrap();
+    let record = SourceRecordId(db.record);
 
     let source = Source {
         id: SourceId::parse("repo-source").unwrap(),
@@ -66,11 +69,15 @@ async fn inserts_are_idempotent_and_never_overwrite() {
         name: name("Test Co"),
     };
     assert_eq!(
-        reference::insert_entity(&mut conn, &entity).await.unwrap(),
+        reference::insert_entity(&mut conn, &entity, record)
+            .await
+            .unwrap(),
         Write::Inserted
     );
     assert_eq!(
-        reference::insert_entity(&mut conn, &entity).await.unwrap(),
+        reference::insert_entity(&mut conn, &entity, record)
+            .await
+            .unwrap(),
         Write::Unchanged
     );
     let renamed = Entity {
@@ -78,7 +85,7 @@ async fn inserts_are_idempotent_and_never_overwrite() {
         ..entity.clone()
     };
     assert!(matches!(
-        reference::insert_entity(&mut conn, &renamed).await,
+        reference::insert_entity(&mut conn, &renamed, record).await,
         Err(StoreError::ExistingRecordDiffers { what: "entity", .. })
     ));
     assert_eq!(
@@ -92,25 +99,28 @@ async fn inserts_are_idempotent_and_never_overwrite() {
         Some(entity.id.canonical())
     );
 
-    let record = SourceRecord {
+    let raw = SourceRecord {
         source_id: SourceId::parse(SOURCE).unwrap(),
         record_key: "k".into(),
         payload: b"payload".to_vec(),
-        received_at: Timestamp::parse("2026-09-24T12:00:00Z").unwrap(),
+        received_at: Timestamp::parse(RECEIVED_AT).unwrap(),
     };
-    let (id, write) = insert_source_record(&mut conn, &record).await.unwrap();
+    let (stored, write) = insert_source_record(&mut conn, &raw).await.unwrap();
     assert_eq!(write, Write::Inserted);
+    assert_eq!(stored.provenance, provenance());
+    // A replay keeps the original receipt time, which is the provenance every
+    // fact derived from the record carries.
     let later = SourceRecord {
         received_at: Timestamp::parse("2026-09-25T12:00:00Z").unwrap(),
-        ..record.clone()
+        ..raw.clone()
     };
     assert_eq!(
         insert_source_record(&mut conn, &later).await.unwrap(),
-        (id, Write::Unchanged)
+        (stored, Write::Unchanged)
     );
     let changed_payload = SourceRecord {
         payload: b"payload v2".to_vec(),
-        ..record
+        ..raw
     };
     assert_eq!(
         insert_source_record(&mut conn, &changed_payload)
@@ -128,11 +138,12 @@ async fn inserts_are_idempotent_and_never_overwrite() {
 async fn identifier_period_overlap_on_same_node_writes_nothing() {
     let Some(db) = fresh().await else { return };
     let mut conn = db.pool.acquire().await.unwrap();
+    let record = SourceRecordId(db.record);
     let currency = undrly_core::Currency {
         id: undrly_core::CurrencyId::generate(),
         name: name("Test Currency"),
     };
-    reference::insert_currency(&mut conn, &currency)
+    reference::insert_currency(&mut conn, &currency, record)
         .await
         .unwrap();
     let code = ExternalIdentifier::Iso4217(CurrencyCode::parse("TST").unwrap());
@@ -143,11 +154,12 @@ async fn identifier_period_overlap_on_same_node_writes_nothing() {
     let first = assign_identifier(
         &mut conn,
         &claim(Validity::new(t("2020-01-01T00:00:00Z"), None).unwrap()),
+        record,
     )
     .await
     .unwrap();
     assert!(matches!(first, AssignOutcome::Assigned(_)));
-    let overlapping = assign_identifier(&mut conn, &claim(Validity::UNBOUNDED))
+    let overlapping = assign_identifier(&mut conn, &claim(Validity::UNBOUNDED), record)
         .await
         .unwrap();
     assert!(
@@ -158,6 +170,7 @@ async fn identifier_period_overlap_on_same_node_writes_nothing() {
     let earlier = assign_identifier(
         &mut conn,
         &claim(Validity::new(None, t("2020-01-01T00:00:00Z")).unwrap()),
+        record,
     )
     .await
     .unwrap();
@@ -175,6 +188,7 @@ async fn identifier_period_overlap_on_same_node_writes_nothing() {
 async fn listing_symbol_rules() {
     let Some(db) = fresh().await else { return };
     let mut conn = db.pool.acquire().await.unwrap();
+    let record = SourceRecordId(db.record);
     let venue = Venue {
         id: VenueId::generate(),
         name: name("Test Venue"),
@@ -183,8 +197,10 @@ async fn listing_symbol_rules() {
         id: VenueId::generate(),
         name: name("Other Venue"),
     };
-    reference::insert_venue(&mut conn, &venue).await.unwrap();
-    reference::insert_venue(&mut conn, &other_venue)
+    reference::insert_venue(&mut conn, &venue, record)
+        .await
+        .unwrap();
+    reference::insert_venue(&mut conn, &other_venue, record)
         .await
         .unwrap();
     let instrument = Instrument {
@@ -192,7 +208,7 @@ async fn listing_symbol_rules() {
         class: InstrumentClass::Equity,
         name: name("Test Instrument"),
     };
-    reference::insert_instrument(&mut conn, &instrument)
+    reference::insert_instrument(&mut conn, &instrument, record)
         .await
         .unwrap();
     let listing = Listing {
@@ -202,13 +218,13 @@ async fn listing_symbol_rules() {
         provenance: provenance(),
     };
     assert_eq!(
-        reference::insert_listing(&mut conn, &listing)
+        reference::insert_listing(&mut conn, &listing, record)
             .await
             .unwrap(),
         Write::Inserted
     );
     assert_eq!(
-        reference::insert_listing(&mut conn, &listing)
+        reference::insert_listing(&mut conn, &listing, record)
             .await
             .unwrap(),
         Write::Unchanged
@@ -218,7 +234,7 @@ async fn listing_symbol_rules() {
         ..listing.clone()
     };
     assert!(matches!(
-        reference::insert_listing(&mut conn, &moved).await,
+        reference::insert_listing(&mut conn, &moved, record).await,
         Err(StoreError::ExistingRecordDiffers {
             what: "listing",
             ..
@@ -233,23 +249,23 @@ async fn listing_symbol_rules() {
         provenance: provenance(),
     };
     assert!(matches!(
-        assign_listing_symbol(&mut conn, &symbol(other_venue.id, "TST")).await,
+        assign_listing_symbol(&mut conn, &symbol(other_venue.id, "TST"), record).await,
         Err(StoreError::ListingVenueMismatch { .. })
     ));
     assert!(matches!(
-        assign_listing_symbol(&mut conn, &symbol(venue.id, "TST"))
+        assign_listing_symbol(&mut conn, &symbol(venue.id, "TST"), record)
             .await
             .unwrap(),
         SymbolAssignOutcome::Assigned(_)
     ));
     assert!(matches!(
-        assign_listing_symbol(&mut conn, &symbol(venue.id, "TST"))
+        assign_listing_symbol(&mut conn, &symbol(venue.id, "TST"), record)
             .await
             .unwrap(),
         SymbolAssignOutcome::Unchanged(_)
     ));
     // A different symbol for the same listing and period is reported, not written.
-    let other = assign_listing_symbol(&mut conn, &symbol(venue.id, "TST2"))
+    let other = assign_listing_symbol(&mut conn, &symbol(venue.id, "TST2"), record)
         .await
         .unwrap();
     assert!(

@@ -14,6 +14,7 @@ use crate::mapping::{
     canonical_id_from_sql, external_identifier_from_sql, timestamp_from_sql, validity_from_range,
     validity_to_range,
 };
+use crate::sources::SourceRecordId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct IdentifierAssignmentId(pub i64);
@@ -22,6 +23,9 @@ pub struct IdentifierAssignmentId(pub i64);
 pub struct StoredIdentifier {
     pub id: IdentifierAssignmentId,
     pub assignment: IdentifierAssignment,
+    /// The raw record whose ingestion wrote this mapping. Records that later
+    /// asserted the same mapping are not recorded (corroboration is deferred).
+    pub source_record: SourceRecordId,
 }
 
 /// Result of [`assign_identifier`]. Only `Assigned` writes a mapping; nothing
@@ -31,7 +35,8 @@ pub enum AssignOutcome {
     /// The mapping was stored.
     Assigned(IdentifierAssignmentId),
     /// The same identifier → node mapping for the same period already exists
-    /// (for example a replay). Its original provenance is kept.
+    /// (for example a replay). Its original provenance and source record are
+    /// kept; the new record is not recorded as supporting evidence.
     Unchanged(IdentifierAssignmentId),
     /// The identifier is mapped to a different node for an overlapping period.
     /// The claim was quarantined in `identifier_conflicts`; canonical identity
@@ -55,14 +60,14 @@ type IdentifierRow = (
     PgRange<DateTime<Utc>>,
     String,
     DateTime<Utc>,
+    i64,
 );
 
-const SELECT: &str =
-    "SELECT id, scheme, value, node_id, node_category, valid_during, source_id, received_at
-    FROM identifiers";
+const SELECT: &str = "SELECT id, scheme, value, node_id, node_category, valid_during, source_id,
+    received_at, source_record_id FROM identifiers";
 
 fn from_row(
-    (id, scheme, value, node, category, validity, source, received): IdentifierRow,
+    (id, scheme, value, node, category, validity, source, received, record): IdentifierRow,
 ) -> Result<StoredIdentifier, StoreError> {
     let assignment = IdentifierAssignment::new(
         external_identifier_from_sql(&scheme, &value)?,
@@ -77,6 +82,7 @@ fn from_row(
     Ok(StoredIdentifier {
         id: IdentifierAssignmentId(id),
         assignment,
+        source_record: SourceRecordId(record),
     })
 }
 
@@ -98,6 +104,7 @@ async fn overlapping(
 async fn classify(
     conn: &mut PgConnection,
     claim: &IdentifierAssignment,
+    source_record: SourceRecordId,
     existing: Vec<StoredIdentifier>,
 ) -> Result<AssignOutcome, StoreError> {
     let other_nodes: Vec<&StoredIdentifier> = existing
@@ -111,7 +118,11 @@ async fn classify(
                 claim: claim.clone(),
                 existing: collided.id,
             };
-            quarantined.push(record_identifier_conflict(conn, &conflict).await?.0);
+            quarantined.push(
+                record_identifier_conflict(conn, &conflict, source_record)
+                    .await?
+                    .0,
+            );
         }
         return Ok(AssignOutcome::Conflict {
             quarantined,
@@ -126,7 +137,10 @@ async fn classify(
     }
 }
 
-/// Assigns an external identifier to a node, atomically.
+/// Assigns an external identifier to a node, atomically, as asserted by the
+/// raw record `source_record`. The claim's source and receipt time must be the
+/// record's (see [`crate::sources::RecordProvenance`]); a quarantined claim
+/// also names the record.
 ///
 /// Runs in one transaction (a savepoint when the caller already has one): the
 /// mapping is inserted, or found unchanged, or the claim is quarantined and
@@ -135,6 +149,7 @@ async fn classify(
 pub async fn assign_identifier(
     conn: &mut PgConnection,
     claim: &IdentifierAssignment,
+    source_record: SourceRecordId,
 ) -> Result<AssignOutcome, StoreError> {
     let mut tx = conn.begin().await?;
     let existing = overlapping(&mut tx, claim).await?;
@@ -142,8 +157,9 @@ pub async fn assign_identifier(
         let mut attempt = tx.begin().await?;
         let inserted: Result<i64, sqlx::Error> = sqlx::query_scalar(
             "INSERT INTO identifiers
-               (scheme, value, node_id, node_category, valid_during, source_id, received_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+               (scheme, value, node_id, node_category, valid_during, source_id, received_at,
+                source_record_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
         )
         .bind(claim.identifier().namespace().as_str())
         .bind(claim.identifier().value())
@@ -152,6 +168,7 @@ pub async fn assign_identifier(
         .bind(validity_to_range(claim.valid_during()))
         .bind(claim.provenance().source_id.as_str())
         .bind(claim.provenance().received_at.as_datetime())
+        .bind(source_record.0)
         .fetch_one(&mut *attempt)
         .await;
         match inserted {
@@ -162,12 +179,12 @@ pub async fn assign_identifier(
             Err(err) if is_exclusion_violation(&err) => {
                 attempt.rollback().await?;
                 let existing = overlapping(&mut tx, claim).await?;
-                classify(&mut tx, claim, existing).await?
+                classify(&mut tx, claim, source_record, existing).await?
             }
             Err(err) => return Err(err.into()),
         }
     } else {
-        classify(&mut tx, claim, existing).await?
+        classify(&mut tx, claim, source_record, existing).await?
     };
     tx.commit().await?;
     Ok(outcome)
