@@ -70,20 +70,30 @@ relationships or identifier assignments, not fields.
 `subject TYPE object` in one canonical direction: dependent → thing it depends
 on. Inverses (`UNDERLYING_OF`) are derived at query time; `LISTED_ON` is
 projected from listings. `RelationshipType::allowed_endpoints` is the storable
-set and equals the database's `relationship_rules`; types with no rules yet
-(`DERIVES_FROM`, `HOLDS`, `TRACKS`, `MEMBER_OF`, `TOKENIZES`, `REPRESENTS`,
+set and equals the database's `relationship_rules`. `DERIVES_FROM` is
+storable instrument → instrument (a perpetual → its underlying). Types with
+no rules yet (`HOLDS`, `TRACKS`, `MEMBER_OF`, `TOKENIZES`, `REPRESENTS`,
 `PRICED_BY`, `AVAILABLE_ON`, `RELATED_TO`) cannot be constructed until their
 node categories exist. Provenance is mandatory. A relationship is a current
 assertion by a source; validity periods are deferred.
 
 ## Market observations
 
-`MarketObservation::new(instrument_id, basis, price, unit, source_id,
-observed_at, received_at)`:
+`MarketObservation::new(subject, basis, price_type, price, bid_ask, unit,
+source_id, observed_at, received_at)`:
 
+- `subject`: `PriceSubject::Instrument(InstrumentId) | PriceSubject::Currency(CurrencyId)`
+  (FX prices a currency, e.g. 1 EUR in USD).
 - `basis`: `Venue(VenueId) | Aggregated | Derived`, so a venue quote always
   names its venue and derived values never pose as venue quotes.
+- `price_type`: `last | mid | mark | reference`; `bid_ask` is optional and
+  never crossed.
 - `unit`: `PriceUnit::Currency(CurrencyId) | PriceUnit::Asset(InstrumentId)`.
   Codes/symbols are never unit identity. Self-denominated prices are rejected.
-- `observed_at` (source time) and `received_at` (Undrly time) are separate;
-  no ordering is enforced (clocks differ). Freshness is computed at read time.
+- `observed_at` (source time, `None` when the source states none) and
+  `received_at` (Undrly time) are separate; no ordering is enforced (clocks
+  differ). Freshness is computed at read time.
+
+Canonical quotes come from observations through a named aggregation method
+(`undrly_core::quote`): `latest-observation-v1`, or `mean-venue-mid-v1` for
+BTC/USD. See `docs/hackathon-v1.md` §13.

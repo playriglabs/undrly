@@ -244,3 +244,23 @@ upstream response bytes. `QuoteV1.aggregation.inputs` exposes
 `observationId`, `sourceId`, `venue`, `price` and `sourceRecordId`.
 Observations are never copied, changed, or deleted by aggregation. Removing
 a canonical quote removes only its input links.
+
+## 14. Scope freeze
+
+Hackathon v1's data architecture is **frozen** as of the approved BTC/USD
+milestone:
+
+- **Universe:** NVDA, BTC/USD, EUR/USD, XAU/USD, BTC-PERP. No other markets
+  or instruments.
+- **Sources:** Kraken, Coinbase, Hyperliquid, gold-api, Alpaca (IEX feed),
+  plus curated reference data. No other providers.
+- **Aggregation:** `latest-observation-v1` everywhere, and `mean-venue-mid-v1`
+  for BTC/USD only. No other methods.
+- **Not in scope:** caches, WebSockets, history/OHLC, identity resolution
+  (Phase 5), reconciliation, SDK, MCP, auth, billing, frontend, deployment.
+
+Remaining hackathon work is presentation only: README, `GET /`,
+`scripts/dev.sh` and `scripts/present.sh`. `scripts/demo.sh` stays the
+verification harness. Upstream data remains local/private demo only;
+redistribution terms are unreviewed, and no production redistribution
+rights are claimed.

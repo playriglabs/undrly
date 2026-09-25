@@ -1,6 +1,7 @@
 /**
  * Read-only HTTP API (docs/hackathon-v1.md §7).
  *
+ * GET /                         service name, endpoints, examples
  * GET /v1/search?q=              ranked candidates (discovery only)
  * GET /v1/resolve?q=             resolved | ambiguous | not_found
  * GET /v1/quote/:query  (?q=)    one canonical QuoteV1
@@ -30,6 +31,31 @@ const STATUS: Record<ErrorCode, 400 | 404 | 409> = {
   ambiguous: 409,
 };
 
+/** `GET /`: discovery only; no capabilities beyond the routes below. */
+const SERVICE_INDEX = v1.ServiceIndexV1.parse({
+  schemaVersion: 1,
+  name: "Undrly",
+  description: "One normalized API across every market.",
+  endpoints: [
+    { path: "/v1/quote/{query}", returns: "one canonical quote for a market" },
+    { path: "/v1/quotes/{query}", returns: "the per-source observations behind it" },
+    { path: "/v1/search?q=", returns: "matching instruments, currencies and venues" },
+    { path: "/v1/resolve?q=", returns: "what a query refers to" },
+    { path: "/v1/instruments/{id}/graph", returns: "an instrument's direct relationships" },
+  ],
+  examples: [
+    "/v1/quote/NVDA",
+    "/v1/quote/BTC/USD",
+    "/v1/quote/EUR/USD",
+    "/v1/quote/XAU/USD",
+    "/v1/quote/BTC-PERP",
+    "/v1/quotes/BTC/USD",
+    "/v1/search?q=gold",
+  ],
+  dataUse:
+    "Local/private demo only. Upstream redistribution terms are unreviewed; no production redistribution rights are claimed.",
+});
+
 export type AppOptions = {
   staleAfterSeconds: number;
   now?: () => Date;
@@ -50,6 +76,8 @@ export function createApp(sql: Sql, options: AppOptions) {
   const queryOf = (param: string | undefined, q: string | undefined) => (param ?? q ?? "").trim();
 
   app.get("/health", (c) => c.json({ status: "ok" }));
+
+  app.get("/", (c) => c.json(SERVICE_INDEX));
 
   app.get("/v1/search", async (c) => {
     const q = (c.req.query("q") ?? "").trim();

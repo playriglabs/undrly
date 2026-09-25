@@ -1,6 +1,7 @@
 # Quote sources (hackathon v1)
 
-Four real upstreams price the demo universe, and a curated dataset supplies
+Five real upstreams (Kraken, Coinbase, Hyperliquid, gold-api, Alpaca) price
+the demo universe, and a curated dataset supplies
 reference data. Every response is stored raw (exact bytes) as a
 `source_record` before anything is derived from it. Every observation names
 that record.

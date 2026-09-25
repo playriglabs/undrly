@@ -1,5 +1,5 @@
-# Local development database only. No schema or migrations exist yet
-# (persistence is Phase 2). Bound to localhost; not a deployment definition.
+# Local development database only (used by scripts/dev.sh). The collector's
+# `seed` applies migrations. Bound to localhost; not a deployment definition.
 services:
   postgres:
     image: postgres:17

@@ -96,9 +96,9 @@ category table in the same transaction.
 - **`LISTED_ON` comes from `listings`**, and `UNDERLYING_OF` is the query-time
   inverse of `DERIVES_FROM`; neither can be stored as an edge.
 - **Relationship rules seeded now:** `ISSUED_BY`, `TRADES_ON`,
-  `DENOMINATED_IN`, `SETTLES_IN`. Other types get rules when their node
-  categories or classes (fund, index, derivative, token, chain, oracle feed)
-  exist.
+  `DENOMINATED_IN`, `SETTLES_IN`, and (0009) `DERIVES_FROM` instrument →
+  instrument. Other types get rules when their node categories or classes
+  (fund, index, token, chain, oracle feed) exist.
 
 ## Repositories
 
@@ -114,6 +114,8 @@ provider logic. No generic CRUD abstraction.
 | `listing_symbols` | `assign_listing_symbol` → `SymbolAssignOutcome`, `resolve_listing_symbol(venue, at)`, `listings_with_symbol(at)`, `symbols_for_listing` |
 | `graph` | `insert_relationship`, `relationships_from` (forward), `relationships_to` (inverse) → `StoredRelationship` |
 | `conflicts` | `record_identifier_conflict`, `conflicts_for_identifier`, `conflicts_for_listing_symbol` |
+| `aliases` | `insert_alias`, `aliases_of` (search terms, never identity) |
+| `market` | `insert_quote_feed`, `quote_feeds_of_source`, `insert_observation`, `latest_observations`, `insert_quote_aggregation`, `aggregation_method_of`, `upsert_canonical_quote`, `get_canonical_quote`, `delete_canonical_quote` |
 
 Semantics:
 
@@ -219,10 +221,12 @@ fact --source_record_id--> source_records --source_id--> sources
 
 ## Deferred
 
-A read-only role for the API (created when the API exists), `updated_at`
-tracking, node merges/redirects, `markets`, a latest-price table, onchain
-amounts (`numeric(78,0)` + `decimals`, `AGENT.md` §20), partitioning, and
-observation repositories (market-price ingestion).
+A dedicated read-only database role for the API (it currently sets
+`default_transaction_read_only` per connection), `updated_at` tracking, node
+merges/redirects, `markets` as nodes, onchain amounts (`numeric(78,0)` +
+`decimals`, `AGENT.md` §20), partitioning, and raw-record retention.
+Observations, quote feeds and canonical quotes exist since migrations
+0009–0010 (see `docs/hackathon-v1.md`).
 
 ## Testing
 

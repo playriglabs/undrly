@@ -106,3 +106,14 @@ export const ErrorV1 = z.strictObject({
   }),
 });
 export type ErrorV1 = z.infer<typeof ErrorV1>;
+
+/** `GET /`: what this service is, its endpoints, and example requests. */
+export const ServiceIndexV1 = z.strictObject({
+  schemaVersion: z.literal(1),
+  name: z.literal("Undrly"),
+  description: z.string().min(1),
+  endpoints: z.array(z.strictObject({ path: z.string().min(1), returns: z.string().min(1) })),
+  examples: z.array(z.string().startsWith("/")),
+  dataUse: z.string().min(1),
+});
+export type ServiceIndexV1 = z.infer<typeof ServiceIndexV1>;

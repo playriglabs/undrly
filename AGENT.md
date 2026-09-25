@@ -5,26 +5,30 @@
 **Name:** Undrly\
 **Domain:** `undrly.xyz`\
 **Category:** Financial data infrastructure / developer infrastructure\
-**Tagline:** **One graph for every market.**
+**Tagline:** **Undrly — one normalized API across every market.**
 
-Undrly is a universal identity, relationship, and normalized data layer
-for financial instruments.
+Collect fragmented market data, normalize it, aggregate it, and serve it
+through one interface.
+
+Canonical identity, relationships, and provenance are the foundations that
+keep that interface correct; they are not the headline.
 
 Financial markets are fragmented across exchanges, chains, vendors,
 identifiers, and asset classes. The same economic exposure may appear as
 an equity, derivative, ETF holding, index constituent, tokenized asset,
 oracle feed, prediction market, or liquidity venue.
 
-Undrly resolves these fragmented representations into a canonical
-financial instrument graph and exposes that graph through developer
-APIs.
+Undrly normalizes these fragmented representations into one model and
+serves them through one developer API; underneath, it connects them in a
+canonical financial instrument graph.
 
 > Markets are fragmented. The underlying isn't.
 
 Undrly is **not** a trading terminal, brokerage, portfolio app, or
-generic price API. The core product is infrastructure: canonical
-identity, relationships, provenance, normalized observations, and
-cross-market discovery.
+generic price API. The core product is infrastructure: one normalized
+interface over fragmented markets, built on canonical identity,
+relationships, provenance, normalized observations, and cross-market
+discovery.
 
 ---
 
@@ -1320,4 +1324,4 @@ liquidity
 Applications integrate once instead of independently rebuilding
 identity, mapping, normalization, and provenance for every market.
 
-> **One graph for every market.**
+> **Undrly — one normalized API across every market.**

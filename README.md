@@ -1,182 +1,163 @@
 # Undrly
 
-**One graph for every market.**
+**One normalized API across every market.**
 
-Undrly is financial data infrastructure: a canonical identity, relationship,
-and normalized-observation layer for financial instruments, exposed through
-developer APIs. A ticker is not an identity; Undrly's job is to connect the
-identifiers, listings, and representations that refer to the same economic
-exposure, with provenance for every fact.
+Collect fragmented market data, normalize it, aggregate it, and serve it
+through one interface.
 
-`AGENT.md` is the architectural source of truth.
-
-## What Undrly is not
-
-Not a trading terminal, brokerage, portfolio app, wallet, or generic price
-API. There is no frontend in the current scope.
-
-## Current status
-
-**Phases 0–2, the Phase 3 NVDA identity slice, the first real source (SEC
-EDGAR, NVIDIA only), and the hackathon v1 cross-market slice
-([`docs/hackathon-v1.md`](docs/hackathon-v1.md)).**
-
-One read-only API (`search`, `resolve`, `quote`, `quotes`, `graph`) serves
-five markets through one contract: NVDA (IEX venue quote via Alpaca),
-BTC/USD (Kraken), EUR/USD (Kraken), XAU/USD (gold-api, aggregated) and the
-BTC perpetual (Hyperliquid, mark price in USDC). Every quote traces to the
-exact upstream response ([`docs/sources/quotes.md`](docs/sources/quotes.md)).
-
-A deterministic fixture record for NVIDIA / NVDA flows through decode,
-normalize, identity resolution, and PostgreSQL, and is read back. NVIDIA's
-SEC EDGAR submissions document can be fetched live and ingested as an
-entity with its CIK, traceable to the exact stored response
-([`docs/sources/sec-edgar.md`](docs/sources/sec-edgar.md)). There is no HTTP
-API and no market data. Nothing here is production-ready.
-
-## Architecture
-
-```text
-External sources → Rust providers → validation → normalization
-  → canonical domain → PostgreSQL → TypeScript API (Resolve, Graph, Markets)
-```
-
-The canonical domain, the PostgreSQL schema, and the API contract package
-exist today.
-
-| Rust — data plane                                    | TypeScript — API/control plane           |
-| ---------------------------------------------------- | ---------------------------------------- |
-| provider ingestion, decoding, validation             | REST API, query orchestration            |
-| normalization, reconciliation, timestamping          | Resolve, Graph, Search, metadata APIs    |
-| **canonical financial domain** (origin of semantics) | consumes versioned contracts from Rust   |
-| market observations, latency-sensitive processing    | auth, rate limits, SDK, MCP (later)      |
-
-Rules enforced in code:
-
-- Canonical ids are generated UUIDv7s (`undrly:<category>:<id>`), never derived
-  from names, tickers, or external identifiers. External identifiers map to
-  them through an identifier layer with history.
-- Exact financial values use `rust_decimal::Decimal`; `f32`/`f64` are banned by
-  clippy. Decimals cross language boundaries as strings (`"183.4200"`).
-- Timestamps are UTC with microsecond precision; `observed_at` (source time) and
-  `received_at` (Undrly time) are always separate.
-- Relationships are stored in one canonical direction and cannot be
-  constructed without provenance.
-- PostgreSQL is the internal Rust → TypeScript contract; the JSON API contract
-  is owned by TypeScript.
-
-Design notes: [`docs/domain.md`](docs/domain.md),
-[`docs/persistence.md`](docs/persistence.md),
-[`docs/contracts.md`](docs/contracts.md).
-
-## Repository structure
-
-```text
-undrly/
-├── rust/                       Cargo workspace (data plane)
-│   └── crates/
-│       ├── undrly-core/        canonical domain (no I/O)
-│       ├── undrly-store/       PostgreSQL migrations, mapping, repositories
-│       ├── undrly-provider/    provider capabilities, fixture + SEC EDGAR providers (only network code)
-│       ├── undrly-normalize/   provider records → validated canonical values (pure)
-│       ├── undrly-ingest/      resolve identities + persist, quotes + aggregation
-│       └── undrly-collect/     demo collector binary: seed, sequential polling
-├── typescript/                 Bun workspace (API plane)
-│   ├── apps/
-│   │   └── api/                read-only Hono API (search, resolve, quote, quotes, graph)
-│   └── packages/
-│       └── contracts/          external JSON API contract (Zod)
-├── database/migrations/        PostgreSQL schema (owned by undrly-store)
-├── tests/fixtures/             shared, identifier, and API fixtures
-├── .github/workflows/ci.yml    CI (database tests required)
-├── docs/                       design decisions
-├── scripts/check.sh            runs every required check
-├── compose.yaml                local PostgreSQL 17
-└── AGENT.md                    architecture source of truth
-```
-
-Not created yet, on purpose (`AGENT.md` §7 lists them as the target layout):
-
-- `undrly-reconcile` — nothing reconciles yet; conflicts are quarantined, not
-  resolved.
-- `typescript/apps/api` — the HTTP API starts in Phase 4; an empty app would be
-  placeholder architecture.
-- `typescript/packages/config` — shared config is one `tsconfig.json` and one
-  `biome.json` at `typescript/`; a package adds nothing yet.
-
-## Local development
-
-Requirements: stable Rust (via `rustup`; `rust/rust-toolchain.toml` selects
-it), Bun ≥ 1.4, Docker (for PostgreSQL 17 and the database tests).
+A stock on an exchange, a crypto pair on two venues, an FX rate, a gold
+price and a perpetual future come from different providers, in different
+formats, with different meanings. Undrly turns them into one consistent quote
+you can ask for with one request:
 
 ```bash
-# everything (what must pass before merging)
-./scripts/check.sh
+curl -s localhost:8787/v1/quote/BTC/USD | jq
+```
 
-# Rust
-cd rust
+## Markets today (hackathon v1)
+
+| Market | Query | Source(s) | What `/v1/quote` returns |
+| --- | --- | --- | --- |
+| Equity | `NVDA` | Alpaca (IEX feed) | the last trade on IEX: an IEX venue quote |
+| Crypto spot | `BTC/USD` | Kraken + Coinbase | **one aggregate** of both venues' mid prices |
+| FX | `EUR/USD` | Kraken | Kraken's last trade, with bid/ask |
+| Commodity | `XAU/USD` | gold-api | an aggregated reference price per troy ounce |
+| Perpetual | `BTC-PERP` | Hyperliquid | the mark price, in USDC |
+
+Every answer has the same shape, whatever the market. This set is frozen for
+the hackathon (see [Scope](#scope)).
+
+## Quickstart
+
+Needs Docker, Rust (`rustup`), Bun ≥ 1.4 and `jq`.
+
+```bash
+cp .env.example .env    # set UNDRLY_POSTGRES_PASSWORD; add Alpaca keys for NVDA
+./scripts/dev.sh        # PostgreSQL + collector + API on http://127.0.0.1:8787
+```
+
+The first run compiles the Rust collector (a few minutes); later runs start
+in seconds. Then, in another terminal:
+
+```bash
+curl -s localhost:8787/ | jq                     # what's here
+curl -s localhost:8787/v1/quote/BTC/USD | jq     # one canonical BTC/USD quote
+curl -s localhost:8787/v1/quotes/BTC/USD | jq    # the Kraken and Coinbase observations behind it
+curl -s localhost:8787/v1/quote/NVDA | jq        # same shape, a different market
+curl -s "localhost:8787/v1/search?q=gold" | jq   # find things
+```
+
+For a guided terminal walkthrough: `./scripts/present.sh --step`.
+
+## API
+
+All routes are `GET`, read-only, and answer from Undrly's own storage.
+
+| Route | Returns |
+| --- | --- |
+| `/` | service name, endpoints, example queries |
+| `/v1/quote/{query}` | **one canonical quote** for a market |
+| `/v1/quotes/{query}` | the per-source observations behind it |
+| `/v1/search?q=` | matching instruments, currencies and venues |
+| `/v1/resolve?q=` | what a query refers to: `resolved`, `ambiguous` or `not_found` |
+| `/v1/instruments/{id}/graph` | an instrument's direct relationships and listings |
+
+- **Queries:** a symbol or name (`NVDA`, `Gold`, `BTC perpetual`), a pair
+  (`EUR/USD`), an identifier (`isin:US67066G1040`), a venue symbol
+  (`NASDAQ:NVDA`), or an Undrly id.
+- **Prices** are exact decimal strings (`"83839.5975000"`), never floats. The
+  trailing digits are intentional.
+- **Every quote** says where it comes from: `basis` (`venue` or `aggregated`),
+  `venue`, `source`, the `unit` (a currency such as USD, or an asset such as
+  USDC), `asOf` and `freshness`. NVDA shows `stale` outside US market hours;
+  it is the last IEX trade.
+- **Errors** are JSON: `bad_request` (400), `not_found` / `no_quote` (404),
+  `ambiguous` (409).
+
+Full contract: [`docs/contracts.md`](docs/contracts.md).
+
+## How it works
+
+```text
+collect     providers fetch each source; the exact response is stored first
+normalize   each response becomes observations in one model (price, unit, venue, time)
+aggregate   observations become one canonical quote per market
+serve       the API reads canonical quotes from storage
+```
+
+- The **collector** (Rust) polls sources one at a time in the background.
+- **BTC/USD** averages the mid prices of fresh Kraken and Coinbase quotes
+  (`mean-venue-mid-v1`, 30 s freshness window). The venue observations stay
+  available at `/v1/quotes/BTC/USD`.
+- The **API** (TypeScript) never calls a provider while answering a request,
+  so its speed doesn't depend on any upstream.
+- Every quote traces back to the exact upstream response it came from.
+
+## Data sources and licensing
+
+Upstream data is used in **local/private demo mode only**. The
+redistribution terms of every source (Kraken, Coinbase, Hyperliquid,
+gold-api, Alpaca/IEX) are **unreviewed**, and Undrly does **not** currently
+claim production redistribution rights for any of them. Do not expose this
+data publicly. Details per source: [`docs/sources/quotes.md`](docs/sources/quotes.md).
+
+## Scope
+
+Hackathon v1 is frozen at the five markets above and their six sources
+([`docs/hackathon-v1.md`](docs/hackathon-v1.md)). There are no other
+markets, no streaming, no history, and no accounts, SDK or frontend.
+
+## Development
+
+```bash
+./scripts/check.sh    # everything that must pass: fmt, clippy, Rust + TypeScript tests
+./scripts/demo.sh     # end-to-end verification: seed, collect once, 22 API checks
+```
+
+`demo.sh` needs `DATABASE_URL`. For the NVDA quote, export
+`APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` (or put them in `.env`, which is
+git-ignored). Database tests run when `DATABASE_URL` is set (the role needs
+`CREATEDB`); CI requires them.
+
+```bash
+# Rust (in rust/)
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 
-# TypeScript
-cd typescript
-bun install
-bun run typecheck     # tsc, strict
-bun run lint          # biome check
-bun run format        # biome check --write
-bun test              # Bun runner (tests use the Vitest API)
-bun run test          # Vitest
-
-# Local PostgreSQL + database tests (opt-in locally, required in CI)
-cp .env.example .env  # then set UNDRLY_POSTGRES_PASSWORD
-docker compose up -d
-DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly \
-  cargo test -p undrly-store   # each test creates, migrates, drops its own DB
-
-# Cross-market demo: seed, collect once, start the API, run the checks
-# (network; add APCA_API_KEY_ID / APCA_API_SECRET_KEY for the NVDA quote)
-DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly ./scripts/demo.sh
-#   or, separately:
-#   rust/target/debug/undrly-collect seed && rust/target/debug/undrly-collect run
-#   bun typescript/apps/api/src/server.ts        # http://127.0.0.1:8787
-
-# Optional live SEC EDGAR check (network; not part of check.sh)
-UNDRLY_SEC_USER_AGENT="Your Name you@example.com" \
-DATABASE_URL=postgres://undrly:<password>@127.0.0.1:5432/undrly \
-  cargo test -p undrly-ingest --test sec_live -- --ignored --nocapture
+# TypeScript (in typescript/)
+bun install && bun run typecheck && bun run lint && bun test && bun run test
 ```
 
-## Implemented
+## Internals
 
-- Canonical ids: generated UUIDv7 `CanonicalId` with typed `EntityId`,
-  `InstrumentId`, `ListingId`, `VenueId`, `CurrencyId`.
-- Identifier layer: namespace-specific `Isin`, `Figi`, `Lei`, `Mic`,
-  `CurrencyCode`, `VenueSymbol`; `IdentifierAssignment`, `ListingSymbol`,
-  `Validity`.
-- Domain: `Entity`, `Instrument`, `Venue`, `Currency`, `Listing`, `Source`,
-  `Relationship` (canonical direction, provenance), `MarketObservation`
-  (`ObservationBasis`, `PriceUnit`).
-- PostgreSQL schema (5 migrations, 14 tables) with database-enforced
-  invariants, and database tests that migrate a fresh database per test.
-- API contract v1 (`MarketObservationV1` with a canonical `unit` object,
-  `RelationshipV1`) in TypeScript.
-- Repositories in `undrly-store` (typed persistence primitives, atomic
-  identifier assignment with conflict quarantine).
-- NVDA vertical slice: fixture provider → normalizer → `ingest_reference`
-  (identity resolution by primary identifier, one transaction per record).
-- Provider boundary: `QuoteProvider` and `ReferenceDataProvider`;
-  implementations are the deterministic fixture provider and SEC EDGAR
-  (company submissions → entity + CIK, via `ingest_entity`).
+For contributors; none of this is needed to use the API.
 
-## Not implemented
+```text
+undrly/
+├── rust/crates/
+│   ├── undrly-core/        canonical domain model (no I/O)
+│   ├── undrly-store/       PostgreSQL migrations and repositories
+│   ├── undrly-provider/    source adapters (the only network code)
+│   ├── undrly-normalize/   source records → normalized values
+│   ├── undrly-ingest/      raw-first ingestion, aggregation
+│   └── undrly-collect/     collector binary (seed, poll)
+├── typescript/
+│   ├── apps/api/           read-only Hono API
+│   └── packages/contracts/ JSON API contract (Zod)
+├── database/migrations/    PostgreSQL schema
+├── data/demo/              curated demo universe
+├── tests/fixtures/         captured source responses and contract fixtures
+├── scripts/                dev.sh, present.sh, demo.sh, check.sh
+└── docs/                   design notes
+```
 
-Markets beyond the five demo instruments, second sources per market, source
-ranking/weighting/outlier handling, Phase 5 identity resolution
-([`docs/phase-5-identity-resolution.md`](docs/phase-5-identity-resolution.md),
-future architecture only), streaming/WebSockets, historical OHLC,
-authentication, rate limiting, billing, SDK, MCP, and any frontend. Source
-data is licensed for **local demo mode only** until each source's terms are
-reviewed ([`docs/sources/quotes.md`](docs/sources/quotes.md)). The only
-reference data in the repository is the curated demo universe
-(`data/demo/universe.json`); other fixture values are illustrative test data.
+- Architecture source of truth: [`AGENT.md`](AGENT.md).
+- Design notes: [`docs/domain.md`](docs/domain.md) (canonical model and
+  identifiers), [`docs/persistence.md`](docs/persistence.md) (schema and
+  provenance), [`docs/contracts.md`](docs/contracts.md) (API contract).
+- Sources: [`docs/sources/quotes.md`](docs/sources/quotes.md),
+  [`docs/sources/sec-edgar.md`](docs/sources/sec-edgar.md) (SEC EDGAR filer
+  identity).
+- Future architecture, not implemented:
+  [`docs/phase-5-identity-resolution.md`](docs/phase-5-identity-resolution.md).
