@@ -54,8 +54,9 @@ curl -s localhost:8787/v1/universes | jq
 ```
 
 Symbols can collide across asset classes. The unambiguous forms are a pair
-(`ETH/USD`), a venue symbol (`NASDAQ:AAPL`, `COINBASE:ETH-USD`,
-`HYPERLIQUID:ETH`), an identifier, or an id. Equities have no constructed
+(`ETH/USD`), a venue symbol (`NASDAQ:AAPL`, `NYSE:KO` or `XNYS:KO`,
+`COINBASE:ETH-USD`, `HYPERLIQUID:ETH`), an identifier, or an id. Class
+shares take either punctuation (`BRK.B` or `BRK-B`). Equities have no constructed
 ISIN: identity is the Undrly id, and issuers carry their SEC CIK.
 
 ## Quickstart
