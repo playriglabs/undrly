@@ -8,10 +8,11 @@
 use std::collections::HashMap;
 
 use undrly_core::{
-    AggregationMethod, AliasKind, CanonicalId, Category, Currency, CurrencyCode, CurrencyId,
-    DisplayName, Entity, EntityId, EntityKind, Figi, Instrument, InstrumentClass, InstrumentId,
-    Isin, Lei, ListingId, Mic, ObservationBasis, PriceSubject, PriceType, PriceUnit,
-    RelationshipType, SourceId, Venue, VenueId, VenueSymbol,
+    AggregationMethod, AliasKind, CanonicalId, Category, Cik, Currency, CurrencyCode, CurrencyId,
+    DEFAULT_STALE_AFTER_SECONDS, Decimal, DisplayName, Entity, EntityId, EntityKind, Figi,
+    Instrument, InstrumentClass, InstrumentId, Isin, Lei, ListingId, Mic, ObservationBasis,
+    PriceSubject, PriceType, PriceUnit, RelationshipType, SourceId, Timestamp, UnitOfMeasure,
+    UniverseKey, UniverseMember, Venue, VenueId, VenueSymbol,
 };
 use undrly_provider::curated::Universe;
 
@@ -20,7 +21,7 @@ use crate::{NormalizeError, invalid};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedUniverse {
     pub currencies: Vec<(Currency, CurrencyCode)>,
-    pub entities: Vec<(Entity, Option<Lei>)>,
+    pub entities: Vec<(Entity, Option<Lei>, Option<Cik>)>,
     pub venues: Vec<(Venue, Option<Mic>)>,
     pub instruments: Vec<(Instrument, Option<Isin>, Option<Figi>)>,
     pub listings: Vec<NormalizedCuratedListing>,
@@ -28,6 +29,19 @@ pub struct NormalizedUniverse {
     pub aliases: Vec<(CanonicalId, DisplayName, AliasKind)>,
     pub quote_feeds: Vec<NormalizedFeed>,
     pub quote_aggregations: Vec<(PriceSubject, PriceUnit, AggregationMethod)>,
+    pub universes: Vec<NormalizedUniverseSnapshot>,
+}
+
+/// A universe snapshot: members plus the upstream raw file (source, record
+/// key, SHA-256) that asserted them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedUniverseSnapshot {
+    pub key: UniverseKey,
+    pub source: SourceId,
+    pub record_key: String,
+    pub sha256: [u8; 32],
+    pub as_of: Timestamp,
+    pub members: Vec<UniverseMember>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +62,7 @@ pub struct NormalizedFeed {
     pub unit: PriceUnit,
     pub basis: ObservationBasis,
     pub price_type: PriceType,
+    pub stale_after_seconds: u32,
 }
 
 fn name(field: &'static str, value: &str) -> Result<DisplayName, NormalizeError> {
@@ -110,6 +125,10 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
                 .as_deref()
                 .map(|v| Lei::normalize(v).map_err(|err| invalid("entities.lei", err)))
                 .transpose()?,
+            e.cik
+                .as_deref()
+                .map(|v| Cik::normalize(v).map_err(|err| invalid("entities.cik", err)))
+                .transpose()?,
         ));
     }
     let mut venues = Vec::new();
@@ -140,6 +159,31 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
                 id: InstrumentId::try_from(id).expect("checked category"),
                 class,
                 name: name("instruments.name", &i.name)?,
+                contract_multiplier: i
+                    .contract_multiplier
+                    .as_deref()
+                    .map(|m| {
+                        let d = crate::decimal("instruments.contractMultiplier", m)?;
+                        if d > Decimal::ZERO {
+                            Ok(d)
+                        } else {
+                            Err(invalid(
+                                "instruments.contractMultiplier",
+                                "must be positive",
+                            ))
+                        }
+                    })
+                    .transpose()?,
+                unit_of_measure: i
+                    .unit_of_measure
+                    .as_deref()
+                    .map(|v| {
+                        UnitOfMeasure::ALL
+                            .into_iter()
+                            .find(|x| x.as_str() == v)
+                            .ok_or_else(|| unsupported("instruments.unitOfMeasure", v))
+                    })
+                    .transpose()?,
             },
             i.isin
                 .as_deref()
@@ -158,7 +202,12 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         listings.push((l, lid));
     }
 
+    // A reference is a key defined in this file, or the canonical id of an
+    // object that already exists (e.g. a V1 instrument a snapshot reuses).
     let lookup = |field: &'static str, k: &str| -> Result<CanonicalId, NormalizeError> {
+        if k.starts_with("undrly:") {
+            return CanonicalId::parse(k).map_err(|e| invalid(field, e));
+        }
         keys.get(k)
             .copied()
             .ok_or_else(|| invalid(field, format!("unknown key `{k}`")))
@@ -293,6 +342,13 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
                     .into_iter()
                     .find(|t| t.as_str() == f.price_type)
                     .ok_or_else(|| unsupported("quoteFeeds.priceType", &f.price_type))?,
+                stale_after_seconds: match f.stale_after_seconds {
+                    None => DEFAULT_STALE_AFTER_SECONDS,
+                    Some(0) => {
+                        return Err(invalid("quoteFeeds.staleAfterSeconds", "must be positive"));
+                    }
+                    Some(s) => s,
+                },
             })
         })
         .collect::<Result<Vec<_>, NormalizeError>>()?;
@@ -327,6 +383,33 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         })
         .collect::<Result<Vec<_>, NormalizeError>>()?;
 
+    let universes = u
+        .universes
+        .iter()
+        .map(|x| {
+            let members = x
+                .members
+                .iter()
+                .map(|m| {
+                    Ok(UniverseMember {
+                        node: lookup("universes.members.node", &m.node)?,
+                        rank: m.rank,
+                        source_symbol: m.source_symbol.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, NormalizeError>>()?;
+            Ok(NormalizedUniverseSnapshot {
+                key: x.key.parse().map_err(|e| invalid("universes.key", e))?,
+                source: SourceId::parse(&x.source).map_err(|e| invalid("universes.source", e))?,
+                record_key: x.record_key.clone(),
+                sha256: hex32(&x.sha256)
+                    .ok_or_else(|| invalid("universes.sha256", "expected 64 hex digits"))?,
+                as_of: crate::timestamp("universes.asOf", &x.as_of)?,
+                members,
+            })
+        })
+        .collect::<Result<Vec<_>, NormalizeError>>()?;
+
     Ok(NormalizedUniverse {
         currencies,
         entities,
@@ -337,7 +420,19 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         aliases,
         quote_feeds,
         quote_aggregations,
+        universes,
     })
+}
+
+fn hex32(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -403,6 +498,35 @@ mod tests {
             .find(|f| f.symbol.as_str() == "NVDA")
             .unwrap();
         assert!(matches!(nvda_feed.basis, ObservationBasis::Venue(_)));
+    }
+
+    #[test]
+    fn normalizes_the_commodity_list() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/reference/commodities.json");
+        let u = CuratedProvider::new()
+            .decode_reference(&std::fs::read(path).unwrap())
+            .unwrap();
+        let n = normalize_universe(&u).unwrap();
+        assert_eq!(n.instruments.len(), 13);
+        assert!(n.instruments.iter().all(|(i, _, _)| {
+            i.class == InstrumentClass::Commodity && i.unit_of_measure.is_some()
+        }));
+        let stale: Vec<(&str, PriceType, u32)> = n
+            .quote_feeds
+            .iter()
+            .map(|f| (f.feed_source.as_str(), f.price_type, f.stale_after_seconds))
+            .collect();
+        assert!(stale.contains(&("eia", PriceType::Reference, 1_209_600)));
+        assert!(stale.contains(&("worldbank", PriceType::Average, 5_356_800)));
+        assert!(stale.contains(&("gold-api", PriceType::Reference, 300)));
+        // The unit is V1's USD, referenced by canonical id.
+        let usd = normalize_universe(&universe()).unwrap().currencies[0].0.id;
+        assert!(
+            n.quote_feeds
+                .iter()
+                .all(|f| f.unit == PriceUnit::Currency(usd))
+        );
     }
 
     #[test]

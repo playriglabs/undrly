@@ -15,11 +15,13 @@ use undrly_core::{
 pub mod alpaca;
 pub mod coinbase;
 pub mod curated;
+pub mod eia;
 pub mod fixture;
 pub mod gold_api;
 pub mod hyperliquid;
 pub mod kraken;
 pub mod sec;
+pub mod worldbank;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NormalizeError {
