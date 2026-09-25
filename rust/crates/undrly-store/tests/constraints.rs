@@ -1006,6 +1006,7 @@ async fn facts_name_a_matching_source_record() {
         "market_observations",
         "quote_aggregations",
         "quote_feeds",
+        "universe_snapshots",
         "venues",
     ]
     .into_iter()

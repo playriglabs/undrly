@@ -13,13 +13,14 @@ use chrono::{DateTime, Utc};
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
     CanonicalId, Category, Currency, CurrencyId, DisplayName, Entity, EntityId, Instrument,
-    InstrumentId, Listing, ListingId, Provenance, SourceId, Venue, VenueId,
+    InstrumentId, Listing, ListingId, Provenance, SourceId, UnitOfMeasure, Venue, VenueId,
 };
 
 use crate::Write;
 use crate::error::{StoreError, corrupt};
 use crate::mapping::{
-    canonical_id_from_sql, entity_kind_from_sql, instrument_class_from_sql, timestamp_from_sql,
+    canonical_id_from_sql, decimal_from_sql, decimal_to_sql, entity_kind_from_sql,
+    instrument_class_from_sql, timestamp_from_sql, unit_of_measure_from_sql,
 };
 use crate::sources::SourceRecordId;
 
@@ -176,12 +177,15 @@ pub async fn insert_instrument(
     let mut tx = conn.begin().await?;
     insert_node(&mut tx, instrument.id.canonical()).await?;
     let inserted = sqlx::query(
-        "INSERT INTO instruments (id, instrument_class, name, source_record_id)
-         VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO instruments
+           (id, instrument_class, name, contract_multiplier, unit_of_measure, source_record_id)
+         VALUES ($1, $2, $3, $4::numeric, $5, $6) ON CONFLICT (id) DO NOTHING",
     )
     .bind(instrument.id.uuid())
     .bind(instrument.class.as_str())
     .bind(instrument.name.as_str())
+    .bind(instrument.contract_multiplier.map(decimal_to_sql))
+    .bind(instrument.unit_of_measure.map(UnitOfMeasure::as_str))
     .bind(source_record.0)
     .execute(&mut *tx)
     .await?
@@ -201,16 +205,20 @@ pub async fn get_instrument(
     conn: &mut PgConnection,
     id: InstrumentId,
 ) -> Result<Option<Instrument>, StoreError> {
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT instrument_class, name FROM instruments WHERE id = $1")
-            .bind(id.uuid())
-            .fetch_optional(conn)
-            .await?;
-    row.map(|(class, n)| {
+    let row: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT instrument_class, name, contract_multiplier::text, unit_of_measure
+         FROM instruments WHERE id = $1",
+    )
+    .bind(id.uuid())
+    .fetch_optional(conn)
+    .await?;
+    row.map(|(class, n, multiplier, unit)| {
         Ok(Instrument {
             id,
             class: instrument_class_from_sql(&class)?,
             name: name(&n)?,
+            contract_multiplier: multiplier.as_deref().map(decimal_from_sql).transpose()?,
+            unit_of_measure: unit.as_deref().map(unit_of_measure_from_sql).transpose()?,
         })
     })
     .transpose()

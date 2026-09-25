@@ -224,3 +224,31 @@ pub async fn facts_from_source_record(
             .collect(),
     })
 }
+
+/// The stored record of `source_id` with this key and payload SHA-256.
+pub async fn find_source_record(
+    conn: &mut PgConnection,
+    source_id: &SourceId,
+    record_key: &str,
+    sha256: &[u8; 32],
+) -> Result<Option<RecordProvenance>, StoreError> {
+    let row: Option<(i64, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, received_at FROM source_records
+         WHERE source_id = $1 AND record_key = $2 AND payload_sha256 = $3",
+    )
+    .bind(source_id.as_str())
+    .bind(record_key)
+    .bind(&sha256[..])
+    .fetch_optional(conn)
+    .await?;
+    row.map(|(id, received_at)| {
+        Ok(RecordProvenance {
+            id: SourceRecordId(id),
+            provenance: Provenance {
+                source_id: source_id.clone(),
+                received_at: timestamp_from_sql(received_at)?,
+            },
+        })
+    })
+    .transpose()
+}

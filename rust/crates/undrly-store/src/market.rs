@@ -55,11 +55,12 @@ type FeedRow = (
     String,
     DateTime<Utc>,
     i64,
+    i32,
 );
 
 const FEED_SELECT: &str = "SELECT id, feed_source_id, symbol, subject_id, subject_category,
-    unit_id, unit_category, basis, venue_id, price_type, source_id, received_at, source_record_id
-    FROM quote_feeds";
+    unit_id, unit_category, basis, venue_id, price_type, source_id, received_at, source_record_id,
+    stale_after_seconds FROM quote_feeds";
 
 fn feed_from_row(row: FeedRow) -> Result<StoredQuoteFeed, StoreError> {
     let (
@@ -76,6 +77,7 @@ fn feed_from_row(row: FeedRow) -> Result<StoredQuoteFeed, StoreError> {
         source,
         received,
         record,
+        stale_after,
     ) = row;
     Ok(StoredQuoteFeed {
         id: QuoteFeedId(id),
@@ -86,6 +88,8 @@ fn feed_from_row(row: FeedRow) -> Result<StoredQuoteFeed, StoreError> {
             unit: price_unit_from_sql(unit, &unit_category)?,
             basis: basis_from_sql(&basis, venue)?,
             price_type: price_type_from_sql(&price_type)?,
+            stale_after_seconds: u32::try_from(stale_after)
+                .map_err(|e| corrupt("stale_after_seconds", e))?,
             provenance: undrly_core::Provenance {
                 source_id: SourceId::parse(&source).map_err(|e| corrupt("source id", e))?,
                 received_at: timestamp_from_sql(received)?,
@@ -112,8 +116,8 @@ pub async fn insert_quote_feed(
     let inserted: Option<i64> = sqlx::query_scalar(
         "INSERT INTO quote_feeds
            (feed_source_id, symbol, subject_id, subject_category, unit_id, unit_category, basis,
-            venue_id, price_type, source_id, received_at, source_record_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            venue_id, price_type, source_id, received_at, source_record_id, stale_after_seconds)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT ON CONSTRAINT quote_feeds_one_per_symbol DO NOTHING
          RETURNING id",
     )
@@ -129,6 +133,7 @@ pub async fn insert_quote_feed(
     .bind(feed.provenance.source_id.as_str())
     .bind(feed.provenance.received_at.as_datetime())
     .bind(source_record.0)
+    .bind(i32::try_from(feed.stale_after_seconds).unwrap_or(i32::MAX))
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = inserted {
@@ -145,7 +150,8 @@ pub async fn insert_quote_feed(
     let existing = feed_from_row(row)?;
     let same = existing.feed.subject == feed.subject
         && existing.feed.unit == feed.unit
-        && existing.feed.basis == feed.basis;
+        && existing.feed.basis == feed.basis
+        && existing.feed.stale_after_seconds == feed.stale_after_seconds;
     if same {
         Ok((existing.id, Write::Unchanged))
     } else {

@@ -24,6 +24,7 @@ pub mod reference;
 pub mod sources;
 #[cfg(feature = "testing")]
 pub mod testing;
+pub mod universe;
 
 pub use error::StoreError;
 

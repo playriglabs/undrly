@@ -18,7 +18,8 @@ use undrly_core::time::TimestampError;
 use undrly_core::{
     CanonicalId, Category, Cik, CurrencyCode, CurrencyId, Decimal, EntityKind, ExternalIdentifier,
     Figi, IdError, InstrumentClass, InstrumentId, Isin, Lei, Mic, Namespace, ObservationBasis,
-    PriceSubject, PriceType, PriceUnit, Redistribution, Timestamp, Validity, VenueId,
+    PriceSubject, PriceType, PriceUnit, Redistribution, Timestamp, UnitOfMeasure, Validity,
+    VenueId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -75,6 +76,13 @@ pub fn entity_kind_from_sql(value: &str) -> Result<EntityKind, MappingError> {
         .into_iter()
         .find(|k| k.as_str() == value)
         .ok_or_else(|| unknown("entity kind", value))
+}
+
+pub fn unit_of_measure_from_sql(value: &str) -> Result<UnitOfMeasure, MappingError> {
+    UnitOfMeasure::ALL
+        .into_iter()
+        .find(|u| u.as_str() == value)
+        .ok_or_else(|| unknown("unit of measure", value))
 }
 
 pub fn instrument_class_from_sql(value: &str) -> Result<InstrumentClass, MappingError> {

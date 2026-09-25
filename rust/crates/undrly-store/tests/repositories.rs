@@ -207,6 +207,8 @@ async fn listing_symbol_rules() {
         id: InstrumentId::generate(),
         class: InstrumentClass::Equity,
         name: name("Test Instrument"),
+        contract_multiplier: None,
+        unit_of_measure: None,
     };
     reference::insert_instrument(&mut conn, &instrument, record)
         .await

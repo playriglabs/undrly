@@ -35,7 +35,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 10);
+    assert_eq!(applied.len(), 11);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -70,6 +70,8 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         "canonical_quotes",
         "canonical_quote_inputs",
         "quote_aggregations",
+        "universe_snapshots",
+        "universe_members",
     ]
     .into_iter()
     .map(str::to_owned)
