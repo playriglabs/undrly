@@ -1,0 +1,370 @@
+{
+  "dataset": "undrly-commodities",
+  "version": 1,
+  "description": "Undrly-authored commodity reference list for V1.1 (docs/v1.1-universe.md \u00a78): 13 benchmarks beside V1 gold. Pinned canonical ids; feed symbols are the sources' own series codes. gold-api and EIA values are reference prices; World Bank values are monthly averages (price type `average`).",
+  "currencies": [],
+  "entities": [],
+  "venues": [],
+  "instruments": [
+    {
+      "key": "silver",
+      "id": "undrly:instrument:01m3bynmh8fsytn0y8bzp2871k",
+      "class": "commodity",
+      "name": "Silver (troy ounce)",
+      "unitOfMeasure": "troy_ounce"
+    },
+    {
+      "key": "platinum",
+      "id": "undrly:instrument:01m3bynmh9ehj9bk1h6wcgx0n3",
+      "class": "commodity",
+      "name": "Platinum (troy ounce)",
+      "unitOfMeasure": "troy_ounce"
+    },
+    {
+      "key": "palladium",
+      "id": "undrly:instrument:01m3bynmhaeyqbcnacw8mrwy05",
+      "class": "commodity",
+      "name": "Palladium (troy ounce)",
+      "unitOfMeasure": "troy_ounce"
+    },
+    {
+      "key": "wti",
+      "id": "undrly:instrument:01m3bynmhbedmb8c2gswa5hbw3",
+      "class": "commodity",
+      "name": "WTI crude oil, Cushing spot (barrel)",
+      "unitOfMeasure": "barrel"
+    },
+    {
+      "key": "brent",
+      "id": "undrly:instrument:01m3bynmhcewtry9hgm6tv4vgg",
+      "class": "commodity",
+      "name": "Brent crude oil, Europe spot (barrel)",
+      "unitOfMeasure": "barrel"
+    },
+    {
+      "key": "henry-hub",
+      "id": "undrly:instrument:01m3bynmhdfvsrawvwbqfnrfgc",
+      "class": "commodity",
+      "name": "Henry Hub natural gas spot (MMBtu)",
+      "unitOfMeasure": "mmbtu"
+    },
+    {
+      "key": "maize",
+      "id": "undrly:instrument:01m3bynmheev0vqphthy9g3ede",
+      "class": "commodity",
+      "name": "Maize, US No. 2 yellow (metric ton, monthly average)",
+      "unitOfMeasure": "metric_ton"
+    },
+    {
+      "key": "wheat-us-hrw",
+      "id": "undrly:instrument:01m3bynmhfem2stncg9hvaf5tr",
+      "class": "commodity",
+      "name": "Wheat, US hard red winter (metric ton, monthly average)",
+      "unitOfMeasure": "metric_ton"
+    },
+    {
+      "key": "soybeans",
+      "id": "undrly:instrument:01m3bynmhgf7pvbtwtbhtv2ag0",
+      "class": "commodity",
+      "name": "Soybeans (metric ton, monthly average)",
+      "unitOfMeasure": "metric_ton"
+    },
+    {
+      "key": "coffee-arabica",
+      "id": "undrly:instrument:01m3bynmhhf3gr9cfhyxkp8jma",
+      "class": "commodity",
+      "name": "Coffee, Arabica (kilogram, monthly average)",
+      "unitOfMeasure": "kilogram"
+    },
+    {
+      "key": "sugar-world",
+      "id": "undrly:instrument:01m3bynmhjewfavz9f2zx6py7a",
+      "class": "commodity",
+      "name": "Sugar, world (kilogram, monthly average)",
+      "unitOfMeasure": "kilogram"
+    },
+    {
+      "key": "cocoa",
+      "id": "undrly:instrument:01m3bynmhkftx9wyd1rsszt8t8",
+      "class": "commodity",
+      "name": "Cocoa (kilogram, monthly average)",
+      "unitOfMeasure": "kilogram"
+    },
+    {
+      "key": "cotton-a-index",
+      "id": "undrly:instrument:01m3bynmhme7rr53kc665pasxj",
+      "class": "commodity",
+      "name": "Cotton, A Index (kilogram, monthly average)",
+      "unitOfMeasure": "kilogram"
+    }
+  ],
+  "listings": [],
+  "relationships": [],
+  "aliases": [
+    {
+      "node": "silver",
+      "alias": "XAG",
+      "kind": "symbol"
+    },
+    {
+      "node": "silver",
+      "alias": "Silver",
+      "kind": "name"
+    },
+    {
+      "node": "platinum",
+      "alias": "XPT",
+      "kind": "symbol"
+    },
+    {
+      "node": "platinum",
+      "alias": "Platinum",
+      "kind": "name"
+    },
+    {
+      "node": "palladium",
+      "alias": "XPD",
+      "kind": "symbol"
+    },
+    {
+      "node": "palladium",
+      "alias": "Palladium",
+      "kind": "name"
+    },
+    {
+      "node": "wti",
+      "alias": "WTI",
+      "kind": "symbol"
+    },
+    {
+      "node": "wti",
+      "alias": "RWTC",
+      "kind": "symbol"
+    },
+    {
+      "node": "wti",
+      "alias": "WTI crude oil",
+      "kind": "name"
+    },
+    {
+      "node": "brent",
+      "alias": "BRENT",
+      "kind": "symbol"
+    },
+    {
+      "node": "brent",
+      "alias": "RBRTE",
+      "kind": "symbol"
+    },
+    {
+      "node": "brent",
+      "alias": "Brent crude oil",
+      "kind": "name"
+    },
+    {
+      "node": "henry-hub",
+      "alias": "HENRY-HUB",
+      "kind": "symbol"
+    },
+    {
+      "node": "henry-hub",
+      "alias": "RNGWHHD",
+      "kind": "symbol"
+    },
+    {
+      "node": "henry-hub",
+      "alias": "Henry Hub natural gas",
+      "kind": "name"
+    },
+    {
+      "node": "maize",
+      "alias": "MAIZE",
+      "kind": "symbol"
+    },
+    {
+      "node": "maize",
+      "alias": "Maize",
+      "kind": "name"
+    },
+    {
+      "node": "wheat-us-hrw",
+      "alias": "WHEAT_US_HRW",
+      "kind": "symbol"
+    },
+    {
+      "node": "wheat-us-hrw",
+      "alias": "Wheat US HRW",
+      "kind": "name"
+    },
+    {
+      "node": "soybeans",
+      "alias": "SOYBEANS",
+      "kind": "symbol"
+    },
+    {
+      "node": "soybeans",
+      "alias": "Soybeans",
+      "kind": "name"
+    },
+    {
+      "node": "coffee-arabica",
+      "alias": "COFFEE_ARABIC",
+      "kind": "symbol"
+    },
+    {
+      "node": "coffee-arabica",
+      "alias": "Coffee Arabica",
+      "kind": "name"
+    },
+    {
+      "node": "sugar-world",
+      "alias": "SUGAR_WLD",
+      "kind": "symbol"
+    },
+    {
+      "node": "sugar-world",
+      "alias": "Sugar",
+      "kind": "name"
+    },
+    {
+      "node": "cocoa",
+      "alias": "COCOA",
+      "kind": "symbol"
+    },
+    {
+      "node": "cocoa",
+      "alias": "Cocoa",
+      "kind": "name"
+    },
+    {
+      "node": "cotton-a-index",
+      "alias": "COTTON_A_INDX",
+      "kind": "symbol"
+    },
+    {
+      "node": "cotton-a-index",
+      "alias": "Cotton",
+      "kind": "name"
+    }
+  ],
+  "quoteFeeds": [
+    {
+      "source": "gold-api",
+      "symbol": "XAG",
+      "subject": "silver",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 300
+    },
+    {
+      "source": "gold-api",
+      "symbol": "XPT",
+      "subject": "platinum",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 300
+    },
+    {
+      "source": "gold-api",
+      "symbol": "XPD",
+      "subject": "palladium",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 300
+    },
+    {
+      "source": "eia",
+      "symbol": "RWTC",
+      "subject": "wti",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 1209600
+    },
+    {
+      "source": "eia",
+      "symbol": "RBRTE",
+      "subject": "brent",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 1209600
+    },
+    {
+      "source": "eia",
+      "symbol": "RNGWHHD",
+      "subject": "henry-hub",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 1209600
+    },
+    {
+      "source": "worldbank",
+      "symbol": "MAIZE",
+      "subject": "maize",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "average",
+      "staleAfterSeconds": 5356800
+    },
+    {
+      "source": "worldbank",
+      "symbol": "WHEAT_US_HRW",
+      "subject": "wheat-us-hrw",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "average",
+      "staleAfterSeconds": 5356800
+    },
+    {
+      "source": "worldbank",
+      "symbol": "SOYBEANS",
+      "subject": "soybeans",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "average",
+      "staleAfterSeconds": 5356800
+    },
+    {
+      "source": "worldbank",
+      "symbol": "COFFEE_ARABIC",
+      "subject": "coffee-arabica",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "average",
+      "staleAfterSeconds": 5356800
+    },
+    {
+      "source": "worldbank",
+      "symbol": "SUGAR_WLD",
+      "subject": "sugar-world",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "average",
+      "staleAfterSeconds": 5356800
+    },
+    {
+      "source": "worldbank",
+      "symbol": "COCOA",
+      "subject": "cocoa",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "average",
+      "staleAfterSeconds": 5356800
+    },
+    {
+      "source": "worldbank",
+      "symbol": "COTTON_A_INDX",
+      "subject": "cotton-a-index",
+      "unit": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "basis": "aggregated",
+      "priceType": "average",
+      "staleAfterSeconds": 5356800
+    }
+  ],
+  "quoteAggregations": []
+}
