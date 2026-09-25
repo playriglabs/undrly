@@ -763,6 +763,12 @@ fn mic_of(exchange: &str) -> Option<&'static str> {
     }
 }
 
+/// Common venue names users type in `VENUE:SYMBOL` queries, as symbol aliases
+/// of the venue whose MIC stays its identifier. Explicit, never inferred.
+/// `CBOE` is deliberately absent: it is also Cboe Global Markets' ticker, so
+/// it would make the bare symbol ambiguous; `BATS:…` (the MIC) works.
+const VENUE_ALIASES: [(&str, &str); 1] = [("XNYS", "NYSE")];
+
 fn venue_name(mic: &str) -> &'static str {
     match mic {
         "XNYS" => "New York Stock Exchange",
@@ -927,6 +933,9 @@ fn equities(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
                 );
                 ctx.alias(&venue_key, mic, "symbol");
                 ctx.alias(&venue_key, venue_name(mic), "name");
+                for (_, alias) in VENUE_ALIASES.iter().filter(|(m, _)| *m == mic) {
+                    ctx.alias(&venue_key, alias, "symbol");
+                }
             }
             let listing_key = format!("listing:{key}:{mic}");
             let listing_id = ctx.id(&listing_key, Category::Listing)?;

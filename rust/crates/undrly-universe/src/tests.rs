@@ -361,6 +361,15 @@ fn equities_get_no_constructed_identifiers() {
         .map(|v| v.mic.as_deref().unwrap())
         .collect();
     assert_eq!(venues, vec!["XNYS"]);
+    // The common venue name is a symbol alias; the MIC stays the identifier.
+    let venue_symbols: Vec<&str> = b
+        .snapshot
+        .aliases
+        .iter()
+        .filter(|a| a.node == "venue:XNYS" && a.kind == "symbol")
+        .map(|a| a.alias.as_str())
+        .collect();
+    assert_eq!(venue_symbols, vec!["NYSE", "XNYS"]);
     let class_b = b
         .snapshot
         .listings
