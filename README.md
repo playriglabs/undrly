@@ -27,6 +27,37 @@ curl -s localhost:8787/v1/quote/BTC/USD | jq
 Every answer has the same shape, whatever the market. This set is frozen for
 the hackathon (see [Scope](#scope)).
 
+## Universe expansion (V1.1, local)
+
+V1.1 widens this to real universes, without changing the quote model
+([`docs/v1.1-universe.md`](docs/v1.1-universe.md)):
+
+- **crypto top 100** (CoinGecko): priced by Kraken and Coinbase USD markets,
+  mapped through CoinGecko's exchange tickers, never by symbol;
+- **S&P 500**: via SPY holdings, which is a proxy, not the official file;
+- **Nasdaq-100**: universe support is modeled, but live membership import is
+  deferred pending an approved machine-readable source;
+- **every live Hyperliquid perpetual**, with contract multipliers (`kPEPE` = 1,000 PEPE);
+- **14 commodities**: gold-api metals, EIA oil and gas, and World Bank monthly
+  averages.
+
+Universe data is third-party and stays **local** (`data/universe/` is
+git-ignored). Build it once per machine:
+
+```bash
+# .env: UNDRLY_SEC_USER_AGENT="Your Name you@example.com"; optional EIA_API_KEY
+(cd rust && cargo build -q -p undrly-collect)
+(set -a; . ./.env; set +a; ./rust/target/debug/undrly-collect universe fetch)
+./rust/target/debug/undrly-collect universe build   # snapshot + data/universe/report.md
+./scripts/dev.sh                                     # seeds the snapshot if present
+curl -s localhost:8787/v1/universes | jq
+```
+
+Symbols can collide across asset classes. The unambiguous forms are a pair
+(`ETH/USD`), a venue symbol (`NASDAQ:AAPL`, `COINBASE:ETH-USD`,
+`HYPERLIQUID:ETH`), an identifier, or an id. Equities have no constructed
+ISIN: identity is the Undrly id, and issuers carry their SEC CIK.
+
 ## Quickstart
 
 Needs Docker, Rust (`rustup`), Bun ≥ 1.4 and `jq`.
@@ -61,6 +92,7 @@ All routes are `GET`, read-only, and answer from Undrly's own storage.
 | `/v1/search?q=` | matching instruments, currencies and venues |
 | `/v1/resolve?q=` | what a query refers to: `resolved`, `ambiguous` or `not_found` |
 | `/v1/instruments/{id}/graph` | an instrument's direct relationships and listings |
+| `/v1/universes`, `/v1/universes/{key}` | imported universes and their latest membership (V1.1) |
 
 - **Queries:** a symbol or name (`NVDA`, `Gold`, `BTC perpetual`), a pair
   (`EUR/USD`), an identifier (`isin:US67066G1040`), a venue symbol
@@ -97,7 +129,8 @@ serve       the API reads canonical quotes from storage
 
 Upstream data is used in **local/private demo mode only**. The
 redistribution terms of every source (Kraken, Coinbase, Hyperliquid,
-gold-api, Alpaca/IEX) are **unreviewed**, and Undrly does **not** currently
+gold-api, Alpaca/IEX; for V1.1 also CoinGecko, SSGA, Nasdaq, SEC, EIA and
+the World Bank) are **unreviewed**, and Undrly does **not** currently
 claim production redistribution rights for any of them. Do not expose this
 data publicly. Details per source: [`docs/sources/quotes.md`](docs/sources/quotes.md).
 

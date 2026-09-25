@@ -8,3 +8,6 @@ node_modules/
 # Local environment
 .env
 .DS_Store
+
+# V1.1 universe data: local-only (third-party terms; docs/v1.1-universe.md §12)
+/data/universe/
