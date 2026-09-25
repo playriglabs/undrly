@@ -97,10 +97,24 @@
     "last",
     "mid",
     "mark",
-    "reference"
+    "reference",
+    "average"
   ],
   "aggregationMethods": [
     "latest-observation-v1",
     "mean-venue-mid-v1"
+  ],
+  "unitsOfMeasure": [
+    "troy_ounce",
+    "barrel",
+    "mmbtu",
+    "metric_ton",
+    "kilogram"
+  ],
+  "universeKeys": [
+    "crypto-top100",
+    "sp500",
+    "nasdaq100",
+    "hyperliquid-perps"
   ]
 }

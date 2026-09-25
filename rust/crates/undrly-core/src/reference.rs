@@ -187,6 +187,41 @@ pub struct Instrument {
     pub id: InstrumentId,
     pub class: InstrumentClass,
     pub name: DisplayName,
+    /// Units of the underlying per contract, when not 1 (e.g. Hyperliquid's
+    /// `kPEPE` is 1,000 PEPE). Prices are per contract.
+    pub contract_multiplier: Option<crate::Decimal>,
+    /// The quantity one unit of a commodity denotes (prices are per unit).
+    pub unit_of_measure: Option<UnitOfMeasure>,
+}
+
+/// Physical unit a commodity instrument is quoted in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UnitOfMeasure {
+    TroyOunce,
+    Barrel,
+    Mmbtu,
+    MetricTon,
+    Kilogram,
+}
+
+impl UnitOfMeasure {
+    pub const ALL: [UnitOfMeasure; 5] = [
+        UnitOfMeasure::TroyOunce,
+        UnitOfMeasure::Barrel,
+        UnitOfMeasure::Mmbtu,
+        UnitOfMeasure::MetricTon,
+        UnitOfMeasure::Kilogram,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            UnitOfMeasure::TroyOunce => "troy_ounce",
+            UnitOfMeasure::Barrel => "barrel",
+            UnitOfMeasure::Mmbtu => "mmbtu",
+            UnitOfMeasure::MetricTon => "metric_ton",
+            UnitOfMeasure::Kilogram => "kilogram",
+        }
+    }
 }
 
 /// A trading venue. Its MIC, if any, is an external identifier.

@@ -40,8 +40,15 @@ pub struct QuoteFeed {
     pub unit: PriceUnit,
     pub basis: ObservationBasis,
     pub price_type: PriceType,
+    /// After how long the feed's latest observation counts as stale: its
+    /// expected cadence (seconds for market data, days for daily reference
+    /// series, weeks for monthly averages).
+    pub stale_after_seconds: u32,
     pub provenance: Provenance,
 }
+
+/// Default freshness window of a feed (V1 behaviour).
+pub const DEFAULT_STALE_AFTER_SECONDS: u32 = 300;
 
 /// The aggregation method declared for a (subject, unit), with provenance.
 /// Pairs without a declaration use [`AggregationMethod::LatestObservationV1`].

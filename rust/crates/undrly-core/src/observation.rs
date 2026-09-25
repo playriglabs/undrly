@@ -83,14 +83,18 @@ pub enum PriceType {
     Mark,
     /// A published reference or benchmark price, not a trade.
     Reference,
+    /// A published average over a period (e.g. a monthly average), neither
+    /// spot nor futures.
+    Average,
 }
 
 impl PriceType {
-    pub const ALL: [PriceType; 4] = [
+    pub const ALL: [PriceType; 5] = [
         PriceType::Last,
         PriceType::Mid,
         PriceType::Mark,
         PriceType::Reference,
+        PriceType::Average,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -99,6 +103,7 @@ impl PriceType {
             PriceType::Mid => "mid",
             PriceType::Mark => "mark",
             PriceType::Reference => "reference",
+            PriceType::Average => "average",
         }
     }
 }

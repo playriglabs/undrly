@@ -25,6 +25,7 @@ pub mod reference;
 pub mod relationship;
 pub mod source;
 pub mod time;
+pub mod universe;
 
 pub use id::{
     CanonicalId, Category, CurrencyId, EntityId, IdError, InstrumentId, ListingId, VenueId,
@@ -38,14 +39,15 @@ pub use observation::{
     PriceUnit,
 };
 pub use quote::{
-    Aggregate, AggregationMethod, MEAN_VENUE_MID_MAX_AGE_SECONDS, QuoteAggregation, QuoteFeed,
-    aggregate, select_latest,
+    Aggregate, AggregationMethod, DEFAULT_STALE_AFTER_SECONDS, MEAN_VENUE_MID_MAX_AGE_SECONDS,
+    QuoteAggregation, QuoteFeed, aggregate, select_latest,
 };
 pub use reference::{
     Alias, AliasKind, Currency, DisplayName, Entity, EntityKind, Instrument, InstrumentClass,
-    Listing, Venue, VenueSymbol,
+    Listing, UnitOfMeasure, Venue, VenueSymbol,
 };
 pub use relationship::{Relationship, RelationshipError, RelationshipType};
 pub use rust_decimal::Decimal;
 pub use source::{Provenance, Redistribution, Source, SourceId};
 pub use time::{Timestamp, Validity};
+pub use universe::{UniverseKey, UniverseMember, UniverseSnapshot};

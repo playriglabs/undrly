@@ -9,7 +9,7 @@ use serde_json::Value;
 use undrly_core::{
     AggregationMethod, CanonicalId, Category, Cik, CurrencyCode, EntityKind, Figi, InstrumentClass,
     Isin, Lei, Mic, Namespace, ObservationBasis, PriceType, RelationshipType, SourceId, Timestamp,
-    VenueSymbol, decimal,
+    UnitOfMeasure, UniverseKey, VenueSymbol, decimal,
 };
 use uuid::Uuid;
 
@@ -135,6 +135,10 @@ fn vocabulary_matches_fixture() {
     assert_eq!(price_types, strings(&fixture["priceTypes"]));
     let methods: Vec<&str> = AggregationMethod::ALL.iter().map(|m| m.as_str()).collect();
     assert_eq!(methods, strings(&fixture["aggregationMethods"]));
+    let units: Vec<&str> = UnitOfMeasure::ALL.iter().map(|u| u.as_str()).collect();
+    assert_eq!(units, strings(&fixture["unitsOfMeasure"]));
+    let universes: Vec<&str> = UniverseKey::ALL.iter().map(|u| u.as_str()).collect();
+    assert_eq!(universes, strings(&fixture["universeKeys"]));
 
     let namespaces = fixture["identifierNamespaces"].as_object().unwrap();
     assert_eq!(namespaces.len(), Namespace::ALL.len());
