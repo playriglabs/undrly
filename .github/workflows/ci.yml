@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: undrly
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: undrly
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U undrly -d undrly"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # Database tests are required in CI: a missing database fails them.
+      DATABASE_URL: postgres://undrly:ci-only@localhost:5432/undrly
+      UNDRLY_REQUIRE_DATABASE: "1"
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace
+
+  typescript:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun test
+      - run: bun run test

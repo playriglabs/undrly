@@ -1,0 +1,7 @@
+# Exact financial values use rust_decimal::Decimal. Floating point types are
+# banned workspace-wide; if a future non-financial use case needs them, allow
+# it locally with a justification comment.
+disallowed-types = [
+    { path = "f32", reason = "use rust_decimal::Decimal for financial values" },
+    { path = "f64", reason = "use rust_decimal::Decimal for financial values" },
+]

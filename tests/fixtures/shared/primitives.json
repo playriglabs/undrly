@@ -1,0 +1,144 @@
+{
+  "canonicalIds": {
+    "valid": [
+      {
+        "category": "entity",
+        "uuid": "0192a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a01",
+        "text": "undrly:entity:01jagv5gymfsfrmtvwhpf0y6g1"
+      },
+      {
+        "category": "instrument",
+        "uuid": "0192a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a02",
+        "text": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2"
+      },
+      {
+        "category": "listing",
+        "uuid": "0192a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a03",
+        "text": "undrly:listing:01jagv5gymfsfrmtvwhpf0y6g3"
+      },
+      {
+        "category": "venue",
+        "uuid": "0192a1b2-c3d4-7e5f-9a6b-7c8d9e0f1a04",
+        "text": "undrly:venue:01jagv5gymfsfsmtvwhpf0y6g4"
+      },
+      {
+        "category": "currency",
+        "uuid": "0192a1b2-c3d4-7e5f-ba6b-7c8d9e0f1a05",
+        "text": "undrly:currency:01jagv5gymfsfvmtvwhpf0y6g5"
+      },
+      {
+        "category": "instrument",
+        "uuid": "00000000-0000-7000-8000-000000000000",
+        "text": "undrly:instrument:0000000000e008000000000000"
+      },
+      {
+        "category": "instrument",
+        "uuid": "ffffffff-ffff-7fff-bfff-ffffffffffff",
+        "text": "undrly:instrument:7zzzzzzzzzfzzvzzzzzzzzzzzz"
+      }
+    ],
+    "invalid": [
+      "",
+      "NVDA",
+      "NASDAQ:NVDA",
+      "undrly:equity:US:NVDA",
+      "undrly:company:US:nvidia",
+      "UNDRLY:entity:01jagv5gymfsfrmtvwhpf0y6g1",
+      "undrly:Entity:01jagv5gymfsfrmtvwhpf0y6g1",
+      "undrly:company:01jagv5gymfsfrmtvwhpf0y6g1",
+      "undrly:chain:01jagv5gymfsfrmtvwhpf0y6g1",
+      "undrly:entity:01JAGV5GYMFSFRMTVWHPF0Y6G1",
+      "undrly:entity:1jagv5gymfsfrmtvwhpf0y6g1",
+      "undrly:entity:01jagv5gymfsfrmtvwhpf0y6g10",
+      "undrly:entity:81jagv5gymfsfrmtvwhpf0y6g1",
+      "undrly:entity:01jagv5gymfsfrmtvwhpf0y6gu",
+      "undrly:entity:01jagv5gymfsfrmtvwhpf0y6gi",
+      "undrly:entity:01jagv5gymfsfrmtvwhpf0y6g1:x",
+      " undrly:entity:01jagv5gymfsfrmtvwhpf0y6g1",
+      "undrly:entity:01jagv5gymfsfrmtvwhpf0y6g1 ",
+      "undrly:entity:2f3gpkw0008008000000000009",
+      "undrly:entity:01jagv5gymfsfwmtvwhpf0y6g1",
+      "undrly:entity:00000000000000000000000000"
+    ]
+  },
+  "decimals": {
+    "valid": [
+      "0",
+      "0.00",
+      "1",
+      "-1.50",
+      "183.4200",
+      "0.00000001",
+      "79228162514264337593543950335",
+      "-79228162514264337593543950335",
+      "0.0000000000000000000000000001"
+    ],
+    "invalid": [
+      "",
+      " 1",
+      "1 ",
+      "+1",
+      "01",
+      "1.",
+      ".5",
+      "1e3",
+      "1E3",
+      "-0",
+      "-0.00",
+      "1,000",
+      "NaN",
+      "Infinity",
+      "0.00000000000000000000000000001",
+      "79228162514264337593543950336"
+    ]
+  },
+  "timestamps": {
+    "valid": [
+      "2026-09-24T12:00:00Z",
+      "2026-09-24T12:00:00.012Z",
+      "2026-09-24T12:00:00.012345Z",
+      "2026-09-24T12:00:00.000100Z",
+      "2024-02-29T00:00:00Z",
+      "0001-01-01T00:00:00Z",
+      "9999-12-31T23:59:59.999999Z"
+    ],
+    "invalid": [
+      "2026-09-24T12:00:00",
+      "2026-09-24T12:00:00+00:00",
+      "2026-09-24T19:00:00+07:00",
+      "2026-09-24T12:00:00z",
+      "2026-09-24t12:00:00Z",
+      "2026-09-24 12:00:00Z",
+      "2026-09-24T12:00:00.000Z",
+      "2026-09-24T12:00:00.0120Z",
+      "2026-09-24T12:00:00.012000Z",
+      "2026-09-24T12:00:00.000000001Z",
+      "2026-09-24",
+      "1790208000",
+      "2026-02-30T00:00:00Z",
+      "2025-02-29T00:00:00Z",
+      "2026-13-01T00:00:00Z",
+      "2026-09-24T24:00:00Z",
+      "2016-12-31T23:59:60Z",
+      "0000-01-01T00:00:00Z"
+    ]
+  },
+  "sourceIds": {
+    "valid": [
+      "example-source",
+      "nasdaq",
+      "source-2"
+    ],
+    "invalid": [
+      "",
+      "Example",
+      "a--b",
+      "-a",
+      "a-",
+      "a_b",
+      "a b",
+      "undrly:source:x",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+[package]
+name = "undrly-provider"
+description = "Provider boundary for Undrly: capability traits that turn provider payloads into provider-native records."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+undrly-core.workspace = true
+
+[dev-dependencies]
+rust_decimal.workspace = true
+
+[lints]
+workspace = true

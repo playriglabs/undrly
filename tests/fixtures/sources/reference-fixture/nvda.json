@@ -1,0 +1,24 @@
+{
+  "recordId": "nvda-reference-v1",
+  "issuer": {
+    "legalName": "NVIDIA CORPORATION",
+    "entityType": "company",
+    "lei": "549300S4KLFTLO7GSQ80"
+  },
+  "security": {
+    "name": "NVIDIA CORP",
+    "securityType": "common-stock",
+    "isin": "US67066G1040",
+    "shareClassFigi": "BBG001S5TZJ6",
+    "denomination": {
+      "code": "USD",
+      "name": "US Dollar"
+    }
+  },
+  "listing": {
+    "venueName": "Nasdaq",
+    "mic": "XNAS",
+    "symbol": "NVDA",
+    "exchangeFigi": "BBG000BBK0R0"
+  }
+}

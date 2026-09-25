@@ -1,0 +1,15 @@
+[package]
+name = "undrly-normalize"
+description = "Normalization for Undrly: provider-native records to validated canonical values. Pure; no I/O."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+undrly-core.workspace = true
+undrly-provider.workspace = true
+
+[lints]
+workspace = true

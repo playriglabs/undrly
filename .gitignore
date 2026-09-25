@@ -1,0 +1,10 @@
+# Rust
+/rust/target/
+
+# TypeScript
+node_modules/
+*.tsbuildinfo
+
+# Local environment
+.env
+.DS_Store

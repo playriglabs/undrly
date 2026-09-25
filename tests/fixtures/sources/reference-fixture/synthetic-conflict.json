@@ -1,0 +1,24 @@
+{
+  "recordId": "synthetic-conflict-v1",
+  "issuer": {
+    "legalName": "Synthetic Conflict Test Company",
+    "entityType": "company",
+    "lei": "SYNTHETIC00000000174"
+  },
+  "security": {
+    "name": "Synthetic Conflict Test Security",
+    "securityType": "common-stock",
+    "isin": "ZZSYNTH00015",
+    "shareClassFigi": null,
+    "denomination": {
+      "code": "USD",
+      "name": "US Dollar"
+    }
+  },
+  "listing": {
+    "venueName": "Nasdaq",
+    "mic": "XNAS",
+    "symbol": "NVDA",
+    "exchangeFigi": "BBG000BBK0R0"
+  }
+}

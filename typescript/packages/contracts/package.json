@@ -1,0 +1,13 @@
+{
+  "name": "@undrly/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Versioned transport contracts for data produced by the Undrly Rust data plane.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  }
+}

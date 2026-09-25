@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "instrumentId": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2",
+  "basis": "aggregated",
+  "venueId": null,
+  "price": "183.4200",
+  "unit": {
+    "id": "undrly:currency:01jagv5gymfsfvmtvwhpf0y6g5",
+    "kind": "currency",
+    "code": "USD"
+  },
+  "observedAt": "2026-09-24T12:00:00Z",
+  "receivedAt": "2026-09-24T12:00:00.012Z",
+  "sourceId": "example-source"
+}

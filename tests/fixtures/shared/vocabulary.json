@@ -1,0 +1,86 @@
+{
+  "categories": [
+    "entity",
+    "instrument",
+    "listing",
+    "venue",
+    "currency"
+  ],
+  "entityKinds": [
+    "company"
+  ],
+  "instrumentClasses": [
+    "equity",
+    "crypto_asset"
+  ],
+  "relationshipTypes": [
+    "ISSUED_BY",
+    "TRADES_ON",
+    "DENOMINATED_IN",
+    "SETTLES_IN",
+    "DERIVES_FROM",
+    "HOLDS",
+    "TRACKS",
+    "MEMBER_OF",
+    "TOKENIZES",
+    "REPRESENTS",
+    "PRICED_BY",
+    "AVAILABLE_ON",
+    "RELATED_TO"
+  ],
+  "relationshipRules": [
+    [
+      "ISSUED_BY",
+      "instrument",
+      "entity"
+    ],
+    [
+      "TRADES_ON",
+      "instrument",
+      "venue"
+    ],
+    [
+      "DENOMINATED_IN",
+      "instrument",
+      "currency"
+    ],
+    [
+      "DENOMINATED_IN",
+      "instrument",
+      "instrument"
+    ],
+    [
+      "SETTLES_IN",
+      "instrument",
+      "currency"
+    ],
+    [
+      "SETTLES_IN",
+      "instrument",
+      "instrument"
+    ]
+  ],
+  "observationBases": [
+    "venue",
+    "aggregated",
+    "derived"
+  ],
+  "identifierNamespaces": {
+    "isin": [
+      "instrument"
+    ],
+    "figi": [
+      "instrument",
+      "listing"
+    ],
+    "lei": [
+      "entity"
+    ],
+    "mic": [
+      "venue"
+    ],
+    "iso4217": [
+      "currency"
+    ]
+  }
+}

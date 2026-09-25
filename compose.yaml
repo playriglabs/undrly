@@ -1,0 +1,21 @@
+# Local development database only. No schema or migrations exist yet
+# (persistence is Phase 2). Bound to localhost; not a deployment definition.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: undrly
+      POSTGRES_DB: undrly
+      POSTGRES_PASSWORD: ${UNDRLY_POSTGRES_PASSWORD:?set UNDRLY_POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U undrly -d undrly"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

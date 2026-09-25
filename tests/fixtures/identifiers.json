@@ -1,0 +1,90 @@
+{
+  "isin": {
+    "valid": [
+      "US0378331005",
+      "US67066G1040",
+      "GB0002634946",
+      "DE000BAY0017"
+    ],
+    "invalid": [
+      "US0378331006",
+      "US67066G1041",
+      "us0378331005",
+      "US037833100",
+      "1S0378331005",
+      "US037833100A",
+      ""
+    ]
+  },
+  "figi": {
+    "valid": [
+      "BBG000BLNNH6",
+      "BBG000B9XRY4",
+      "BBG000BBJQV0"
+    ],
+    "invalid": [
+      "BBG000BLNNH7",
+      "BBG000BLNNHA",
+      "BBA000BLNNH6",
+      "BBG000BLANH6",
+      "BSG000BLNNH6",
+      "BBG000BLNNH",
+      "bbg000blnnh6"
+    ]
+  },
+  "lei": {
+    "valid": [
+      "HWUPKR0MPOU8FGXBT394",
+      "5493001KJTIIGC8Y1R12"
+    ],
+    "invalid": [
+      "HWUPKR0MPOU8FGXBT395",
+      "HWUPKR0MPOU8FGXBT39",
+      "hwupkr0mpou8fgxbt394"
+    ]
+  },
+  "mic": {
+    "valid": [
+      "XNAS",
+      "XNYS",
+      "XIDX"
+    ],
+    "invalid": [
+      "xnas",
+      "XNA",
+      "XNASD",
+      "XN S"
+    ]
+  },
+  "iso4217": {
+    "valid": [
+      "USD",
+      "IDR",
+      "EUR",
+      "XAF"
+    ],
+    "invalid": [
+      "usd",
+      "US",
+      "USDT",
+      "US1",
+      "USDC"
+    ]
+  },
+  "venueSymbols": {
+    "valid": [
+      "NVDA",
+      "BRK.B",
+      "BRK/B",
+      "7203",
+      "nvda"
+    ],
+    "invalid": [
+      "",
+      " NVDA",
+      "NV DA",
+      "NVDA\t",
+      "NVDA\n"
+    ]
+  }
+}

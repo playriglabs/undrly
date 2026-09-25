@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "subjectId": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2",
+  "relationshipType": "ISSUED_BY",
+  "objectId": "undrly:entity:01jagv5gymfsfrmtvwhpf0y6g1",
+  "provenance": {
+    "sourceId": "example-source",
+    "receivedAt": "2026-09-24T12:00:00Z",
+    "confidence": "0.9"
+  }
+}

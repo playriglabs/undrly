@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "instrumentId": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2",
+  "basis": "derived",
+  "venueId": null,
+  "price": "0.9998",
+  "unit": {
+    "id": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g6",
+    "kind": "asset",
+    "code": null
+  },
+  "observedAt": "2026-09-24T12:00:00Z",
+  "receivedAt": "2026-09-24T12:00:00.012Z",
+  "sourceId": "example-source"
+}
