@@ -21,6 +21,9 @@ pub struct Meta {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Asset {
     pub name: String,
+    /// Delisted markets stay in `meta` but are not live.
+    #[serde(default, rename = "isDelisted")]
+    pub is_delisted: bool,
 }
 
 /// One market's context. Prices are decimal strings, verbatim.

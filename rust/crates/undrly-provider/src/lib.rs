@@ -30,14 +30,20 @@ use undrly_core::SourceId;
 
 pub mod alpaca;
 pub mod coinbase;
+pub mod coingecko;
 pub mod curated;
+pub mod eia;
 pub mod fixture;
 pub mod gold_api;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod hyperliquid;
 pub mod kraken;
+pub mod nasdaq;
 pub mod sec;
+pub mod ssga;
+pub mod worldbank;
+pub mod xlsx;
 
 /// A JSON number exactly as written in the payload (e.g. `4273.600098`),
 /// never parsed through a float. Normalization turns it into a `Decimal`.

@@ -10,7 +10,7 @@
 //! written (never derived from an external identifier), plus a dataset-local
 //! `key` used only for references inside the file.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use undrly_core::SourceId;
 
 use crate::{DecodeError, Provider, ReferenceDataProvider};
@@ -18,7 +18,7 @@ use crate::{DecodeError, Provider, ReferenceDataProvider};
 /// Source id of curated reference data.
 pub const SOURCE_ID: &str = "undrly-curated";
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Universe {
     pub dataset: String,
@@ -36,9 +36,35 @@ pub struct Universe {
     /// Pairs aggregated with a method other than the default.
     #[serde(default)]
     pub quote_aggregations: Vec<QuoteAggregationRecord>,
+    /// Universe memberships (generated snapshots only).
+    #[serde(default)]
+    pub universes: Vec<UniverseRecord>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// A universe snapshot: its members, and the upstream raw file that asserted
+/// them (stored separately as a source record of `source`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UniverseRecord {
+    pub key: String,
+    pub source: String,
+    pub record_key: String,
+    pub sha256: String,
+    pub as_of: String,
+    pub members: Vec<UniverseMemberRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UniverseMemberRecord {
+    pub node: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_symbol: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QuoteAggregationRecord {
     pub subject: String,
@@ -46,7 +72,7 @@ pub struct QuoteAggregationRecord {
     pub method: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CurrencyRecord {
     pub key: String,
@@ -55,37 +81,49 @@ pub struct CurrencyRecord {
     pub iso4217: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EntityRecord {
     pub key: String,
     pub id: String,
     pub kind: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lei: Option<String>,
+    /// SEC Central Index Key (issuer identity only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cik: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VenueRecord {
     pub key: String,
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mic: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstrumentRecord {
     pub key: String,
     pub id: String,
     pub class: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub isin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub figi: Option<String>,
+    /// Decimal text, e.g. `"1000"` for a 1,000-unit contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_multiplier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_of_measure: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListingRecord {
     pub key: String,
@@ -93,10 +131,11 @@ pub struct ListingRecord {
     pub instrument: String,
     pub venue: String,
     pub symbol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub figi: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AliasRecord {
     pub node: String,
@@ -104,7 +143,7 @@ pub struct AliasRecord {
     pub kind: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QuoteFeedRecord {
     pub source: String,
@@ -112,8 +151,12 @@ pub struct QuoteFeedRecord {
     pub subject: String,
     pub unit: String,
     pub basis: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub venue: Option<String>,
     pub price_type: String,
+    /// Feed cadence; defaults to the V1 window (300 s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_after_seconds: Option<u32>,
 }
 
 pub struct CuratedProvider {
@@ -125,6 +168,12 @@ impl CuratedProvider {
         Self {
             source_id: SourceId::parse(SOURCE_ID).expect("valid source id"),
         }
+    }
+
+    /// The same format under another source (e.g. `undrly-universe` for
+    /// generated universe snapshots).
+    pub fn with_source(source_id: SourceId) -> Self {
+        Self { source_id }
     }
 }
 

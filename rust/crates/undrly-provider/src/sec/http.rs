@@ -76,6 +76,13 @@ impl SecClient {
     pub async fn fetch_submissions(&self, cik: &Cik) -> Result<FetchedRecord, FetchError> {
         self.http.get(&self.submissions_url(cik), &[]).await
     }
+
+    /// Fetches `company_tickers_exchange.json` (ticker → exchange).
+    pub async fn fetch_company_tickers_exchange(&self) -> Result<FetchedRecord, FetchError> {
+        self.http
+            .get(super::COMPANY_TICKERS_EXCHANGE_URL, &[])
+            .await
+    }
 }
 
 #[cfg(test)]

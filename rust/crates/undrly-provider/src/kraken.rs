@@ -13,6 +13,36 @@ use crate::{DecodeError, Provider, QuoteProvider};
 
 pub const SOURCE_ID: &str = "kraken";
 pub const TICKER_URL: &str = "https://api.kraken.com/0/public/Ticker";
+pub const ASSET_PAIRS_URL: &str = "https://api.kraken.com/0/public/AssetPairs";
+
+/// Kraken's tradable pairs (`/0/public/AssetPairs`), keyed by pair name, the
+/// name the ticker uses. Universe building only.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AssetPairs {
+    pub error: Vec<String>,
+    #[serde(default)]
+    pub result: BTreeMap<String, AssetPair>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AssetPair {
+    pub altname: String,
+    /// `XBT/USD`: the spelling CoinGecko's Kraken tickers use.
+    pub wsname: Option<String>,
+    pub status: Option<String>,
+}
+
+pub fn decode_asset_pairs(payload: &[u8]) -> Result<AssetPairs, DecodeError> {
+    let reject = |reason: String| DecodeError {
+        source_id: SourceId::parse(SOURCE_ID).expect("valid source id"),
+        reason,
+    };
+    let pairs: AssetPairs = serde_json::from_slice(payload).map_err(|e| reject(e.to_string()))?;
+    if !pairs.error.is_empty() {
+        return Err(reject(format!("Kraken error: {}", pairs.error.join("; "))));
+    }
+    Ok(pairs)
+}
 
 /// Kraken's ticker response. Only the fields Undrly uses are decoded.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

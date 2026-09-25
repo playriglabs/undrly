@@ -13,6 +13,24 @@ use crate::{DecodeError, Provider, QuoteProvider};
 pub const SOURCE_ID: &str = "coinbase";
 pub const BASE_URL: &str = "https://api.exchange.coinbase.com/products";
 
+/// One product of `GET /products`. Universe building only.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Product {
+    pub id: String,
+    pub base_currency: String,
+    pub quote_currency: String,
+    pub status: String,
+    #[serde(default)]
+    pub trading_disabled: bool,
+}
+
+pub fn decode_products(payload: &[u8]) -> Result<Vec<Product>, DecodeError> {
+    serde_json::from_slice(payload).map_err(|e| DecodeError {
+        source_id: SourceId::parse(SOURCE_ID).expect("valid source id"),
+        reason: e.to_string(),
+    })
+}
+
 /// Level-1 book: at most one `[price, size, order count]` per side, prices
 /// and sizes as decimal strings, verbatim.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

@@ -145,3 +145,71 @@ mod tests {
         }
     }
 }
+
+/// `company_tickers_exchange.json`: SEC's ticker → listing exchange table.
+/// V1.1 uses it only to find an equity's primary venue (MIC).
+pub const COMPANY_TICKERS_EXCHANGE_URL: &str =
+    "https://www.sec.gov/files/company_tickers_exchange.json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CompanyTickersExchange {
+    pub fields: Vec<String>,
+    pub data: Vec<Vec<serde_json::Value>>,
+}
+
+/// One row: CIK, company name, ticker, exchange (`NYSE`, `Nasdaq`, `CBOE`,
+/// `OTC`, or none), as SEC spells them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickerExchange {
+    pub cik: u64,
+    pub name: String,
+    pub ticker: String,
+    pub exchange: Option<String>,
+}
+
+pub fn decode_company_tickers_exchange(payload: &[u8]) -> Result<Vec<TickerExchange>, DecodeError> {
+    let reject = |reason: String| DecodeError {
+        source_id: SourceId::parse(SOURCE_ID).expect("valid source id"),
+        reason,
+    };
+    let table: CompanyTickersExchange =
+        serde_json::from_slice(payload).map_err(|e| reject(e.to_string()))?;
+    if table.fields != ["cik", "name", "ticker", "exchange"] {
+        return Err(reject(format!("unexpected fields {:?}", table.fields)));
+    }
+    table
+        .data
+        .iter()
+        .map(|row| match row.as_slice() {
+            [cik, name, ticker, exchange] => Ok(TickerExchange {
+                cik: cik
+                    .as_u64()
+                    .ok_or_else(|| reject(format!("bad cik {cik}")))?,
+                name: name.as_str().unwrap_or_default().to_owned(),
+                ticker: ticker
+                    .as_str()
+                    .ok_or_else(|| reject(format!("bad ticker {ticker}")))?
+                    .to_owned(),
+                exchange: exchange.as_str().map(str::to_owned),
+            }),
+            _ => Err(reject(format!("row has {} fields", row.len()))),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tickers_tests {
+    use super::*;
+
+    #[test]
+    fn decodes_ticker_exchange_rows() {
+        let rows = decode_company_tickers_exchange(
+            br#"{"fields":["cik","name","ticker","exchange"],
+                 "data":[[1045810,"NVIDIA CORP","NVDA","Nasdaq"],[1,"X","XOTC",null]]}"#,
+        )
+        .unwrap();
+        assert_eq!(rows[0].exchange.as_deref(), Some("Nasdaq"));
+        assert_eq!(rows[1].exchange, None);
+        assert!(decode_company_tickers_exchange(br#"{"fields":["cik"],"data":[]}"#).is_err());
+    }
+}

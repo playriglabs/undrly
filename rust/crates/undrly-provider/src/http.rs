@@ -31,6 +31,10 @@ pub enum FetchError {
     Status { url: String, status: u16 },
     #[error("{url} returned more than {limit} bytes")]
     TooLarge { url: String, limit: usize },
+    /// The response contains a credential sent with the request; it is
+    /// discarded, never stored.
+    #[error("{url}: the response echoes a request credential; discarded")]
+    CredentialEchoed { url: String },
 }
 
 /// A response exactly as received, with request metadata.
@@ -86,6 +90,43 @@ impl HttpClient {
             request = request.header(*name, *value);
         }
         fetch(request, url, url.to_owned()).await
+    }
+
+    /// GET `url`, identified as `record_key` (a URL with credentials
+    /// removed). The response is discarded if it contains `secret`.
+    pub async fn get_secret_query(
+        &self,
+        url: &str,
+        record_key: &str,
+        secret: &str,
+    ) -> Result<FetchedRecord, FetchError> {
+        let request = self
+            .http
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json");
+        // Errors carry the URL; report the credential-free key instead.
+        let mut fetched = match fetch(request, record_key, record_key.to_owned()).await {
+            Ok(f) => f,
+            Err(FetchError::Request { url, source }) => {
+                return Err(FetchError::Request {
+                    url,
+                    source: source.without_url(),
+                });
+            }
+            Err(e) => return Err(e),
+        };
+        if !secret.is_empty()
+            && fetched
+                .body
+                .windows(secret.len())
+                .any(|w| w == secret.as_bytes())
+        {
+            return Err(FetchError::CredentialEchoed {
+                url: record_key.to_owned(),
+            });
+        }
+        fetched.url = record_key.to_owned();
+        Ok(fetched)
     }
 
     /// POST a JSON `body` to `url`.
