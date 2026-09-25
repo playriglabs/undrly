@@ -50,6 +50,8 @@ Fixtures: `tests/fixtures/api/v1/` (valid documents must round-trip unchanged,
 | `GET /v1/resolve?q=` | `ResolveResultV1`: `resolved` / `ambiguous` / `not_found` |
 | `GET /v1/search?q=` | `SearchResultV1` (discovery only) |
 | `GET /v1/instruments/:id/graph` | `GraphV1` |
+| `GET /v1/universes` | `UniversesV1`: each universe with a snapshot (key, name, description, source, `asOf`, `memberCount`) |
+| `GET /v1/universes/:key` | `UniverseV1`: the latest snapshot's members (`node`, `rank`, `sourceSymbol`) and its upstream `sourceRecord`; unknown key or no snapshot → 404 |
 | errors | `ErrorV1` (`bad_request` 400, `not_found`/`no_quote` 404, `ambiguous` 409) |
 
 `QuoteV1` and `ObservationV1` share their price fields: `subject` (an
@@ -63,6 +65,18 @@ used, with each one's contributed price and raw-record id). Its `source` is
 `null` for a multi-source aggregate. `ObservationV1` adds `observationId`,
 `sourceRecord` (`id`, `key`) and read-time `freshness`. `MarketObservationV1` is superseded and
 is not served.
+
+V1.1 additions (v1 is unreleased, so v1 itself was extended):
+
+- `priceType` gains `average`: a published average over a period, e.g.
+  World Bank monthly averages.
+- An instrument `subject` may carry `contractMultiplier` (e.g. `"1000"` for
+  `kPEPE`) and `unitOfMeasure` (`troy_ounce`, `barrel`, `mmbtu`,
+  `metric_ton`, `kilogram`). They are omitted, never `null`, when unset, so
+  V1 documents are unchanged.
+- `freshness` uses the cadence the observation's feed declares
+  (`stale_after_seconds`: 300 for market data, 14 days for EIA, 62 days for
+  World Bank). `mean-venue-mid-v1` keeps its 30 s window.
 
 ## Changing the API contract
 

@@ -31,6 +31,8 @@ const vocabulary = readJson("shared/vocabulary.json") as {
   observationBases: string[];
   instrumentClasses: string[];
   priceTypes: string[];
+  unitsOfMeasure: string[];
+  universeKeys: string[];
   aggregationMethods: string[];
 };
 
@@ -157,6 +159,8 @@ describe("shared vocabulary agrees with Rust and the database", () => {
   it("instrument classes, price types, aggregation methods", () => {
     expect([...v1.INSTRUMENT_CLASSES]).toStrictEqual(vocabulary.instrumentClasses);
     expect([...v1.PRICE_TYPES]).toStrictEqual(vocabulary.priceTypes);
+    expect([...v1.UNITS_OF_MEASURE]).toStrictEqual(vocabulary.unitsOfMeasure);
+    expect([...v1.UNIVERSE_KEYS]).toStrictEqual(vocabulary.universeKeys);
     expect([...v1.AGGREGATION_METHODS]).toStrictEqual(vocabulary.aggregationMethods);
   });
 });

@@ -7,6 +7,8 @@
  * GET /v1/quote/:query  (?q=)    one canonical QuoteV1
  * GET /v1/quotes/:query (?q=)    the per-feed observations behind it
  * GET /v1/instruments/:id/graph  one hop of edges + listings
+ * GET /v1/universes              universes with a snapshot (V1.1)
+ * GET /v1/universes/:key         one universe's latest membership
  *
  * Queries may contain `/` (`EUR/USD`); path forms accept it unencoded.
  */
@@ -21,6 +23,8 @@ import {
   resolveResult,
   type Sql,
   search,
+  universe,
+  universes,
 } from "./service.ts";
 
 type ErrorCode = v1.ErrorV1["error"]["code"];
@@ -42,6 +46,11 @@ const SERVICE_INDEX = v1.ServiceIndexV1.parse({
     { path: "/v1/search?q=", returns: "matching instruments, currencies and venues" },
     { path: "/v1/resolve?q=", returns: "what a query refers to" },
     { path: "/v1/instruments/{id}/graph", returns: "an instrument's direct relationships" },
+    {
+      path: "/v1/universes",
+      returns: "the imported universes (crypto, S&P 500, Nasdaq-100, perps)",
+    },
+    { path: "/v1/universes/{key}", returns: "a universe's latest membership" },
   ],
   examples: [
     "/v1/quote/NVDA",
@@ -51,6 +60,7 @@ const SERVICE_INDEX = v1.ServiceIndexV1.parse({
     "/v1/quote/BTC-PERP",
     "/v1/quotes/BTC/USD",
     "/v1/search?q=gold",
+    "/v1/universes/sp500",
   ],
   dataUse:
     "Local/private demo only. Upstream redistribution terms are unreviewed; no production redistribution rights are claimed.",
@@ -140,6 +150,17 @@ export function createApp(sql: Sql, options: AppOptions) {
     if (uuid === null) return fail("bad_request", "expected an instrument id");
     const body = await graph(sql, uuid);
     return body === null ? fail("not_found", `no instrument ${id}`) : c.json(body);
+  });
+
+  app.get("/v1/universes", async (c) => c.json(await universes(sql)));
+
+  app.get("/v1/universes/:key", async (c) => {
+    const key = c.req.param("key");
+    if (!(v1.UNIVERSE_KEYS as readonly string[]).includes(key)) {
+      return fail("not_found", `no universe ${key}`);
+    }
+    const body = await universe(sql, key as v1.UniverseKey);
+    return body === null ? fail("not_found", `universe ${key} has no snapshot`) : c.json(body);
   });
 
   app.notFound(() => fail("not_found", "no such route"));

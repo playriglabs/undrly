@@ -20,11 +20,21 @@ export const INSTRUMENT_CLASSES = [
 export type InstrumentClass = (typeof INSTRUMENT_CLASSES)[number];
 
 /** Mirrors `undrly_core::PriceType`. */
-export const PRICE_TYPES = ["last", "mid", "mark", "reference"] as const;
+export const PRICE_TYPES = ["last", "mid", "mark", "reference", "average"] as const;
 export type PriceType = (typeof PRICE_TYPES)[number];
 
 /** Mirrors `undrly_core::AggregationMethod`. */
 export const AGGREGATION_METHODS = ["latest-observation-v1", "mean-venue-mid-v1"] as const;
+
+/** Mirrors `undrly_core::UnitOfMeasure`. */
+export const UNITS_OF_MEASURE = [
+  "troy_ounce",
+  "barrel",
+  "mmbtu",
+  "metric_ton",
+  "kilogram",
+] as const;
+export type UnitOfMeasure = (typeof UNITS_OF_MEASURE)[number];
 
 /**
  * What is priced: one unit of an instrument (a share, one BTC, one troy
@@ -36,6 +46,10 @@ export const PriceSubjectV1 = z.discriminatedUnion("kind", [
     kind: z.literal("instrument"),
     class: z.enum(INSTRUMENT_CLASSES),
     name: z.string().min(1),
+    /** Units of the underlying per contract (`1000` for `kPEPE`); present only when not 1. */
+    contractMultiplier: DecimalString.optional(),
+    /** The physical unit a commodity is priced per; present only when stated. */
+    unitOfMeasure: z.enum(UNITS_OF_MEASURE).optional(),
   }),
   z.strictObject({
     id: CurrencyId,

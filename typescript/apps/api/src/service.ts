@@ -93,11 +93,18 @@ async function subjectOf(sql: Sql, uuid: string): Promise<v1.PriceSubjectV1> {
     };
   }
   if (node.kind !== "instrument" || node.class === null) throw new Error(`not priceable: ${uuid}`);
+  const terms = await sql<{ multiplier: string | null; uom: v1.UnitOfMeasure | null }[]>`
+    SELECT contract_multiplier::text AS multiplier, unit_of_measure AS uom
+    FROM instruments WHERE id = ${uuid}`;
+  const { multiplier, uom } = terms[0] ?? { multiplier: null, uom: null };
   return {
     id: node.id as unknown as v1.InstrumentId,
     kind: "instrument",
     class: node.class,
     name: node.name,
+    // Additive fields: absent (not null) when unset, so V1 output is unchanged.
+    ...(multiplier === null ? {} : { contractMultiplier: multiplier as v1.DecimalString }),
+    ...(uom === null ? {} : { unitOfMeasure: uom }),
   };
 }
 
@@ -182,13 +189,24 @@ async function matches(sql: Sql, q: ParsedQuery): Promise<Match[]> {
     }
     case "pair": {
       const [base, quote] = [await pairSide(sql, q.base), await pairSide(sql, q.quote)];
-      const out: Match[] = [];
+      const out: { subject: string; unit: string; unitCategory: string }[] = [];
       for (const subject of base) {
         for (const unit of quote) {
           if (subject === unit) continue;
           const unitCategory = (await categoryOf(sql, unit)) ?? "";
           out.push({ subject, unit, unitCategory });
         }
+      }
+      // A symbol shared across asset classes (a crypto asset and a stock):
+      // keep only the combinations something actually quotes.
+      if (out.length > 1) {
+        const quoted: typeof out = [];
+        for (const m of out) {
+          const rows = await sql`
+            SELECT 1 FROM quote_feeds WHERE subject_id = ${m.subject} AND unit_id = ${m.unit} LIMIT 1`;
+          if (rows.length > 0) quoted.push(m);
+        }
+        return quoted;
       }
       return out;
     }
@@ -334,9 +352,26 @@ async function methodOf(sql: Sql, pair: Pair): Promise<string> {
   return rows[0]?.method ?? "latest-observation-v1";
 }
 
-/** Freshness window: the method's own, else the API's configured default. */
-function windowSeconds(method: string, staleAfterSeconds: number): number {
-  return method === "mean-venue-mid-v1" ? MEAN_VENUE_MID_MAX_AGE_SECONDS : staleAfterSeconds;
+/**
+ * Freshness window of one observation: the method's own for
+ * `mean-venue-mid-v1`, else the cadence its feed declares
+ * (`quote_feeds.stale_after_seconds`; 300 for every V1 feed), else the
+ * API's configured default.
+ */
+async function windowSeconds(
+  sql: Sql,
+  method: string,
+  row: ObservationRow,
+  staleAfterSeconds: number,
+): Promise<number> {
+  if (method === "mean-venue-mid-v1") return MEAN_VENUE_MID_MAX_AGE_SECONDS;
+  const feeds = await sql<{ seconds: number }[]>`
+    SELECT stale_after_seconds AS seconds FROM quote_feeds
+    WHERE feed_source_id = ${row.source_id} AND subject_id = ${row.subject_id}
+      AND unit_id = ${row.unit_id} AND price_type = ${row.price_type}
+      AND venue_id IS NOT DISTINCT FROM ${row.venue_id}::uuid
+    ORDER BY id LIMIT 1`;
+  return feeds[0]?.seconds ?? staleAfterSeconds;
 }
 
 function freshness(asOf: string, now: Date, window: number): "fresh" | "stale" {
@@ -423,13 +458,12 @@ export async function canonicalQuote(
     computedAt: canonicalTimestamp(row.computed_at),
     inputs,
   };
-  const window = windowSeconds(row.method, staleAfterSeconds);
-
   if (row.method === "latest-observation-v1") {
     const only = inputRows[0];
     if (only === undefined) return { kind: "none" };
     const fields = await observationFields(sql, only);
     const asOf = fields.observedAt ?? fields.receivedAt;
+    const window = await windowSeconds(sql, row.method, only, staleAfterSeconds);
     return {
       kind: "quote",
       quote: v1.QuoteV1.parse({
@@ -443,7 +477,9 @@ export async function canonicalQuote(
   }
 
   const asOf = canonicalTimestamp(row.as_of);
-  if (freshness(asOf, now, window) === "stale") return { kind: "stale", asOf };
+  if (freshness(asOf, now, MEAN_VENUE_MID_MAX_AGE_SECONDS) === "stale") {
+    return { kind: "stale", asOf };
+  }
   const latestReceipt = inputRows
     .map((r) => canonicalTimestamp(r.received_at))
     .sort((a, b) => Date.parse(a) - Date.parse(b))
@@ -480,7 +516,7 @@ export async function feedObservations(
   now: Date,
   staleAfterSeconds: number,
 ): Promise<v1.ObservationV1[]> {
-  const window = windowSeconds(await methodOf(sql, pair), staleAfterSeconds);
+  const method = await methodOf(sql, pair);
   const rows = await sql.unsafe<ObservationRow[]>(
     `SELECT ${OBSERVATION_COLUMNS} FROM (
        SELECT DISTINCT ON (source_id, venue_id, price_type) *
@@ -494,6 +530,7 @@ export async function feedObservations(
   const out: v1.ObservationV1[] = [];
   for (const row of rows) {
     const fields = await observationFields(sql, row);
+    const window = await windowSeconds(sql, method, row, staleAfterSeconds);
     out.push(
       v1.ObservationV1.parse({
         ...fields,
@@ -592,5 +629,89 @@ export async function graph(sql: Sql, uuid: string): Promise<v1.GraphV1 | null> 
       provenance: { sourceId: e.source_id, receivedAt: canonicalTimestamp(e.received_at) },
     })),
     listings: listings.map((l) => ({ id: ref(l.id).id, venue: ref(l.venue), symbols: l.symbols })),
+  });
+}
+
+// --- universes ----------------------------------------------------------------
+
+const UNIVERSE_TEXT: Record<v1.UniverseKey, { name: string; description: string }> = {
+  "crypto-top100": {
+    name: "Crypto top 100 by market cap",
+    description:
+      "CoinGecko's top 100 assets by market capitalisation. Membership only: prices come from the Kraken and Coinbase feeds mapped through CoinGecko's exchange tickers.",
+  },
+  sp500: {
+    name: "S&P 500 (via SPY holdings)",
+    description: "SSGA SPY ETF holdings: a practical proxy, not the official S&P constituent file.",
+  },
+  nasdaq100: {
+    name: "Nasdaq-100 (imported members)",
+    description:
+      "Nasdaq.com's Nasdaq-100 list, limited to members that are imported S&P 500 securities listed on Nasdaq; the others are skipped and reported by the importer.",
+  },
+  "hyperliquid-perps": {
+    name: "Hyperliquid perpetuals",
+    description: "Hyperliquid's live perpetual markets when the snapshot was taken.",
+  },
+};
+
+type SnapshotRow = {
+  id: string;
+  key: v1.UniverseKey;
+  as_of: string;
+  source_id: string;
+  record_id: string;
+  record_key: string;
+  members: number;
+};
+
+const LATEST_SNAPSHOTS = `
+  SELECT DISTINCT ON (s.universe_key) s.id::text, s.universe_key AS key,
+         ${tsText("s.as_of")} AS as_of, s.source_id, s.source_record_id::text AS record_id,
+         r.record_key, (SELECT count(*)::int FROM universe_members m WHERE m.snapshot_id = s.id) AS members
+  FROM universe_snapshots s JOIN source_records r ON r.id = s.source_record_id
+  ORDER BY s.universe_key, s.as_of DESC, s.id DESC`;
+
+function summary(row: SnapshotRow) {
+  return {
+    key: row.key,
+    ...UNIVERSE_TEXT[row.key],
+    source: { id: row.source_id },
+    asOf: canonicalTimestamp(row.as_of),
+    memberCount: row.members,
+  };
+}
+
+/** Every universe with a snapshot, in key order. */
+export async function universes(sql: Sql): Promise<v1.UniversesV1> {
+  const rows = await sql.unsafe<SnapshotRow[]>(LATEST_SNAPSHOTS);
+  return v1.UniversesV1.parse({ schemaVersion: 1, universes: rows.map(summary) });
+}
+
+/** The latest snapshot of `key` with its members, or `null`. */
+export async function universe(sql: Sql, key: v1.UniverseKey): Promise<v1.UniverseV1 | null> {
+  const rows = await sql.unsafe<SnapshotRow[]>(
+    `SELECT * FROM (${LATEST_SNAPSHOTS}) latest WHERE key = $1`,
+    [key],
+  );
+  const row = rows[0];
+  if (row === undefined) return null;
+  const members = await sql<{ node: string; rank: number | null; symbol: string | null }[]>`
+    SELECT node_id::text AS node, rank, source_symbol AS symbol FROM universe_members
+    WHERE snapshot_id = ${row.id}
+    ORDER BY rank NULLS LAST, source_symbol, node_id`;
+  const refs = await nodeRefs(
+    sql,
+    members.map((m) => m.node),
+  );
+  return v1.UniverseV1.parse({
+    schemaVersion: 1,
+    ...summary(row),
+    sourceRecord: { id: row.record_id, key: row.record_key },
+    members: members.map((m) => {
+      const node = refs.get(m.node);
+      if (node === undefined) throw new Error(`unknown node ${m.node}`);
+      return { node, rank: m.rank, sourceSymbol: m.symbol };
+    }),
   });
 }
