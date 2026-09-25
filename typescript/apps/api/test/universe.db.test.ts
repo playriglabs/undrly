@@ -1,7 +1,8 @@
 /**
  * V1.1 API additions against a real PostgreSQL database (synthetic data):
  * `/v1/universes`, freshness by feed cadence (EIA 14 days, World Bank 62
- * days), additive subject fields, and pair disambiguation by quote feeds.
+ * days), additive subject fields, pair disambiguation by quote feeds, venue
+ * aliases (`NYSE:` = `XNYS:`) and class-share punctuation (`EXB-B` = `EXB.B`).
  * `fetch` is stubbed to fail: the API never contacts an upstream provider.
  *
  * Skipped without DATABASE_URL (the role needs CREATEDB).
@@ -22,6 +23,9 @@ const U = {
   coin: "0192f000-0000-7000-8000-000000000004",
   stock: "0192f000-0000-7000-8000-000000000005",
   perp: "0192f000-0000-7000-8000-000000000006",
+  classB: "0192f000-0000-7000-8000-000000000007",
+  xnys: "0192f000-0000-7000-8000-000000000008",
+  listing: "0192f000-0000-7000-8000-000000000009",
 };
 
 describe.skipIf(url === undefined)("V1.1 API with a database", () => {
@@ -55,23 +59,37 @@ describe.skipIf(url === undefined)("V1.1 API with a database", () => {
     const curated = await record("undrly-curated", "commodities.json", at);
     await sql`INSERT INTO nodes (id, category) VALUES (${U.usd}, 'currency'),
       (${U.wti}, 'instrument'), (${U.maize}, 'instrument'), (${U.coin}, 'instrument'),
-      (${U.stock}, 'instrument'), (${U.perp}, 'instrument')`;
+      (${U.stock}, 'instrument'), (${U.perp}, 'instrument'), (${U.classB}, 'instrument'),
+      (${U.xnys}, 'venue'), (${U.listing}, 'listing')`;
     await sql`INSERT INTO currencies (id, name, source_record_id) VALUES (${U.usd}, 'US Dollar', ${curated})`;
     await sql`INSERT INTO instruments (id, instrument_class, name, source_record_id, unit_of_measure, contract_multiplier)
       VALUES (${U.wti}, 'commodity', 'WTI crude oil', ${curated}, 'barrel', NULL),
              (${U.maize}, 'commodity', 'Maize', ${curated}, 'metric_ton', NULL),
              (${U.coin}, 'crypto_asset', 'Example Coin', ${curated}, NULL, NULL),
              (${U.stock}, 'equity', 'EXAMPLE CORP', ${curated}, NULL, NULL),
-             (${U.perp}, 'perpetual_future', 'kEXC Perpetual', ${curated}, NULL, 1000)`;
+             (${U.perp}, 'perpetual_future', 'kEXC Perpetual', ${curated}, NULL, 1000),
+             (${U.classB}, 'equity', 'EXAMPLE CL B', ${curated}, NULL, NULL)`;
+    await sql`INSERT INTO venues (id, name, source_record_id)
+      VALUES (${U.xnys}, 'New York Stock Exchange', ${curated})`;
+    await sql`INSERT INTO listings (id, instrument_id, venue_id, source_id, received_at, source_record_id)
+      VALUES (${U.listing}, ${U.classB}, ${U.xnys}, 'undrly-curated', ${at}, ${curated})`;
+    await sql`INSERT INTO listing_symbols (listing_id, venue_id, symbol, source_id, received_at, source_record_id)
+      VALUES (${U.listing}, ${U.xnys}, 'EXB.B', 'undrly-curated', ${at}, ${curated})`;
     await sql`INSERT INTO identifiers
       (scheme, value, node_id, node_category, source_id, received_at, source_record_id)
-      VALUES ('iso4217', 'USD', ${U.usd}, 'currency', 'undrly-curated', ${at}, ${curated})`;
+      VALUES ('iso4217', 'USD', ${U.usd}, 'currency', 'undrly-curated', ${at}, ${curated}),
+             ('mic', 'XNYS', ${U.xnys}, 'venue', 'undrly-curated', ${at}, ${curated})`;
+    for (const alias of ["XNYS", "NYSE"]) {
+      await sql`INSERT INTO aliases (node_id, node_category, alias, kind, source_id, received_at, source_record_id)
+        VALUES (${U.xnys}, 'venue', ${alias}, 'symbol', 'undrly-curated', ${at}, ${curated})`;
+    }
     for (const [node, alias] of [
       [U.wti, "WTI"],
       [U.maize, "MAIZE"],
       [U.coin, "EXC"],
       [U.stock, "EXC"],
       [U.perp, "kEXC-PERP"],
+      [U.classB, "EXB.B"],
     ] as const) {
       await sql`INSERT INTO aliases (node_id, node_category, alias, kind, source_id, received_at, source_record_id)
         VALUES (${node}, 'instrument', ${alias}, 'symbol', 'undrly-curated', ${at}, ${curated})`;
@@ -173,6 +191,40 @@ describe.skipIf(url === undefined)("V1.1 API with a database", () => {
       await (await app("2026-09-25T12:00:05Z").request("/v1/resolve?q=EXC")).json(),
     );
     expect(bare.status).toBe("ambiguous");
+  });
+
+  it("a venue's common name resolves like its MIC", async () => {
+    const resolve = async (q: string) =>
+      v1.ResolveResultV1.parse(
+        await (
+          await app("2026-09-25T00:00:00Z").request(`/v1/resolve?q=${encodeURIComponent(q)}`)
+        ).json(),
+      );
+    const byMic = await resolve("XNYS:EXB.B");
+    expect(byMic.status).toBe("resolved");
+    expect(byMic.match).toMatchObject({ kind: "node", node: { name: "EXAMPLE CL B" } });
+    expect(await resolve("NYSE:EXB.B")).toStrictEqual({ ...byMic, query: "NYSE:EXB.B" });
+    expect((await resolve("NYX:EXB.B")).status).toBe("not_found"); // no fuzzy venue names
+  });
+
+  it("class-share punctuation: `-` is looked up as `.`, nothing broader", async () => {
+    const resolve = async (q: string) =>
+      v1.ResolveResultV1.parse(
+        await (
+          await app("2026-09-25T00:00:00Z").request(`/v1/resolve?q=${encodeURIComponent(q)}`)
+        ).json(),
+      );
+    const dot = await resolve("EXB.B");
+    expect(dot.status).toBe("resolved");
+    expect(dot.match).toMatchObject({ kind: "node", node: { name: "EXAMPLE CL B" } });
+    for (const q of ["EXB-B", "exb-b", "XNYS:EXB-B", "NYSE:EXB-B"]) {
+      const r = await resolve(q);
+      expect(r.status, q).toBe("resolved");
+      expect(r.match, q).toStrictEqual(dot.match);
+    }
+    for (const q of ["EXBB", "EXB/B", "EXB_B", "EXB-BB", "EXB B"]) {
+      expect((await resolve(q)).status, q).toBe("not_found");
+    }
   });
 
   it("/v1/universes lists snapshots; /v1/universes/{key} lists members", async () => {

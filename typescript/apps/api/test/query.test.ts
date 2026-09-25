@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalTimestamp, parseQuery } from "../src/query.ts";
+import { canonicalTimestamp, classShareSymbol, parseQuery } from "../src/query.ts";
 
 describe("query syntax", () => {
   it("recognizes each form", () => {
@@ -30,6 +30,26 @@ describe("query syntax", () => {
     expect(parseQuery("   ")).toBeNull();
     expect(parseQuery("BTC\n")).toStrictEqual({ kind: "alias", text: "BTC" });
     expect(parseQuery("B\u0000TC")).toBeNull();
+  });
+});
+
+describe("class-share punctuation", () => {
+  it("maps one hyphenated share class to the dotted listing spelling, nothing else", () => {
+    expect(classShareSymbol("BRK-B")).toBe("BRK.B");
+    expect(classShareSymbol("bf-b")).toBe("bf.b");
+    for (const s of [
+      "BRK.B",
+      "BRKB",
+      "BTC-USD",
+      "BTC-PERP",
+      "HENRY-HUB",
+      "A-",
+      "-B",
+      "TOOLONG-B",
+      "B1-B",
+    ]) {
+      expect(classShareSymbol(s), s).toBeNull();
+    }
   });
 });
 

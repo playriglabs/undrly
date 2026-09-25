@@ -53,6 +53,18 @@ export function parseQuery(raw: string): ParsedQuery | null {
   return { kind: "alias", text: q };
 }
 
+/**
+ * Class-share punctuation, one explicit rule for queries only: a symbol of
+ * 1–5 letters, `-` and one letter is also looked up with `.` (`BRK-B` →
+ * `BRK.B`), the spelling equity listings keep. `null` for anything else.
+ */
+export function classShareSymbol(symbol: string): string | null {
+  const match = /^([A-Za-z]{1,5})-([A-Za-z])$/.exec(symbol);
+  if (match === null) return null;
+  const [, root = "", share = ""] = match;
+  return `${root}.${share}`;
+}
+
 /** Converts PostgreSQL `to_char(… 'YYYY-MM-DD"T"HH24:MI:SS.US')` text to
  * canonical `undrly_core::Timestamp` text (fraction omitted, 3 or 6 digits). */
 export function canonicalTimestamp(text: string): string {

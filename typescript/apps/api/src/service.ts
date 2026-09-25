@@ -7,6 +7,7 @@ import { v1 } from "@undrly/contracts";
 import type postgres from "postgres";
 import {
   canonicalTimestamp,
+  classShareSymbol,
   type IdentifierScheme,
   normalizeIdentifier,
   type ParsedQuery,
@@ -142,6 +143,16 @@ async function nodesByAlias(sql: Sql, text: string, symbolsOnly: boolean): Promi
   return rows.map((r) => r.id);
 }
 
+/** Equity instruments listed under the class-share spelling of `token`. */
+async function equitiesByClassShare(sql: Sql, token: string): Promise<string[]> {
+  const symbol = classShareSymbol(token);
+  if (symbol === null) return [];
+  const rows = await sql<{ id: string }[]>`
+    SELECT DISTINCT a.node_id::text AS id FROM aliases a JOIN instruments i ON i.id = a.node_id
+    WHERE a.alias_key = lower(${symbol}) AND a.kind = 'symbol' AND i.instrument_class = 'equity'`;
+  return rows.map((r) => r.id);
+}
+
 async function nodesByIdentifier(
   sql: Sql,
   scheme: IdentifierScheme | null,
@@ -163,6 +174,7 @@ async function categoryOf(sql: Sql, uuid: string): Promise<string | null> {
 async function pairSide(sql: Sql, token: string): Promise<string[]> {
   const ids = new Set([
     ...(await nodesByAlias(sql, token, true)),
+    ...(await equitiesByClassShare(sql, token)),
     ...(await nodesByIdentifier(sql, "iso4217", token.toUpperCase())),
   ]);
   const out: string[] = [];
@@ -182,6 +194,7 @@ async function matches(sql: Sql, q: ParsedQuery): Promise<Match[]> {
     case "alias": {
       const ids = new Set([
         ...(await nodesByAlias(sql, q.text, false)),
+        ...(await equitiesByClassShare(sql, q.text)),
         ...(await nodesByIdentifier(sql, null, q.text.toUpperCase())),
         ...(await nodesByIdentifier(sql, "cik", normalizeIdentifier("cik", q.text))),
       ]);
@@ -222,7 +235,8 @@ async function matches(sql: Sql, q: ParsedQuery): Promise<Match[]> {
       const listingRows = await sql<{ id: string }[]>`
         SELECT DISTINCT l.instrument_id::text AS id
         FROM listing_symbols s JOIN listings l ON l.id = s.listing_id
-        WHERE s.venue_id = ANY(${venues}::uuid[]) AND s.symbol = ${q.symbol}
+        WHERE s.venue_id = ANY(${venues}::uuid[])
+          AND s.symbol = ANY(${[q.symbol, classShareSymbol(q.symbol) ?? q.symbol]}::text[])
           AND s.valid_during @> now()`;
       const feedRows = await sql<{ subject: string; unit: string; unit_category: string }[]>`
         SELECT DISTINCT subject_id::text AS subject, unit_id::text AS unit, unit_category
