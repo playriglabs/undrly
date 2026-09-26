@@ -3,6 +3,7 @@ export const SCHEMA_VERSION = 1;
 
 export * from "./decimal.ts";
 export * from "./discovery.ts";
+export * from "./market-data.ts";
 export * from "./market-observation.ts";
 export * from "./primitives.ts";
 export * from "./quote.ts";

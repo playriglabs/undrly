@@ -9,11 +9,28 @@
  * GET /v1/instruments/:id/graph  one hop of edges + listings
  * GET /v1/universes              universes with a snapshot (V1.1)
  * GET /v1/universes/:key         one universe's latest membership
+ * GET /v1/candles/:query         venue candles (?interval=1h|4h|1d&limit=&start=&end=) (V1.3)
+ * GET /v1/history/:query         a reference series' published values (?limit=&start=&end=)
+ * GET /v1/market/:query          the quote in market context: status and statistics
+ * GET /v1/derivatives/:query     a perpetual's mark, index, funding and open interest
+ * GET /v1/calendar/:query        a session market's trading calendar (?from=&to= dates)
+ * GET /v1/economic-calendar      scheduled US economic releases (?from=&to=&category=)
  *
  * Queries may contain `/` (`EUR/USD`); path forms accept it unencoded.
  */
 import { v1 } from "@undrly/contracts";
 import { Hono } from "hono";
+import {
+  addDays,
+  type Bounds,
+  calendar,
+  candles,
+  derivatives,
+  economicCalendar,
+  history,
+  market,
+  newYorkToday,
+} from "./market-data.ts";
 import {
   canonicalQuote,
   feedObservations,
@@ -32,6 +49,7 @@ const STATUS: Record<ErrorCode, 400 | 404 | 409> = {
   bad_request: 400,
   not_found: 404,
   no_quote: 404,
+  no_data: 404,
   ambiguous: 409,
 };
 
@@ -48,19 +66,42 @@ const SERVICE_INDEX = v1.ServiceIndexV1.parse({
     { path: "/v1/instruments/{id}/graph", returns: "an instrument's direct relationships" },
     {
       path: "/v1/universes",
-      returns: "the imported universes (crypto, S&P 500, Nasdaq-100, perps)",
+      returns: "the imported universes (crypto, S&P 500, Nasdaq-100, perps, FX)",
     },
     { path: "/v1/universes/{key}", returns: "a universe's latest membership" },
+    {
+      path: "/v1/candles/{query}?interval=1h|4h|1d&limit=",
+      returns: "a market's venue candles (OHLCV)",
+    },
+    { path: "/v1/history/{query}?limit=", returns: "a reference series' published values" },
+    { path: "/v1/market/{query}", returns: "the quote with market status and statistics" },
+    {
+      path: "/v1/derivatives/{query}",
+      returns: "a perpetual's mark, index, funding, open interest",
+    },
+    {
+      path: "/v1/calendar/{query}?from=&to=",
+      returns: "a stock's trading days, holidays, corporate actions and earnings",
+    },
+    {
+      path: "/v1/economic-calendar?from=&to=&category=",
+      returns: "scheduled US economic releases (CPI, jobs, GDP, …)",
+    },
   ],
   examples: [
     "/v1/quote/NVDA",
     "/v1/quote/BTC/USD",
     "/v1/quote/EUR/USD",
+    "/v1/quote/USD/IDR",
     "/v1/quote/XAU/USD",
     "/v1/quote/BTC-PERP",
     "/v1/quotes/BTC/USD",
     "/v1/search?q=gold",
     "/v1/universes/sp500",
+    "/v1/universes/fx-southeast-asia",
+    "/v1/candles/BTC/USD?interval=1h&limit=5",
+    "/v1/market/AAPL",
+    "/v1/derivatives/BTC-PERP",
   ],
   dataUse:
     "Local/private demo only. Upstream redistribution terms are unreviewed; no production redistribution rights are claimed.",
@@ -143,6 +184,124 @@ export function createApp(sql: Sql, options: AppOptions) {
   };
   app.get("/v1/quotes", (c) => quotesRoute((c.req.query("q") ?? "").trim()));
   app.get("/v1/quotes/:query{.+}", (c) => quotesRoute(queryOf(c.req.param("query"), undefined)));
+
+  /** `limit`, `start`, `end` query parameters, or an error response. */
+  const bounds = (q: (name: string) => string | undefined): Bounds | Response => {
+    const limitText = q("limit");
+    let limit = v1.DEFAULT_LIMIT;
+    if (limitText !== undefined) {
+      if (
+        !/^[0-9]{1,4}$/.test(limitText) ||
+        Number(limitText) < 1 ||
+        Number(limitText) > v1.MAX_LIMIT
+      ) {
+        return fail("bad_request", `limit must be an integer from 1 to ${v1.MAX_LIMIT}`);
+      }
+      limit = Number(limitText);
+    }
+    const time = (name: string) => {
+      const t = q(name);
+      if (t === undefined) return null;
+      return v1.TimestampString.safeParse(t).success ? t : undefined;
+    };
+    const [start, end] = [time("start"), time("end")];
+    if (start === undefined || end === undefined) {
+      return fail("bad_request", "start and end are RFC 3339 UTC timestamps (…Z)");
+    }
+    if (start !== null && end !== null && v1.timestampMicros(start) >= v1.timestampMicros(end)) {
+      return fail("bad_request", "start must be before end");
+    }
+    return { limit, start, end };
+  };
+
+  app.get("/v1/candles/:query{.+}", async (c) => {
+    const interval = c.req.query("interval");
+    if (!(v1.CANDLE_INTERVALS as readonly string[]).includes(interval ?? "")) {
+      return fail("bad_request", `interval must be one of ${v1.CANDLE_INTERVALS.join(", ")}`);
+    }
+    const b = bounds((n) => c.req.query(n));
+    if (b instanceof Response) return b;
+    const query = queryOf(c.req.param("query"), undefined);
+    const pair = await onePair(query);
+    if (pair instanceof Response) return pair;
+    const r = await candles(sql, pair, interval as v1.CandleInterval, b);
+    return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
+  });
+
+  app.get("/v1/history/:query{.+}", async (c) => {
+    const b = bounds((n) => c.req.query(n));
+    if (b instanceof Response) return b;
+    const query = queryOf(c.req.param("query"), undefined);
+    const pair = await onePair(query);
+    if (pair instanceof Response) return pair;
+    const r = await history(sql, pair, b);
+    return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
+  });
+
+  app.get("/v1/market/:query{.+}", async (c) => {
+    const query = queryOf(c.req.param("query"), undefined);
+    const pair = await onePair(query);
+    if (pair instanceof Response) return pair;
+    const at = now();
+    const q = await canonicalQuote(sql, pair, at, options.staleAfterSeconds);
+    if (q.kind !== "quote") return fail("no_quote", `no quote for ${query}`);
+    return Response.json(await market(sql, pair, q.quote, at));
+  });
+
+  app.get("/v1/derivatives/:query{.+}", async (c) => {
+    const query = queryOf(c.req.param("query"), undefined);
+    const pair = await onePair(query);
+    if (pair instanceof Response) return pair;
+    const r = await derivatives(sql, pair, now(), options.staleAfterSeconds);
+    return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
+  });
+
+  /** `from` / `to` date parameters (default: today in New York + `days`), or an error. */
+  const dateWindow = (
+    q: (name: string) => string | undefined,
+    days: number,
+    at: Date,
+  ): { from: string; to: string } | Response => {
+    const [fromText, toText] = [q("from"), q("to")];
+    const valid = (d: string | undefined) =>
+      d === undefined ||
+      (v1.DateString.safeParse(d).success &&
+        Number.isFinite(Date.parse(`${d}T00:00:00Z`)) &&
+        addDays(d, 0) === d);
+    if (!valid(fromText) || !valid(toText)) {
+      return fail("bad_request", "from and to are calendar dates (YYYY-MM-DD)");
+    }
+    const from = fromText ?? newYorkToday(at);
+    const to = toText ?? addDays(from, days);
+    if (from > to) return fail("bad_request", "from must be on or before to");
+    if (to > addDays(from, v1.MAX_CALENDAR_DAYS - 1)) {
+      return fail("bad_request", `at most ${v1.MAX_CALENDAR_DAYS} days per request`);
+    }
+    return { from, to };
+  };
+
+  app.get("/v1/economic-calendar", async (c) => {
+    const at = now();
+    const w = dateWindow((n) => c.req.query(n), 30, at);
+    if (w instanceof Response) return w;
+    const category = c.req.query("category") ?? null;
+    if (category !== null && !(v1.ECONOMIC_CATEGORIES as readonly string[]).includes(category)) {
+      return fail("bad_request", `category must be one of ${v1.ECONOMIC_CATEGORIES.join(", ")}`);
+    }
+    return c.json(await economicCalendar(sql, w.from, w.to, category));
+  });
+
+  app.get("/v1/calendar/:query{.+}", async (c) => {
+    const at = now();
+    const w = dateWindow((n) => c.req.query(n), 14, at);
+    if (w instanceof Response) return w;
+    const { from, to } = w;
+    const query = queryOf(c.req.param("query"), undefined);
+    const pair = await onePair(query);
+    if (pair instanceof Response) return pair;
+    const r = await calendar(sql, pair, from, to, at);
+    return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
+  });
 
   app.get("/v1/instruments/:id/graph", async (c) => {
     const id = c.req.param("id");

@@ -100,7 +100,8 @@ export type GraphV1 = z.infer<typeof GraphV1>;
 export const ErrorV1 = z.strictObject({
   schemaVersion: z.literal(1),
   error: z.strictObject({
-    code: z.enum(["not_found", "ambiguous", "no_quote", "bad_request"]),
+    /** `no_data` (V1.3): the market exists but this endpoint has no data for it. */
+    code: z.enum(["not_found", "ambiguous", "no_quote", "bad_request", "no_data"]),
     message: z.string(),
     candidates: z.array(ResolutionV1).optional(),
   }),
