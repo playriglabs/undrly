@@ -133,8 +133,8 @@ async fn curated_universe_is_idempotent_and_traceable() {
     let facts = facts_from_source_record(&mut conn, record).await.unwrap();
     assert_eq!(
         facts.nodes.len(),
-        2 + 1 + 5 + 5 + 1,
-        "currencies, entity, venues, instruments, listing"
+        2 + 1 + 5 + 6 + 1,
+        "currencies, entity, venues, instruments (incl. the EUR/USD FX market), listing"
     );
     assert_eq!(facts.relationships.len(), 8);
 
@@ -227,8 +227,8 @@ async fn kraken_ticker_becomes_canonical_btc_and_eur_quotes() {
         ("84145.90000".into(), "84146.00000".into())
     );
 
-    // FX: EUR (a currency) priced in USD.
-    let eur = get_canonical_quote(&mut conn, subject("eur"), unit("usd"))
+    // FX: the EUR/USD market (an FX instrument, base EUR) priced in USD.
+    let eur = get_canonical_quote(&mut conn, subject("eur-usd"), unit("usd"))
         .await
         .unwrap()
         .unwrap();
@@ -237,8 +237,16 @@ async fn kraken_ticker_becomes_canonical_btc_and_eur_quotes() {
         .await
         .unwrap()
         .unwrap();
-    assert!(matches!(o.subject(), PriceSubject::Currency(_)));
+    assert_eq!(o.subject(), subject("eur-usd"));
+    assert_eq!(o.unit(), unit("usd"));
     assert_eq!(o.price().to_string(), "1.13680");
+    // Nothing prices the EUR currency itself any more.
+    assert!(
+        get_canonical_quote(&mut conn, subject("eur"), unit("usd"))
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     // Replaying the same response changes nothing.
     let replay = ingest_quotes(

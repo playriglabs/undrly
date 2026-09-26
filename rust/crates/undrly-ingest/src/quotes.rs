@@ -15,14 +15,14 @@
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
     AggregationMethod, MarketObservation, ObservationError, PriceSubject, PriceUnit, Timestamp,
-    VenueSymbol, aggregate,
+    VenueSymbol, aggregate, invert_quote,
 };
-use undrly_normalize::QuoteNormalizer;
+use undrly_normalize::{HistoryNormalizer, NormalizeError, NormalizedQuote, QuoteNormalizer};
 use undrly_provider::QuoteProvider;
 use undrly_store::Write;
 use undrly_store::market::{
     ObservationId, QuoteFeedId, StoredCanonicalQuote, aggregation_method_of,
-    delete_canonical_quote, insert_observation, latest_observations, quote_feeds_of_source,
+    delete_canonical_quote, insert_observation_with, latest_observations, quote_feeds_of_source,
     upsert_canonical_quote,
 };
 use undrly_store::sources::SourceRecordId;
@@ -74,7 +74,41 @@ where
     N: QuoteNormalizer<Quote = P::Quote>,
 {
     let decoded = provider.decode_quote(&raw.payload)?;
+    ingest_decoded(conn, provider, raw, requested, |symbols| {
+        normalizer.normalize_quotes(&decoded, symbols)
+    })
+    .await
+}
 
+/// [`ingest_quotes_for`] for a reference-series payload that holds several
+/// dated values (history backfill, V1.3): every value becomes an
+/// observation, each deduplicated by its source time, so replaying or
+/// overlapping backfills change nothing.
+pub async fn ingest_history_for<P, N>(
+    conn: &mut PgConnection,
+    provider: &P,
+    normalizer: &N,
+    raw: &RawRecord,
+    requested: Option<&[VenueSymbol]>,
+) -> Result<QuoteIngestReport, IngestError>
+where
+    P: QuoteProvider,
+    N: HistoryNormalizer<Quote = P::Quote>,
+{
+    let decoded = provider.decode_quote(&raw.payload)?;
+    ingest_decoded(conn, provider, raw, requested, |symbols| {
+        normalizer.normalize_history(&decoded, symbols)
+    })
+    .await
+}
+
+async fn ingest_decoded<P: QuoteProvider>(
+    conn: &mut PgConnection,
+    provider: &P,
+    raw: &RawRecord,
+    requested: Option<&[VenueSymbol]>,
+    normalize: impl FnOnce(&[VenueSymbol]) -> Result<Vec<NormalizedQuote>, NormalizeError>,
+) -> Result<QuoteIngestReport, IngestError> {
     let mut tx = conn.begin().await?;
     let (record, write) = store_raw_record(&mut tx, provider.source_id(), raw).await?;
     let mut feeds = quote_feeds_of_source(&mut tx, provider.source_id()).await?;
@@ -87,7 +121,7 @@ where
             symbols.push(f.feed.symbol.clone());
         }
     }
-    let quotes = normalizer.normalize_quotes(&decoded, &symbols)?;
+    let quotes = normalize(&symbols)?;
 
     let mut report = QuoteIngestReport {
         source_record: (record.id, write),
@@ -97,26 +131,42 @@ where
     };
     for stored in &feeds {
         let feed = &stored.feed;
-        let Some(q) = quotes
+        let mut matched = quotes
             .iter()
-            .find(|q| q.symbol == feed.symbol && q.price_type == feed.price_type)
-        else {
+            .filter(|q| q.symbol == feed.symbol && q.price_type == feed.price_type)
+            .peekable();
+        if matched.peek().is_none() {
             report.missing.push(feed.symbol.clone());
             continue;
-        };
-        let observation = MarketObservation::new(
-            feed.subject,
-            feed.basis,
-            q.price_type,
-            q.price,
-            q.bid_ask,
-            feed.unit,
-            record.provenance.source_id.clone(),
-            q.observed_at,
-            record.provenance.received_at,
-        )?;
-        let (id, write) = insert_observation(&mut tx, &observation, record.id).await?;
-        report.observations.push((stored.id, id, write));
+        }
+        for q in matched {
+            // An inverse-published pair (e.g. JPY/CAD for CAD/JPY) is inverted
+            // explicitly, never relabelled; the observation records it.
+            let (price, bid_ask) = if feed.inverted {
+                invert_quote(q.price, q.bid_ask).ok_or_else(|| {
+                    IngestError::Normalize(NormalizeError::Invalid {
+                        field: "price",
+                        reason: format!("{}: cannot invert a non-positive rate", feed.symbol),
+                    })
+                })?
+            } else {
+                (q.price, q.bid_ask)
+            };
+            let observation = MarketObservation::new(
+                feed.subject,
+                feed.basis,
+                q.price_type,
+                price,
+                bid_ask,
+                feed.unit,
+                record.provenance.source_id.clone(),
+                q.observed_at,
+                record.provenance.received_at,
+            )?;
+            let (id, write) =
+                insert_observation_with(&mut tx, &observation, record.id, feed.inverted).await?;
+            report.observations.push((stored.id, id, write));
+        }
         if !report.pairs.contains(&(feed.subject, feed.unit)) {
             report.pairs.push((feed.subject, feed.unit));
         }

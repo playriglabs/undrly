@@ -38,6 +38,7 @@ use undrly_provider::hyperliquid::HyperliquidProvider;
 use undrly_provider::{coinbase, coingecko, kraken, nasdaq, sec, ssga};
 
 pub mod cusip;
+pub mod fx;
 
 /// Source id under which built snapshots are stored.
 pub const SNAPSHOT_SOURCE: &str = "undrly-universe";
@@ -408,6 +409,8 @@ fn crypto_asset(
                 figi: None,
                 contract_multiplier: None,
                 unit_of_measure: None,
+                base: None,
+                quote: None,
             },
         );
         ctx.alias(&key, &symbol.to_uppercase(), "symbol");
@@ -549,6 +552,8 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
                 venue: Some(kraken_venue.clone()),
                 price_type: "last".into(),
                 stale_after_seconds: Some(MARKET_STALE_AFTER),
+                freshness_clock: None,
+                inverted: false,
             });
             ctx.out
                 .relationships
@@ -564,6 +569,8 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
                 venue: Some(coinbase_venue.clone()),
                 price_type: "mid".into(),
                 stale_after_seconds: Some(MARKET_STALE_AFTER),
+                freshness_clock: None,
+                inverted: false,
             });
             ctx.out.relationships.insert((
                 node.clone(),
@@ -682,6 +689,8 @@ fn perps(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
                     figi: None,
                     contract_multiplier: multiplier.map(str::to_owned),
                     unit_of_measure: None,
+                    base: None,
+                    quote: None,
                 },
             );
             ctx.alias(&key, &format!("{name}-PERP"), "symbol");
@@ -737,6 +746,8 @@ fn perps(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
             venue: Some(venue.clone()),
             price_type: "mark".into(),
             stale_after_seconds: Some(MARKET_STALE_AFTER),
+            freshness_clock: None,
+            inverted: false,
         });
         members.push(UniverseMemberRecord {
             node,
@@ -905,6 +916,8 @@ fn equities(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
                     figi: None,
                     contract_multiplier: None,
                     unit_of_measure: None,
+                    base: None,
+                    quote: None,
                 },
             );
             ctx.alias(&key, ticker, "symbol");
@@ -961,6 +974,8 @@ fn equities(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
                     venue: Some(iex.clone()),
                     price_type: price_type.into(),
                     stale_after_seconds: Some(MARKET_STALE_AFTER),
+                    freshness_clock: None,
+                    inverted: false,
                 });
             }
         }

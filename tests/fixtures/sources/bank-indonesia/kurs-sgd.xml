@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<DataSet xmlns="http://tempuri.org/">
+  <xs:schema id="NewDataSet" xmlns="" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xs:element name="NewDataSet" msdata:IsDataSet="true" msdata:UseCurrentLocale="true">
+      <xs:complexType>
+        <xs:choice minOccurs="0" maxOccurs="unbounded">
+          <xs:element name="Table">
+            <xs:complexType>
+              <xs:sequence>
+                <xs:element name="id_subkurslokal" type="xs:int" minOccurs="0" />
+                <xs:element name="lnk_subkurslokal" type="xs:int" minOccurs="0" />
+                <xs:element name="nil_subkurslokal" type="xs:decimal" minOccurs="0" />
+                <xs:element name="beli_subkurslokal" type="xs:decimal" minOccurs="0" />
+                <xs:element name="jual_subkurslokal" type="xs:decimal" minOccurs="0" />
+                <xs:element name="tgl_subkurslokal" type="xs:dateTime" minOccurs="0" />
+                <xs:element name="mts_subkurslokal" type="xs:string" minOccurs="0" />
+              </xs:sequence>
+            </xs:complexType>
+          </xs:element>
+        </xs:choice>
+      </xs:complexType>
+    </xs:element>
+  </xs:schema>
+  <diffgr:diffgram xmlns:msdata="urn:schemas-microsoft-com:xml-msdata" xmlns:diffgr="urn:schemas-microsoft-com:xml-diffgram-v1">
+    <NewDataSet xmlns="">
+      <Table diffgr:id="Table1" msdata:rowOrder="0">
+        <id_subkurslokal>997323</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13921.60</beli_subkurslokal>
+        <jual_subkurslokal>14062.61</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-25T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table2" msdata:rowOrder="1">
+        <id_subkurslokal>997088</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13861.80</beli_subkurslokal>
+        <jual_subkurslokal>14004.39</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-24T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table3" msdata:rowOrder="2">
+        <id_subkurslokal>996853</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13933.89</beli_subkurslokal>
+        <jual_subkurslokal>14081.66</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-23T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table4" msdata:rowOrder="3">
+        <id_subkurslokal>996618</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13893.50</beli_subkurslokal>
+        <jual_subkurslokal>14034.23</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-22T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table5" msdata:rowOrder="4">
+        <id_subkurslokal>996383</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13830.71</beli_subkurslokal>
+        <jual_subkurslokal>13971.89</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-21T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table6" msdata:rowOrder="5">
+        <id_subkurslokal>996148</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13845.62</beli_subkurslokal>
+        <jual_subkurslokal>13985.86</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-18T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table7" msdata:rowOrder="6">
+        <id_subkurslokal>995913</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13846.20</beli_subkurslokal>
+        <jual_subkurslokal>13986.45</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-17T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table8" msdata:rowOrder="7">
+        <id_subkurslokal>995678</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13833.17</beli_subkurslokal>
+        <jual_subkurslokal>13973.30</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-16T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table9" msdata:rowOrder="8">
+        <id_subkurslokal>995443</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13810.96</beli_subkurslokal>
+        <jual_subkurslokal>13950.86</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-15T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+      <Table diffgr:id="Table10" msdata:rowOrder="9">
+        <id_subkurslokal>995208</id_subkurslokal>
+        <lnk_subkurslokal>42</lnk_subkurslokal>
+        <nil_subkurslokal>1.00</nil_subkurslokal>
+        <beli_subkurslokal>13822.62</beli_subkurslokal>
+        <jual_subkurslokal>13962.65</jual_subkurslokal>
+        <tgl_subkurslokal>2026-09-14T00:00:00+07:00</tgl_subkurslokal>
+        <mts_subkurslokal>SGD  </mts_subkurslokal>
+      </Table>
+    </NewDataSet>
+  </diffgr:diffgram>
+</DataSet>

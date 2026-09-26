@@ -23,14 +23,21 @@ pub enum UniverseKey {
     Nasdaq100,
     /// Hyperliquid's live perpetual markets.
     HyperliquidPerps,
+    /// Curated liquid G10 FX majors and crosses (Undrly-authored list).
+    FxMajor,
+    /// Curated Southeast Asian FX pairs with a trustworthy source
+    /// (Undrly-authored list).
+    FxSoutheastAsia,
 }
 
 impl UniverseKey {
-    pub const ALL: [UniverseKey; 4] = [
+    pub const ALL: [UniverseKey; 6] = [
         UniverseKey::CryptoTop100,
         UniverseKey::Sp500,
         UniverseKey::Nasdaq100,
         UniverseKey::HyperliquidPerps,
+        UniverseKey::FxMajor,
+        UniverseKey::FxSoutheastAsia,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -39,6 +46,8 @@ impl UniverseKey {
             UniverseKey::Sp500 => "sp500",
             UniverseKey::Nasdaq100 => "nasdaq100",
             UniverseKey::HyperliquidPerps => "hyperliquid-perps",
+            UniverseKey::FxMajor => "fx-major",
+            UniverseKey::FxSoutheastAsia => "fx-southeast-asia",
         }
     }
 }

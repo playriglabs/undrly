@@ -29,10 +29,17 @@
 use undrly_core::SourceId;
 
 pub mod alpaca;
+pub mod bank_indonesia;
+pub mod bank_of_canada;
+pub mod bitstamp;
+pub mod bnm;
+pub mod cbm;
 pub mod coinbase;
 pub mod coingecko;
 pub mod curated;
+pub mod ecb;
 pub mod eia;
+pub mod fed_h10;
 pub mod fixture;
 pub mod gold_api;
 #[cfg(feature = "http")]
@@ -59,6 +66,59 @@ impl<'de> serde::Deserialize<'de> for JsonNumber {
             _ => Err(serde::de::Error::custom("expected a JSON number")),
         }
     }
+}
+
+/// A quote provider for one source whose payload `decode` turns into
+/// `$quote` (the boilerplate every V1.2 FX source shares).
+macro_rules! quote_provider {
+    ($name:ident, $quote:ty, $decode:path) => {
+        pub struct $name {
+            source_id: undrly_core::SourceId,
+        }
+
+        impl $name {
+            pub fn new() -> Self {
+                Self {
+                    source_id: undrly_core::SourceId::parse(SOURCE_ID).expect("valid source id"),
+                }
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl $crate::Provider for $name {
+            fn source_id(&self) -> &undrly_core::SourceId {
+                &self.source_id
+            }
+        }
+
+        impl $crate::QuoteProvider for $name {
+            type Quote = $quote;
+
+            fn decode_quote(&self, payload: &[u8]) -> Result<$quote, $crate::DecodeError> {
+                $decode(payload).map_err(|reason| $crate::DecodeError {
+                    source_id: self.source_id.clone(),
+                    reason,
+                })
+            }
+        }
+    };
+}
+pub(crate) use quote_provider;
+
+/// A captured fixture under `tests/fixtures/sources/` (tests only).
+#[cfg(test)]
+pub(crate) fn fixture(path: &str) -> Vec<u8> {
+    std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/fixtures/sources")
+            .join(path),
+    )
+    .unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
 /// A payload could not be decoded into a provider-native record.

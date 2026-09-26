@@ -153,14 +153,19 @@ pub enum InstrumentClass {
     /// A perpetual futures contract. Its underlying is a `DERIVES_FROM`
     /// relationship, its settlement asset a `SETTLES_IN` relationship.
     PerpetualFuture,
+    /// A spot FX market between two fiat currencies ([`FxPair`]): its price
+    /// is units of the quote currency per one unit of the base currency.
+    /// The currencies stay currency nodes; only the market is an instrument.
+    Fx,
 }
 
 impl InstrumentClass {
-    pub const ALL: [InstrumentClass; 4] = [
+    pub const ALL: [InstrumentClass; 5] = [
         InstrumentClass::Equity,
         InstrumentClass::CryptoAsset,
         InstrumentClass::Commodity,
         InstrumentClass::PerpetualFuture,
+        InstrumentClass::Fx,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -169,6 +174,7 @@ impl InstrumentClass {
             InstrumentClass::CryptoAsset => "crypto_asset",
             InstrumentClass::Commodity => "commodity",
             InstrumentClass::PerpetualFuture => "perpetual_future",
+            InstrumentClass::Fx => "fx",
         }
     }
 }
@@ -192,6 +198,47 @@ pub struct Instrument {
     pub contract_multiplier: Option<crate::Decimal>,
     /// The quantity one unit of a commodity denotes (prices are per unit).
     pub unit_of_measure: Option<UnitOfMeasure>,
+    /// Base and quote currency of an FX market; present exactly when the
+    /// class is [`InstrumentClass::Fx`].
+    pub fx_pair: Option<FxPair>,
+}
+
+/// The two currencies of a spot FX market, in canonical orientation:
+/// `EUR/USD` is base EUR, quote USD, and prices 1 EUR in USD. The inverse
+/// orientation (`USD/EUR`) is a different market, never a relabelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FxPair {
+    pub base: CurrencyId,
+    pub quote: CurrencyId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum FxPairError {
+    #[error("an FX pair needs two different currencies")]
+    SameCurrency,
+    #[error("an FX instrument states its base and quote currency; no other class does")]
+    ClassMismatch,
+}
+
+impl FxPair {
+    pub fn new(base: CurrencyId, quote: CurrencyId) -> Result<Self, FxPairError> {
+        if base == quote {
+            return Err(FxPairError::SameCurrency);
+        }
+        Ok(Self { base, quote })
+    }
+}
+
+impl Instrument {
+    /// Checks that `fx_pair` is present exactly for FX instruments.
+    pub fn validate(&self) -> Result<(), FxPairError> {
+        match (self.class, self.fx_pair) {
+            (InstrumentClass::Fx, Some(p)) if p.base == p.quote => Err(FxPairError::SameCurrency),
+            (InstrumentClass::Fx, Some(_)) => Ok(()),
+            (InstrumentClass::Fx, None) | (_, Some(_)) => Err(FxPairError::ClassMismatch),
+            (_, None) => Ok(()),
+        }
+    }
 }
 
 /// Physical unit a commodity instrument is quoted in.

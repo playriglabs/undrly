@@ -121,6 +121,12 @@ pub struct InstrumentRecord {
     pub contract_multiplier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit_of_measure: Option<String>,
+    /// FX instruments only: the base currency (a key or canonical id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    /// FX instruments only: the quote currency (a key or canonical id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -157,6 +163,12 @@ pub struct QuoteFeedRecord {
     /// Feed cadence; defaults to the V1 window (300 s).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale_after_seconds: Option<u32>,
+    /// What `staleAfterSeconds` counts: `continuous` (default) or `weekdays`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_clock: Option<String>,
+    /// The source publishes the inverse pair; observations are inverted.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inverted: bool,
 }
 
 pub struct CuratedProvider {
@@ -213,7 +225,7 @@ mod tests {
             .decode_reference(&std::fs::read(path).unwrap())
             .unwrap();
         assert_eq!(u.dataset, "undrly-demo-universe");
-        assert_eq!(u.instruments.len(), 5);
+        assert_eq!(u.instruments.len(), 6);
         assert_eq!(u.quote_feeds.len(), 7);
         assert_eq!(u.quote_aggregations.len(), 1);
     }

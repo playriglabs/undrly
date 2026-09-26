@@ -353,6 +353,7 @@ async fn persist(
                     name: r.instrument.name.clone(),
                     contract_multiplier: None,
                     unit_of_measure: None,
+                    fx_pair: None,
                 },
                 record_id,
             )

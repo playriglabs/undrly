@@ -1,0 +1,600 @@
+{
+  "dataset": "undrly-fx-spec",
+  "version": 1,
+  "asOf": "2026-09-26T00:00:00Z",
+  "description": "Undrly-authored FX universe definition (docs/v1.2-fx.md): currencies, the fx-major and fx-southeast-asia pairs, and which approved source publishes each pair. Sources were researched on 2026-09-26. `undrly-collect fx build` turns this file into data/reference/fx.json.",
+  "sources": {
+    "kraken": {
+      "venue": "kraken",
+      "priceType": "last",
+      "staleAfterSeconds": 300
+    },
+    "bitstamp": {
+      "venue": "bitstamp",
+      "priceType": "mid",
+      "staleAfterSeconds": 300
+    },
+    "ecb": {
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    },
+    "bank-of-canada": {
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    },
+    "fed-h10": {
+      "priceType": "reference",
+      "staleAfterSeconds": 691200,
+      "freshnessClock": "weekdays"
+    },
+    "bank-indonesia": {
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    },
+    "bnm": {
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    },
+    "cbm": {
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    }
+  },
+  "venues": [
+    {
+      "key": "bitstamp",
+      "name": "Bitstamp"
+    }
+  ],
+  "currencies": [
+    {
+      "code": "USD",
+      "name": "US Dollar"
+    },
+    {
+      "code": "EUR",
+      "name": "Euro"
+    },
+    {
+      "code": "JPY",
+      "name": "Japanese Yen"
+    },
+    {
+      "code": "GBP",
+      "name": "Pound Sterling"
+    },
+    {
+      "code": "CHF",
+      "name": "Swiss Franc"
+    },
+    {
+      "code": "AUD",
+      "name": "Australian Dollar"
+    },
+    {
+      "code": "CAD",
+      "name": "Canadian Dollar"
+    },
+    {
+      "code": "NZD",
+      "name": "New Zealand Dollar"
+    },
+    {
+      "code": "IDR",
+      "name": "Indonesian Rupiah"
+    },
+    {
+      "code": "SGD",
+      "name": "Singapore Dollar"
+    },
+    {
+      "code": "MYR",
+      "name": "Malaysian Ringgit"
+    },
+    {
+      "code": "THB",
+      "name": "Thai Baht"
+    },
+    {
+      "code": "PHP",
+      "name": "Philippine Peso"
+    },
+    {
+      "code": "VND",
+      "name": "Vietnamese Dong"
+    },
+    {
+      "code": "BND",
+      "name": "Brunei Dollar"
+    },
+    {
+      "code": "KHR",
+      "name": "Cambodian Riel"
+    },
+    {
+      "code": "LAK",
+      "name": "Lao Kip"
+    },
+    {
+      "code": "MMK",
+      "name": "Myanmar Kyat"
+    }
+  ],
+  "pairs": [
+    {
+      "pair": "EUR/USD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "ZEURZUSD"
+        },
+        {
+          "source": "bitstamp",
+          "symbol": "eurusd"
+        }
+      ]
+    },
+    {
+      "pair": "GBP/USD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "ZGBPZUSD"
+        },
+        {
+          "source": "bitstamp",
+          "symbol": "gbpusd"
+        }
+      ]
+    },
+    {
+      "pair": "USD/JPY",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "fed-h10",
+          "symbol": "RXI_N.B.JA"
+        }
+      ]
+    },
+    {
+      "pair": "USD/CHF",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDCHF"
+        }
+      ]
+    },
+    {
+      "pair": "AUD/USD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "AUDUSD"
+        }
+      ]
+    },
+    {
+      "pair": "USD/CAD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "ZUSDZCAD"
+        }
+      ]
+    },
+    {
+      "pair": "NZD/USD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "fed-h10",
+          "symbol": "RXI$US_N.B.NZ"
+        }
+      ]
+    },
+    {
+      "pair": "EUR/GBP",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "EURGBP"
+        }
+      ]
+    },
+    {
+      "pair": "EUR/JPY",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "ecb",
+          "symbol": "JPY"
+        }
+      ]
+    },
+    {
+      "pair": "EUR/CHF",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "EURCHF"
+        }
+      ]
+    },
+    {
+      "pair": "EUR/AUD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "ecb",
+          "symbol": "AUD"
+        }
+      ]
+    },
+    {
+      "pair": "EUR/CAD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "ecb",
+          "symbol": "CAD"
+        },
+        {
+          "source": "bank-of-canada",
+          "symbol": "FXEURCAD"
+        }
+      ]
+    },
+    {
+      "pair": "EUR/NZD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "ecb",
+          "symbol": "NZD"
+        }
+      ]
+    },
+    {
+      "pair": "GBP/JPY",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "GBP/CHF",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "GBP/AUD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "GBP/CAD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "bank-of-canada",
+          "symbol": "FXGBPCAD"
+        }
+      ]
+    },
+    {
+      "pair": "GBP/NZD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "AUD/JPY",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "AUD/CAD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "bank-of-canada",
+          "symbol": "FXAUDCAD"
+        }
+      ]
+    },
+    {
+      "pair": "AUD/NZD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "AUD/CHF",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "CAD/JPY",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "bank-of-canada",
+          "symbol": "FXJPYCAD",
+          "inverted": true
+        }
+      ]
+    },
+    {
+      "pair": "CAD/CHF",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "bank-of-canada",
+          "symbol": "FXCHFCAD",
+          "inverted": true
+        }
+      ]
+    },
+    {
+      "pair": "NZD/JPY",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "NZD/CAD",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": [
+        {
+          "source": "bank-of-canada",
+          "symbol": "FXNZDCAD"
+        }
+      ]
+    },
+    {
+      "pair": "NZD/CHF",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "CHF/JPY",
+      "universes": [
+        "fx-major"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "USD/SGD",
+      "universes": [
+        "fx-major",
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "fed-h10",
+          "symbol": "RXI_N.B.SI"
+        }
+      ]
+    },
+    {
+      "pair": "USD/IDR",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "bank-indonesia",
+          "symbol": "JISDOR-USD"
+        }
+      ]
+    },
+    {
+      "pair": "USD/MYR",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "bnm",
+          "symbol": "USD"
+        },
+        {
+          "source": "fed-h10",
+          "symbol": "RXI_N.B.MA"
+        }
+      ]
+    },
+    {
+      "pair": "USD/THB",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "fed-h10",
+          "symbol": "RXI_N.B.TH"
+        }
+      ]
+    },
+    {
+      "pair": "USD/MMK",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "cbm",
+          "symbol": "USD"
+        }
+      ]
+    },
+    {
+      "pair": "SGD/IDR",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "bank-indonesia",
+          "symbol": "KURS-SGD"
+        }
+      ]
+    },
+    {
+      "pair": "SGD/MYR",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "bnm",
+          "symbol": "SGD"
+        }
+      ]
+    },
+    {
+      "pair": "MYR/IDR",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "bank-indonesia",
+          "symbol": "KURS-MYR"
+        }
+      ]
+    },
+    {
+      "pair": "EUR/SGD",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "ecb",
+          "symbol": "SGD"
+        }
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "pair": "USD/PHP",
+      "universe": "fx-southeast-asia",
+      "reason": "no approved machine-readable source: Bangko Sentral ng Pilipinas publishes rates only through its website (its SharePoint list endpoint is undocumented and not a published API); ExchangeRate-API's terms forbid use in a service offering programmatic access; only cross rates (BI, BNM) exist"
+    },
+    {
+      "pair": "USD/VND",
+      "universe": "fx-southeast-asia",
+      "reason": "no approved machine-readable source: the State Bank of Vietnam publishes its central rate only as HTML; the Bank of Canada's VND series ended in 2019; ExchangeRate-API's terms forbid this use; only cross rates exist"
+    },
+    {
+      "pair": "USD/BND",
+      "universe": "fx-southeast-asia",
+      "reason": "no source publishes USD/BND directly; BND is pegged at par to SGD, but substituting USD/SGD would be a derived rate, not BND data"
+    },
+    {
+      "pair": "USD/KHR",
+      "universe": "fx-southeast-asia",
+      "reason": "no approved machine-readable source: the National Bank of Cambodia publishes HTML only (its API path is blocked to non-browser clients); only cross rates exist"
+    },
+    {
+      "pair": "USD/LAK",
+      "universe": "fx-southeast-asia",
+      "reason": "no approved machine-readable source: the Bank of the Lao PDR publishes HTML only; only cross rates exist"
+    },
+    {
+      "pair": "SGD/THB",
+      "universe": "fx-southeast-asia",
+      "reason": "no direct source: MAS's API gateway requires a registered key (its data.gov.sg copy ends in 2015) and the Bank of Thailand's API requires a registered key; neither is configured"
+    },
+    {
+      "pair": "SGD/PHP",
+      "universe": "fx-southeast-asia",
+      "reason": "no direct source: MAS's API gateway requires a registered key; the BSP has no published API"
+    },
+    {
+      "pair": "MYR/SGD",
+      "universe": "fx-southeast-asia",
+      "reason": "the exact inverse of SGD/MYR (BNM); the market quotes SGD/MYR, so a second, inverted market would duplicate it"
+    },
+    {
+      "pair": "GBP/SGD",
+      "universe": "fx-southeast-asia",
+      "reason": "no direct source: MAS's API gateway requires a registered key; derived cross rates are out of scope"
+    },
+    {
+      "pair": "AUD/SGD",
+      "universe": "fx-southeast-asia",
+      "reason": "no direct source: MAS's API gateway requires a registered key; derived cross rates are out of scope"
+    },
+    {
+      "pair": "JPY/SGD",
+      "universe": "fx-southeast-asia",
+      "reason": "no direct source: MAS's API gateway requires a registered key; derived cross rates are out of scope"
+    }
+  ]
+}

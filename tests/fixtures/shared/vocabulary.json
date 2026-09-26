@@ -13,7 +13,8 @@
     "equity",
     "crypto_asset",
     "commodity",
-    "perpetual_future"
+    "perpetual_future",
+    "fx"
   ],
   "relationshipTypes": [
     "ISSUED_BY",
@@ -115,6 +116,12 @@
     "crypto-top100",
     "sp500",
     "nasdaq100",
-    "hyperliquid-perps"
+    "hyperliquid-perps",
+    "fx-major",
+    "fx-southeast-asia"
+  ],
+  "freshnessClocks": [
+    "continuous",
+    "weekdays"
   ]
 }

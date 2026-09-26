@@ -8,8 +8,9 @@ use std::path::Path;
 
 use serde_json::Value;
 use undrly_core::{
-    AggregationMethod, Category, Cik, CurrencyCode, EntityKind, Figi, InstrumentClass, Isin, Lei,
-    Mic, Namespace, ObservationBasis, PriceType, RelationshipType,
+    AggregationMethod, Category, Cik, CurrencyCode, EntityKind, Figi, FreshnessClock,
+    InstrumentClass, Isin, Lei, Mic, Namespace, ObservationBasis, PriceType, RelationshipType,
+    UniverseKey,
 };
 
 fn fixture(name: &str) -> Value {
@@ -35,7 +36,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 13);
+    assert_eq!(applied.len(), 14);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -163,10 +164,10 @@ async fn check_constraint_vocabularies_equal_core() {
         return;
     };
 
-    async fn accepted(db: &common::TestDb, domain_sql: &'static str, value: &str) -> bool {
+    async fn accepted(db: &common::TestDb, domain_sql: &str, value: &str) -> bool {
         // Evaluate the CHECK in a rolled-back transaction.
         let mut tx = db.pool.begin().await.unwrap();
-        let ok = sqlx::query(domain_sql)
+        let ok = sqlx::query(sqlx::AssertSqlSafe(domain_sql.to_owned()))
             .bind(value)
             .execute(&mut *tx)
             .await
@@ -205,12 +206,43 @@ async fn check_constraint_vocabularies_equal_core() {
     let instrument_sql = "WITH n AS (INSERT INTO nodes (id, category) VALUES (uuidv7_test(), 'instrument') RETURNING id)
                           INSERT INTO instruments (id, instrument_class, name, source_record_id)
                           SELECT id, $1, 'x', (SELECT min(id) FROM source_records) FROM n";
+    // An FX instrument also needs its two currencies (checked below).
     for c in InstrumentClass::ALL {
-        assert!(accepted(&db, instrument_sql, c.as_str()).await);
+        let ok = accepted(&db, instrument_sql, c.as_str()).await;
+        assert_eq!(ok, c != InstrumentClass::Fx, "{c:?}");
     }
-    for bogus in ["fx", "currency", "Equity"] {
+    for bogus in ["forex", "currency", "Equity"] {
         assert!(!accepted(&db, instrument_sql, bogus).await, "{bogus}");
     }
+    let currency_sql = |n: u8| {
+        format!(
+            "c{n} AS (INSERT INTO nodes (id, category) VALUES (uuidv7_test(), 'currency') RETURNING id),
+             k{n} AS (INSERT INTO currencies (id, name, source_record_id)
+                      SELECT id, 'c', (SELECT min(id) FROM source_records) FROM c{n} RETURNING id)"
+        )
+    };
+    let fx_sql = |base: &str, quote: &str| {
+        format!(
+            "WITH {}, {}, n AS (INSERT INTO nodes (id, category) VALUES (uuidv7_test(), 'instrument') RETURNING id)
+             INSERT INTO instruments (id, instrument_class, name, base_currency_id, quote_currency_id, source_record_id)
+             SELECT n.id, $1, 'x', {base}, {quote}, (SELECT min(id) FROM source_records) FROM n, k1, k2",
+            currency_sql(1),
+            currency_sql(2)
+        )
+    };
+    let with_pair = fx_sql("k1.id", "k2.id");
+    let same = fx_sql("k1.id", "k1.id");
+    let half = fx_sql("k1.id", "NULL");
+    assert!(
+        accepted(&db, &with_pair, "fx").await,
+        "fx with two currencies"
+    );
+    assert!(!accepted(&db, &same, "fx").await, "one currency twice");
+    assert!(!accepted(&db, &half, "fx").await, "only a base");
+    assert!(
+        !accepted(&db, &with_pair, "equity").await,
+        "currencies on a non-FX instrument"
+    );
 
     let constraint: String = sqlx::query_scalar(
         "SELECT pg_get_constraintdef(oid) FROM pg_constraint
@@ -239,6 +271,16 @@ async fn check_constraint_vocabularies_equal_core() {
             AggregationMethod::ALL
                 .map(AggregationMethod::as_str)
                 .to_vec(),
+        ),
+        (
+            "quote_feeds",
+            "quote_feeds_freshness_clock_check",
+            FreshnessClock::ALL.map(FreshnessClock::as_str).to_vec(),
+        ),
+        (
+            "universe_snapshots",
+            "universe_snapshots_universe_key_check",
+            UniverseKey::ALL.map(UniverseKey::as_str).to_vec(),
         ),
         (
             "quote_aggregations",

@@ -82,10 +82,18 @@ impl HttpClient {
         url: &str,
         headers: &[(&str, &str)],
     ) -> Result<FetchedRecord, FetchError> {
-        let mut request = self
-            .http
-            .get(url)
-            .header(reqwest::header::ACCEPT, "application/json");
+        self.get_accepting(url, "application/json", headers).await
+    }
+
+    /// GET `url` accepting the media type `accept` (XML, CSV, or a vendor
+    /// type such as BNM's `application/vnd.BNM.API.v1+json`).
+    pub async fn get_accepting(
+        &self,
+        url: &str,
+        accept: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<FetchedRecord, FetchError> {
+        let mut request = self.http.get(url).header(reqwest::header::ACCEPT, accept);
         for (name, value) in headers {
             request = request.header(*name, *value);
         }

@@ -4,8 +4,9 @@ use chrono::{DateTime, Utc};
 use sqlx::types::Uuid;
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
-    AggregationMethod, BidAsk, Decimal, MarketObservation, ObservationBasis, PriceSubject,
-    PriceType, PriceUnit, QuoteAggregation, QuoteFeed, SourceId, Timestamp, VenueSymbol,
+    AggregationMethod, BidAsk, Decimal, FreshnessClock, MarketObservation, ObservationBasis,
+    PriceSubject, PriceType, PriceUnit, QuoteAggregation, QuoteFeed, SourceId, Timestamp,
+    VenueSymbol,
 };
 
 use crate::Write;
@@ -56,11 +57,20 @@ type FeedRow = (
     DateTime<Utc>,
     i64,
     i32,
+    String,
+    bool,
 );
 
 const FEED_SELECT: &str = "SELECT id, feed_source_id, symbol, subject_id, subject_category,
     unit_id, unit_category, basis, venue_id, price_type, source_id, received_at, source_record_id,
-    stale_after_seconds FROM quote_feeds";
+    stale_after_seconds, freshness_clock, inverted FROM quote_feeds";
+
+fn freshness_clock_from_sql(value: &str) -> Result<FreshnessClock, StoreError> {
+    FreshnessClock::ALL
+        .into_iter()
+        .find(|c| c.as_str() == value)
+        .ok_or_else(|| corrupt("freshness clock", value))
+}
 
 fn feed_from_row(row: FeedRow) -> Result<StoredQuoteFeed, StoreError> {
     let (
@@ -78,6 +88,8 @@ fn feed_from_row(row: FeedRow) -> Result<StoredQuoteFeed, StoreError> {
         received,
         record,
         stale_after,
+        clock,
+        inverted,
     ) = row;
     Ok(StoredQuoteFeed {
         id: QuoteFeedId(id),
@@ -90,6 +102,8 @@ fn feed_from_row(row: FeedRow) -> Result<StoredQuoteFeed, StoreError> {
             price_type: price_type_from_sql(&price_type)?,
             stale_after_seconds: u32::try_from(stale_after)
                 .map_err(|e| corrupt("stale_after_seconds", e))?,
+            freshness_clock: freshness_clock_from_sql(&clock)?,
+            inverted,
             provenance: undrly_core::Provenance {
                 source_id: SourceId::parse(&source).map_err(|e| corrupt("source id", e))?,
                 received_at: timestamp_from_sql(received)?,
@@ -116,8 +130,9 @@ pub async fn insert_quote_feed(
     let inserted: Option<i64> = sqlx::query_scalar(
         "INSERT INTO quote_feeds
            (feed_source_id, symbol, subject_id, subject_category, unit_id, unit_category, basis,
-            venue_id, price_type, source_id, received_at, source_record_id, stale_after_seconds)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            venue_id, price_type, source_id, received_at, source_record_id, stale_after_seconds,
+            freshness_clock, inverted)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          ON CONFLICT ON CONSTRAINT quote_feeds_one_per_symbol DO NOTHING
          RETURNING id",
     )
@@ -134,6 +149,8 @@ pub async fn insert_quote_feed(
     .bind(feed.provenance.received_at.as_datetime())
     .bind(source_record.0)
     .bind(i32::try_from(feed.stale_after_seconds).unwrap_or(i32::MAX))
+    .bind(feed.freshness_clock.as_str())
+    .bind(feed.inverted)
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = inserted {
@@ -151,7 +168,9 @@ pub async fn insert_quote_feed(
     let same = existing.feed.subject == feed.subject
         && existing.feed.unit == feed.unit
         && existing.feed.basis == feed.basis
-        && existing.feed.stale_after_seconds == feed.stale_after_seconds;
+        && existing.feed.stale_after_seconds == feed.stale_after_seconds
+        && existing.feed.freshness_clock == feed.freshness_clock
+        && existing.feed.inverted == feed.inverted;
     if same {
         Ok((existing.id, Write::Unchanged))
     } else {
@@ -254,6 +273,18 @@ pub async fn insert_observation(
     observation: &MarketObservation,
     source_record: SourceRecordId,
 ) -> Result<(ObservationId, Write), StoreError> {
+    insert_observation_with(conn, observation, source_record, false).await
+}
+
+/// [`insert_observation`], recording whether the price was inverted from
+/// the source's inverse pair (`inverted`; the raw record keeps the source's
+/// own value).
+pub async fn insert_observation_with(
+    conn: &mut PgConnection,
+    observation: &MarketObservation,
+    source_record: SourceRecordId,
+    inverted: bool,
+) -> Result<(ObservationId, Write), StoreError> {
     let (subject, subject_category) = subject_sql(observation.subject());
     let (unit, unit_category) = unit_sql(observation.unit());
     let venue = observation.venue_id().map(|v| v.uuid());
@@ -262,9 +293,10 @@ pub async fn insert_observation(
     let inserted: Option<i64> = sqlx::query_scalar(
         "INSERT INTO market_observations
            (subject_id, subject_category, basis, venue_id, price_type, price, bid, ask,
-            unit_id, unit_category, source_id, observed_at, received_at, source_record_id)
+            unit_id, unit_category, source_id, observed_at, received_at, source_record_id,
+            inverted)
          VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8::numeric,
-                 $9, $10, $11, $12, $13, $14)
+                 $9, $10, $11, $12, $13, $14, $15)
          ON CONFLICT DO NOTHING
          RETURNING id",
     )
@@ -282,6 +314,7 @@ pub async fn insert_observation(
     .bind(observation.observed_at().map(|t| t.as_datetime()))
     .bind(observation.received_at().as_datetime())
     .bind(source_record.0)
+    .bind(inverted)
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = inserted {

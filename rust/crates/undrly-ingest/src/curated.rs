@@ -111,6 +111,9 @@ pub async fn ingest_universe_as(
         }
     }
     for (instrument, isin, figi) in &u.instruments {
+        instrument
+            .validate()
+            .map_err(|e| IngestError::CuratedDisagrees(format!("{}: {e}", instrument.id)))?;
         report.count(reference::insert_instrument(&mut tx, instrument, r).await?);
         if let Some(isin) = isin {
             assign(
@@ -191,6 +194,8 @@ pub async fn ingest_universe_as(
             basis: f.basis,
             price_type: f.price_type,
             stale_after_seconds: f.stale_after_seconds,
+            freshness_clock: f.freshness_clock,
+            inverted: f.inverted,
             provenance: record.provenance.clone(),
         };
         report.count(market::insert_quote_feed(&mut tx, &feed, r).await?.1);

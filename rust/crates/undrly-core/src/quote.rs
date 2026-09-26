@@ -46,7 +46,73 @@ pub struct QuoteFeed {
     /// expected cadence (seconds for market data, days for daily reference
     /// series, weeks for monthly averages).
     pub stale_after_seconds: u32,
+    /// Which elapsed time `stale_after_seconds` counts.
+    pub freshness_clock: FreshnessClock,
+    /// The source publishes the inverse pair (`unit` per `subject`, e.g. the
+    /// Bank of Canada's JPY/CAD for canonical CAD/JPY): each observation is
+    /// [`invert_quote`]d at ingestion, and records that it was.
+    pub inverted: bool,
     pub provenance: Provenance,
+}
+
+/// Which elapsed time a feed's freshness window counts. `ageMs` is always
+/// literal wall-clock time; this only shapes the fresh/stale policy verdict.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum FreshnessClock {
+    /// Every second counts (continuously traded markets, V1 default).
+    #[default]
+    Continuous,
+    /// Saturdays and Sundays (UTC) do not count: for rates published on
+    /// weekdays only (central-bank FX reference rates), so a Friday rate is
+    /// not stale merely because the weekend passed. No holiday calendar.
+    Weekdays,
+}
+
+impl FreshnessClock {
+    pub const ALL: [FreshnessClock; 2] = [FreshnessClock::Continuous, FreshnessClock::Weekdays];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            FreshnessClock::Continuous => "continuous",
+            FreshnessClock::Weekdays => "weekdays",
+        }
+    }
+}
+
+/// `1 / value` for an inverse-published rate, rounded half to even to the
+/// significant digits the source stated (`0.008990` has 4: inverting cannot
+/// add precision the source did not publish). The quotient is exact decimal
+/// division (28 significant digits) before that rounding. `None` for a
+/// non-positive value.
+pub fn invert_rate(value: Decimal) -> Option<Decimal> {
+    if value <= Decimal::ZERO {
+        return None;
+    }
+    let digits = significant_digits(value);
+    Decimal::ONE
+        .checked_div(value)?
+        .round_sf_with_strategy(digits, RoundingStrategy::MidpointNearestEven)
+}
+
+/// Significant digits of `value` as stated, trailing zeros included
+/// (`2100.00` → 6, `0.008990` → 4).
+fn significant_digits(value: Decimal) -> u32 {
+    let mantissa = value.mantissa().unsigned_abs();
+    mantissa.checked_ilog10().map_or(1, |d| d + 1)
+}
+
+/// The canonical-orientation quote of an inverse-published one: the price
+/// is [`invert_rate`]d, and the bid and ask swap sides (`bid = 1 / ask`,
+/// `ask = 1 / bid`). `None` if any value is not positive.
+pub fn invert_quote(price: Decimal, bid_ask: Option<BidAsk>) -> Option<(Decimal, Option<BidAsk>)> {
+    let bid_ask = match bid_ask {
+        Some(BidAsk { bid, ask }) => Some(BidAsk {
+            bid: invert_rate(ask)?,
+            ask: invert_rate(bid)?,
+        }),
+        None => None,
+    };
+    Some((invert_rate(price)?, bid_ask))
 }
 
 /// Default freshness window of a feed (V1 behaviour).
@@ -243,7 +309,7 @@ mod tests {
     use super::*;
     use crate::decimal::parse_canonical;
     use crate::id::{CurrencyId, InstrumentId};
-    use crate::observation::{ObservationBasis, PriceSubject, PriceType, PriceUnit};
+    use crate::observation::{BidAsk, ObservationBasis, PriceSubject, PriceType, PriceUnit};
     use crate::source::SourceId;
     use crate::time::Timestamp;
 
@@ -467,6 +533,50 @@ mod tests {
         let now = at("2026-09-25T00:00:10Z");
         let no_spread = (1, obs(None, "2026-09-25T00:00:05Z")); // aggregated, no bid/ask
         assert!(aggregate(AggregationMethod::MeanVenueMidV1, &[no_spread], now).is_none());
+    }
+
+    #[test]
+    fn inverts_to_the_stated_significant_digits() {
+        let d = |s| parse_canonical(s).unwrap();
+        // Bank of Canada JPY/CAD 0.008990 (4 significant digits) → CAD/JPY.
+        assert_eq!(invert_rate(d("0.008990")).unwrap().to_string(), "111.2");
+        // CHF/CAD 1.7072 (5 digits) → CAD/CHF 0.58575 (1 / 1.7072 = 0.585754…).
+        assert_eq!(invert_rate(d("1.7072")).unwrap().to_string(), "0.58575");
+        // Exact inverses stay exact at the source's precision.
+        assert_eq!(invert_rate(d("2.000")).unwrap().to_string(), "0.5000");
+        assert_eq!(invert_rate(d("0.25")).unwrap().to_string(), "4.0");
+        // Round trip at the same precision returns the rate.
+        assert_eq!(
+            invert_rate(invert_rate(d("1.1403")).unwrap())
+                .unwrap()
+                .to_string(),
+            "1.1403"
+        );
+        // Half to even at the last stated digit: 1 / 0.8 = 1.25 → 1 digit.
+        assert_eq!(invert_rate(d("0.8")).unwrap().to_string(), "1");
+        assert!(invert_rate(Decimal::ZERO).is_none());
+        assert!(invert_rate(d("-1.5")).is_none());
+    }
+
+    #[test]
+    fn inverting_a_quote_swaps_bid_and_ask() {
+        let d = |s| parse_canonical(s).unwrap();
+        // IDR/USD 0.00005580 / 0.00005590 → USD/IDR: bid = 1/ask, ask = 1/bid.
+        let (price, ba) = invert_quote(
+            d("0.00005585"),
+            Some(BidAsk {
+                bid: d("0.00005580"),
+                ask: d("0.00005590"),
+            }),
+        )
+        .unwrap();
+        let ba = ba.unwrap();
+        // Four significant digits each: 17905.1…, 17889.0…, 17921.1….
+        assert_eq!(price.to_string(), "17910");
+        assert_eq!(ba.bid.to_string(), "17890");
+        assert_eq!(ba.ask.to_string(), "17920");
+        assert!(ba.bid <= price && price <= ba.ask);
+        assert_eq!(invert_quote(d("1.25"), None), Some((d("0.800"), None)));
     }
 
     #[test]

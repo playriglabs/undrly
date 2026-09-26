@@ -324,6 +324,7 @@ async fn nvda_is_scoped_to_nasdaq_not_global_identity() {
             name: DisplayName::new("Unrelated Test Instrument").unwrap(),
             contract_multiplier: None,
             unit_of_measure: None,
+            fx_pair: None,
         },
         record.id,
     )
@@ -482,6 +483,7 @@ async fn repository_quarantines_a_conflicting_isin_claim() {
             name: DisplayName::new("Other Test Instrument").unwrap(),
             contract_multiplier: None,
             unit_of_measure: None,
+            fx_pair: None,
         },
         record.id,
     )

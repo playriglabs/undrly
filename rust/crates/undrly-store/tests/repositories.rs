@@ -209,6 +209,7 @@ async fn listing_symbol_rules() {
         name: name("Test Instrument"),
         contract_multiplier: None,
         unit_of_measure: None,
+        fx_pair: None,
     };
     reference::insert_instrument(&mut conn, &instrument, record)
         .await

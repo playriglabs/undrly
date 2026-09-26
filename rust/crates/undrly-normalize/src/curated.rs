@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use undrly_core::{
     AggregationMethod, AliasKind, CanonicalId, Category, Cik, Currency, CurrencyCode, CurrencyId,
     DEFAULT_STALE_AFTER_SECONDS, Decimal, DisplayName, Entity, EntityId, EntityKind, Figi,
-    Instrument, InstrumentClass, InstrumentId, Isin, Lei, ListingId, Mic, ObservationBasis,
-    PriceSubject, PriceType, PriceUnit, RelationshipType, SourceId, Timestamp, UnitOfMeasure,
-    UniverseKey, UniverseMember, Venue, VenueId, VenueSymbol,
+    FreshnessClock, FxPair, Instrument, InstrumentClass, InstrumentId, Isin, Lei, ListingId, Mic,
+    ObservationBasis, PriceSubject, PriceType, PriceUnit, RelationshipType, SourceId, Timestamp,
+    UnitOfMeasure, UniverseKey, UniverseMember, Venue, VenueId, VenueSymbol,
 };
 use undrly_provider::curated::Universe;
 
@@ -63,6 +63,8 @@ pub struct NormalizedFeed {
     pub basis: ObservationBasis,
     pub price_type: PriceType,
     pub stale_after_seconds: u32,
+    pub freshness_clock: FreshnessClock,
+    pub inverted: bool,
 }
 
 fn name(field: &'static str, value: &str) -> Result<DisplayName, NormalizeError> {
@@ -147,6 +149,8 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         ));
     }
     let mut instruments = Vec::new();
+    // FX currencies are resolved once every key is known (below).
+    let mut fx_refs: Vec<(usize, &str, &str)> = Vec::new();
     for i in &u.instruments {
         let id = id("instruments.id", &i.id, Category::Instrument)?;
         key(&i.key, id)?;
@@ -154,6 +158,27 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
             .into_iter()
             .find(|c| c.as_str() == i.class)
             .ok_or_else(|| unsupported("instruments.class", &i.class))?;
+        match (class, i.base.as_deref(), i.quote.as_deref()) {
+            (InstrumentClass::Fx, Some(base), Some(quote)) => {
+                fx_refs.push((instruments.len(), base, quote));
+            }
+            (InstrumentClass::Fx, _, _) => {
+                return Err(invalid(
+                    "instruments.base/quote",
+                    format!(
+                        "FX instrument `{}` needs a base and a quote currency",
+                        i.key
+                    ),
+                ));
+            }
+            (_, None, None) => {}
+            _ => {
+                return Err(invalid(
+                    "instruments.base/quote",
+                    format!("only FX instruments state currencies (`{}`)", i.key),
+                ));
+            }
+        }
         instruments.push((
             Instrument {
                 id: InstrumentId::try_from(id).expect("checked category"),
@@ -184,6 +209,7 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
                             .ok_or_else(|| unsupported("instruments.unitOfMeasure", v))
                     })
                     .transpose()?,
+                fx_pair: None,
             },
             i.isin
                 .as_deref()
@@ -219,6 +245,24 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
             Err(invalid(field, format!("`{id}` is not a {want}")))
         }
     };
+    let currency = |field: &'static str, k: &str| -> Result<CurrencyId, NormalizeError> {
+        Ok(
+            CurrencyId::try_from(typed(field, lookup(field, k)?, Category::Currency)?)
+                .expect("checked category"),
+        )
+    };
+    for (index, base, quote) in fx_refs {
+        let pair = FxPair::new(
+            currency("instruments.base", base)?,
+            currency("instruments.quote", quote)?,
+        )
+        .map_err(|e| invalid("instruments.base/quote", e))?;
+        instruments[index].0.fx_pair = Some(pair);
+    }
+    let fx_pairs: HashMap<InstrumentId, FxPair> = instruments
+        .iter()
+        .filter_map(|(i, _, _)| i.fx_pair.map(|p| (i.id, p)))
+        .collect();
 
     let listings = listings
         .into_iter()
@@ -318,6 +362,16 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
                     "a subject cannot be priced in itself",
                 ));
             }
+            // An FX market is priced in its own quote currency, never another.
+            if let PriceSubject::Instrument(id) = subject
+                && let Some(pair) = fx_pairs.get(&id)
+                && unit != PriceUnit::Currency(pair.quote)
+            {
+                return Err(invalid(
+                    "quoteFeeds.unit",
+                    format!("FX feed `{}` is not in its pair's quote currency", f.symbol),
+                ));
+            }
             let basis = match (f.basis.as_str(), f.venue.as_deref()) {
                 ("venue", Some(v)) => ObservationBasis::Venue(
                     VenueId::try_from(typed(
@@ -349,6 +403,14 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
                     }
                     Some(s) => s,
                 },
+                freshness_clock: match f.freshness_clock.as_deref() {
+                    None => FreshnessClock::Continuous,
+                    Some(v) => FreshnessClock::ALL
+                        .into_iter()
+                        .find(|c| c.as_str() == v)
+                        .ok_or_else(|| unsupported("quoteFeeds.freshnessClock", v))?,
+                },
+                inverted: f.inverted,
             })
         })
         .collect::<Result<Vec<_>, NormalizeError>>()?;
@@ -455,7 +517,7 @@ mod tests {
     fn normalizes_the_demo_universe() {
         let n = normalize_universe(&universe()).unwrap();
         assert_eq!(n.currencies.len(), 2);
-        assert_eq!(n.instruments.len(), 5);
+        assert_eq!(n.instruments.len(), 6);
         let classes: Vec<InstrumentClass> = n.instruments.iter().map(|(i, _, _)| i.class).collect();
         assert_eq!(
             classes,
@@ -465,6 +527,7 @@ mod tests {
                 InstrumentClass::CryptoAsset,
                 InstrumentClass::Commodity,
                 InstrumentClass::PerpetualFuture,
+                InstrumentClass::Fx,
             ]
         );
         // The perpetual derives from Bitcoin and settles in USDC.
@@ -479,11 +542,24 @@ mod tests {
             n.relationships
                 .contains(&(perp, RelationshipType::SettlesIn, usdc))
         );
-        // FX is a currency priced in a currency; the perp is priced in USDC.
+        // FX: the EUR/USD market (base EUR, quote USD) is priced in USD; the
+        // perp is priced in USDC.
+        let (eur_usd, _, _) = &n.instruments[5];
+        let pair = eur_usd.fx_pair.unwrap();
+        assert_eq!(pair.base, n.currencies[1].0.id);
+        assert_eq!(pair.quote, n.currencies[0].0.id);
+        let fx_feed = n
+            .quote_feeds
+            .iter()
+            .find(|f| f.symbol.as_str() == "ZEURZUSD")
+            .unwrap();
+        assert_eq!(fx_feed.subject, PriceSubject::Instrument(eur_usd.id));
+        assert_eq!(fx_feed.unit, PriceUnit::Currency(pair.quote));
+        assert!(!fx_feed.inverted);
         assert!(
             n.quote_feeds
                 .iter()
-                .any(|f| matches!(f.subject, PriceSubject::Currency(_)))
+                .all(|f| !matches!(f.subject, PriceSubject::Currency(_)))
         );
         let perp_feed = n
             .quote_feeds
@@ -527,6 +603,48 @@ mod tests {
                 .iter()
                 .all(|f| f.unit == PriceUnit::Currency(usd))
         );
+    }
+
+    #[test]
+    fn fx_instruments_state_their_currencies_and_are_priced_in_the_quote() {
+        let fx_file = || -> Universe {
+            let path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../data/reference/fx.json");
+            CuratedProvider::new()
+                .decode_reference(&std::fs::read(path).unwrap())
+                .unwrap()
+        };
+        let n = normalize_universe(&fx_file()).unwrap();
+        assert!(n.instruments.iter().all(|(i, _, _)| i.validate().is_ok()));
+        let inverted: Vec<&str> = n
+            .quote_feeds
+            .iter()
+            .filter(|f| f.inverted)
+            .map(|f| f.symbol.as_str())
+            .collect();
+        assert_eq!(inverted, vec!["FXJPYCAD", "FXCHFCAD"]);
+        // A feed in another currency than the pair's quote is rejected.
+        let mut u = fx_file();
+        let usd_jpy = u
+            .quote_feeds
+            .iter_mut()
+            .find(|f| f.symbol == "RXI_N.B.JA")
+            .unwrap();
+        usd_jpy.unit = "iso4217:GBP".into();
+        assert!(normalize_universe(&u).is_err());
+        // An FX instrument needs both currencies; no other class states them.
+        let mut u = fx_file();
+        u.instruments[0].quote = None;
+        assert!(normalize_universe(&u).is_err());
+        let mut u = universe();
+        u.instruments[0].base = Some("eur".into());
+        u.instruments[0].quote = Some("usd".into());
+        assert!(normalize_universe(&u).is_err());
+        // Base and quote differ.
+        let mut u = universe();
+        let fx = u.instruments.iter_mut().find(|i| i.class == "fx").unwrap();
+        fx.quote = Some("eur".into());
+        assert!(normalize_universe(&u).is_err());
     }
 
     #[test]

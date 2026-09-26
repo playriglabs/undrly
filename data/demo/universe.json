@@ -98,6 +98,16 @@
       "name": "BTC Perpetual (Hyperliquid)",
       "isin": null,
       "figi": null
+    },
+    {
+      "key": "eur-usd",
+      "id": "undrly:instrument:01m3dwesswf9ftnteyjtfkfm84",
+      "class": "fx",
+      "name": "EUR/USD",
+      "isin": null,
+      "figi": null,
+      "base": "eur",
+      "quote": "usd"
     }
   ],
   "listings": [
@@ -267,6 +277,11 @@
       "node": "coinbase",
       "alias": "Coinbase Exchange",
       "kind": "name"
+    },
+    {
+      "node": "eur-usd",
+      "alias": "EURUSD",
+      "kind": "symbol"
     }
   ],
   "quoteFeeds": [
@@ -282,7 +297,7 @@
     {
       "source": "kraken",
       "symbol": "ZEURZUSD",
-      "subject": "eur",
+      "subject": "eur-usd",
       "unit": "usd",
       "basis": "venue",
       "venue": "kraken",

@@ -8,6 +8,7 @@
 //! undrly-collect run [--once]       poll quote sources sequentially, forever or once
 //! undrly-collect universe fetch     download raw universe files (the only networked step)
 //! undrly-collect universe build     raw files + id map → snapshot + report (pure)
+//! undrly-collect fx build           FX spec + id map → data/reference/fx.json + report (pure)
 //! ```
 //!
 //! Sources are polled **one request at a time**, each on its own conservative
@@ -34,14 +35,25 @@ use undrly_ingest::{IngestError, RawRecord, store_raw_record};
 use undrly_normalize::alpaca::AlpacaNormalizer;
 use undrly_normalize::coinbase::CoinbaseNormalizer;
 use undrly_normalize::eia::EiaNormalizer;
+use undrly_normalize::fx::{
+    BankIndonesiaNormalizer, BankOfCanadaNormalizer, BitstampNormalizer, BnmNormalizer,
+    CbmNormalizer, EcbNormalizer, FedH10Normalizer,
+};
 use undrly_normalize::gold_api::GoldApiNormalizer;
 use undrly_normalize::hyperliquid::HyperliquidNormalizer;
 use undrly_normalize::kraken::KrakenNormalizer;
 use undrly_normalize::worldbank::WorldBankNormalizer;
 use undrly_provider::alpaca::{self, AlpacaProvider, Credentials};
+use undrly_provider::bank_indonesia::{self, BankIndonesiaProvider};
+use undrly_provider::bank_of_canada::{self, BankOfCanadaProvider};
+use undrly_provider::bitstamp::{self, BitstampProvider};
+use undrly_provider::bnm::{self, BnmProvider};
+use undrly_provider::cbm::{self, CbmProvider};
 use undrly_provider::coinbase::{self, CoinbaseProvider};
 use undrly_provider::curated::CuratedProvider;
+use undrly_provider::ecb::{self, EcbProvider};
 use undrly_provider::eia::{self, EiaProvider};
+use undrly_provider::fed_h10::{self, FedH10Provider};
 use undrly_provider::gold_api::{self, GoldApiProvider};
 use undrly_provider::http::{FetchError, FetchedRecord, HttpClient};
 use undrly_provider::hyperliquid::{self, HyperliquidProvider};
@@ -56,11 +68,14 @@ use undrly_universe::{IdMap, Inputs, Manifest, ManifestFile, paths, sha256_hex, 
 const DEFAULT_USER_AGENT: &str = "Undrly/0.1 (+https://undrly.xyz)";
 const DEFAULT_UNIVERSE: &str = "data/demo/universe.json";
 const COMMODITIES: &str = "data/reference/commodities.json";
+const FX: &str = "data/reference/fx.json";
+const FX_IDS: &str = "data/reference/fx-ids.json";
+const FX_REPORT: &str = "data/reference/fx-report.md";
 const UNIVERSE_DIR: &str = "data/universe";
 
 /// Every source. Redistribution starts `unknown` (treated as restricted)
 /// until a human reviews each source's terms.
-const SOURCES: [(&str, &str); 13] = [
+const SOURCES: [(&str, &str); 20] = [
     ("undrly-curated", "Undrly curated reference data"),
     (
         "undrly-universe",
@@ -77,6 +92,19 @@ const SOURCES: [(&str, &str); 13] = [
     ("ssga", "State Street SPDR SPY holdings"),
     ("nasdaq", "Nasdaq.com"),
     ("sec-edgar", "SEC EDGAR"),
+    ("bitstamp", "Bitstamp"),
+    ("ecb", "European Central Bank euro reference rates"),
+    (
+        "bank-of-canada",
+        "Bank of Canada daily exchange rates (Valet)",
+    ),
+    ("fed-h10", "Federal Reserve H.10 foreign exchange rates"),
+    (
+        "bank-indonesia",
+        "Bank Indonesia (JISDOR and BI transaction rates)",
+    ),
+    ("bnm", "Bank Negara Malaysia exchange rates (Open API)"),
+    ("cbm", "Central Bank of Myanmar reference exchange rates"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -88,10 +116,17 @@ enum Feed {
     Alpaca,
     Eia,
     WorldBank,
+    Bitstamp,
+    Ecb,
+    BankOfCanada,
+    FedH10,
+    BankIndonesia,
+    Bnm,
+    Cbm,
 }
 
 impl Feed {
-    const ALL: [Feed; 7] = [
+    const ALL: [Feed; 14] = [
         Feed::Kraken,
         Feed::Coinbase,
         Feed::Hyperliquid,
@@ -99,6 +134,13 @@ impl Feed {
         Feed::Alpaca,
         Feed::Eia,
         Feed::WorldBank,
+        Feed::Bitstamp,
+        Feed::Ecb,
+        Feed::BankOfCanada,
+        Feed::FedH10,
+        Feed::BankIndonesia,
+        Feed::Bnm,
+        Feed::Cbm,
     ];
 
     fn source(self) -> &'static str {
@@ -110,6 +152,13 @@ impl Feed {
             Feed::Alpaca => alpaca::SOURCE_ID,
             Feed::Eia => eia::SOURCE_ID,
             Feed::WorldBank => worldbank::SOURCE_ID,
+            Feed::Bitstamp => bitstamp::SOURCE_ID,
+            Feed::Ecb => ecb::SOURCE_ID,
+            Feed::BankOfCanada => bank_of_canada::SOURCE_ID,
+            Feed::FedH10 => fed_h10::SOURCE_ID,
+            Feed::BankIndonesia => bank_indonesia::SOURCE_ID,
+            Feed::Bnm => bnm::SOURCE_ID,
+            Feed::Cbm => cbm::SOURCE_ID,
         }
     }
 
@@ -123,6 +172,12 @@ impl Feed {
             Feed::Alpaca => 30,
             Feed::Eia => 6 * 3600,
             Feed::WorldBank => 24 * 3600,
+            Feed::Bitstamp => 10,
+            // Daily reference rates (docs/v1.2-fx.md §6); an unchanged
+            // response is the same raw record.
+            Feed::Ecb | Feed::BankOfCanada | Feed::BankIndonesia | Feed::Bnm | Feed::Cbm => 3600,
+            // Published weekly.
+            Feed::FedH10 => 6 * 3600,
         })
     }
 
@@ -130,9 +185,19 @@ impl Feed {
     fn batches(self, symbols: &[String]) -> Vec<Vec<String>> {
         match self {
             // One request covers every symbol.
-            Feed::Hyperliquid | Feed::WorldBank => vec![symbols.to_vec()],
-            // One product / metal per request.
-            Feed::Coinbase | Feed::GoldApi => symbols.iter().map(|s| vec![s.clone()]).collect(),
+            Feed::Hyperliquid
+            | Feed::WorldBank
+            | Feed::Ecb
+            | Feed::FedH10
+            | Feed::Bnm
+            | Feed::Cbm => vec![symbols.to_vec()],
+            // One product / metal / market / series per request.
+            Feed::Coinbase | Feed::GoldApi | Feed::Bitstamp | Feed::BankIndonesia => {
+                symbols.iter().map(|s| vec![s.clone()]).collect()
+            }
+            Feed::BankOfCanada => {
+                pack(symbols, |b| BankOfCanadaProvider::observations_url(b).len())
+            }
             // As many symbols per request as the record key (the URL) allows.
             Feed::Kraken => pack(symbols, |b| KrakenProvider::ticker_url(b).len()),
             Feed::Alpaca => pack(symbols, |b| AlpacaProvider::snapshots_url(b).len()),
@@ -265,14 +330,14 @@ async fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str =
-    "usage: undrly-collect seed [curated.json] | run [--once] | universe fetch | universe build";
+const USAGE: &str = "usage: undrly-collect seed [curated.json] | run [--once] | universe fetch | universe build | fx build";
 
 async fn run(args: &[String]) -> Result<ExitCode, Error> {
     let command: Vec<&str> = args.iter().map(String::as_str).collect();
     match command.as_slice() {
         ["universe", "fetch"] => return universe_fetch(Path::new(UNIVERSE_DIR)).await,
         ["universe", "build"] => return universe_build(Path::new(UNIVERSE_DIR)),
+        ["fx", "build"] => return fx_build(),
         ["seed", ..] | ["run", ..] => {}
         _ => return Err(Error::Usage(USAGE.into())),
     }
@@ -345,6 +410,7 @@ async fn seed(conn: &mut PgConnection, path: Option<&str>) -> Result<(), Error> 
     }
     seed_curated(conn, CuratedProvider::new(), DEFAULT_UNIVERSE).await?;
     seed_curated(conn, CuratedProvider::new(), COMMODITIES).await?;
+    seed_fx(conn).await?;
     let root = Path::new(UNIVERSE_DIR);
     let snapshot = root.join("snapshot.json");
     if !snapshot.exists() {
@@ -390,6 +456,58 @@ async fn seed(conn: &mut PgConnection, path: Option<&str>) -> Result<(), Error> 
         &snapshot.display().to_string(),
     )
     .await
+}
+
+/// The FX universes (docs/v1.2-fx.md): the spec first, as its own raw
+/// record (the memberships name it), then the built curated file.
+async fn seed_fx(conn: &mut PgConnection) -> Result<(), Error> {
+    if !Path::new(FX).exists() {
+        println!("seed: no {FX} (run `undrly-collect fx build`)");
+        return Ok(());
+    }
+    let spec = undrly_universe::fx::SPEC_PATH;
+    let mut tx = sqlx::Acquire::begin(&mut *conn).await?;
+    store_raw_record(
+        &mut tx,
+        &SourceId::parse(undrly_universe::fx::SPEC_SOURCE).expect("valid source id"),
+        &RawRecord {
+            record_key: spec.to_owned(),
+            payload: read(spec)?,
+            received_at: Timestamp::now(),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    seed_curated(conn, CuratedProvider::new(), FX).await
+}
+
+fn fx_build() -> Result<ExitCode, Error> {
+    let v1 = serde_json::from_slice(&read(DEFAULT_UNIVERSE)?)
+        .map_err(|e| Error::Json(DEFAULT_UNIVERSE.into(), e))?;
+    let ids: IdMap = if Path::new(FX_IDS).exists() {
+        json(FX_IDS)?
+    } else {
+        IdMap::default()
+    };
+    let spec = read(undrly_universe::fx::SPEC_PATH)?;
+    let build = undrly_universe::fx::build(&spec, &v1, ids, &mut undrly_universe::mint)?;
+    write(FX_IDS, &to_json(&build.ids))?;
+    write(FX, &to_json(&build.universe))?;
+    write(FX_REPORT, build.report.as_bytes())?;
+    let u = &build.universe;
+    println!(
+        "fx build: {} new currencies, {} new FX instruments, {} feeds; members {:?}; {} ids minted",
+        u.currencies.len(),
+        u.instruments.len(),
+        u.quote_feeds.len(),
+        u.universes
+            .iter()
+            .map(|x| (x.key.as_str(), x.members.len()))
+            .collect::<Vec<_>>(),
+        build.minted
+    );
+    println!("  report: {FX_REPORT}");
+    Ok(ExitCode::SUCCESS)
 }
 
 // ---------------------------------------------------------------- universe
@@ -642,13 +760,20 @@ async fn once_pass(
     keys: &Keys<'_>,
     feeds: &[Feed],
 ) -> Result<ExitCode, Error> {
-    const ORDER: [Feed; 7] = [
+    const ORDER: [Feed; 14] = [
         Feed::WorldBank,
         Feed::Eia,
+        Feed::FedH10,
+        Feed::Ecb,
+        Feed::BankOfCanada,
+        Feed::BankIndonesia,
+        Feed::Bnm,
+        Feed::Cbm,
         Feed::GoldApi,
         Feed::Alpaca,
         Feed::Hyperliquid,
         Feed::Coinbase,
+        Feed::Bitstamp,
         Feed::Kraken,
     ];
     let mut failures = 0;
@@ -789,6 +914,24 @@ async fn poll_batch(
             eia::fetch_series(client, key, route, &refs).await?
         }
         Feed::WorldBank => worldbank::fetch_monthly_workbook(client).await?,
+        Feed::Bitstamp => bitstamp::fetch_ticker(client, refs[0]).await?,
+        Feed::Ecb => ecb::fetch_daily(client).await?,
+        Feed::BankOfCanada => bank_of_canada::fetch_observations(client, &refs).await?,
+        Feed::FedH10 => fed_h10::fetch_package(client).await?,
+        Feed::BankIndonesia => {
+            // The last 14 days, in Jakarta's calendar (UTC+7).
+            let today = (chrono::Utc::now() + chrono::TimeDelta::hours(7)).date_naive();
+            let start = today - chrono::TimeDelta::days(14);
+            let url = BankIndonesiaProvider::rates_url(
+                refs[0],
+                &start.format("%Y-%m-%d").to_string(),
+                &today.format("%Y-%m-%d").to_string(),
+            )
+            .ok_or_else(|| Error::Usage(format!("no Bank Indonesia series for {}", refs[0])))?;
+            bank_indonesia::fetch_rates(client, &url).await?
+        }
+        Feed::Bnm => bnm::fetch_rates(client).await?,
+        Feed::Cbm => cbm::fetch_latest(client).await?,
     };
     let raw = RawRecord {
         record_key: fetched.record_key.clone(),
@@ -863,6 +1006,55 @@ async fn poll_batch(
                 requested,
             )
             .await?
+        }
+        Feed::Bitstamp => {
+            ingest_quotes_for(
+                conn,
+                &BitstampProvider::new(),
+                &BitstampNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::Ecb => {
+            ingest_quotes_for(conn, &EcbProvider::new(), &EcbNormalizer, &raw, requested).await?
+        }
+        Feed::BankOfCanada => {
+            ingest_quotes_for(
+                conn,
+                &BankOfCanadaProvider::new(),
+                &BankOfCanadaNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::FedH10 => {
+            ingest_quotes_for(
+                conn,
+                &FedH10Provider::new(),
+                &FedH10Normalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::BankIndonesia => {
+            ingest_quotes_for(
+                conn,
+                &BankIndonesiaProvider::new(),
+                &BankIndonesiaNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::Bnm => {
+            ingest_quotes_for(conn, &BnmProvider::new(), &BnmNormalizer, &raw, requested).await?
+        }
+        Feed::Cbm => {
+            ingest_quotes_for(conn, &CbmProvider::new(), &CbmNormalizer, &raw, requested).await?
         }
     };
     let refreshed = refresh_canonical_quotes(conn, &report.pairs, Timestamp::now()).await?;

@@ -4,3 +4,10 @@ tests/fixtures/sources/hyperliquid/** binary
 tests/fixtures/sources/gold-api/** binary
 tests/fixtures/sources/alpaca/** binary
 tests/fixtures/sources/coinbase/** binary
+tests/fixtures/sources/bitstamp/** binary
+tests/fixtures/sources/ecb/** binary
+tests/fixtures/sources/bank-of-canada/** binary
+tests/fixtures/sources/fed-h10/** binary
+tests/fixtures/sources/bank-indonesia/** binary
+tests/fixtures/sources/bnm/** binary
+tests/fixtures/sources/cbm/** binary

@@ -17,6 +17,7 @@ pub mod coinbase;
 pub mod curated;
 pub mod eia;
 pub mod fixture;
+pub mod fx;
 pub mod gold_api;
 pub mod hyperliquid;
 pub mod kraken;
@@ -136,6 +137,31 @@ pub trait QuoteNormalizer {
         quote: &Self::Quote,
         symbols: &[VenueSymbol],
     ) -> Result<Vec<NormalizedQuote>, NormalizeError>;
+}
+
+/// Normalizes every dated value a reference-series payload holds (V1.3
+/// history), for the requested symbols; [`QuoteNormalizer`] keeps only the
+/// newest of these per symbol ([`newest_per_symbol`]).
+pub trait HistoryNormalizer: QuoteNormalizer {
+    fn normalize_history(
+        &self,
+        quote: &Self::Quote,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedQuote>, NormalizeError>;
+}
+
+/// The newest point (by source time) of each symbol, in first-seen symbol
+/// order. Points without a source time are not considered.
+pub fn newest_per_symbol(points: Vec<NormalizedQuote>) -> Vec<NormalizedQuote> {
+    let mut out: Vec<NormalizedQuote> = Vec::new();
+    for p in points {
+        match out.iter_mut().find(|q| q.symbol == p.symbol) {
+            Some(q) if p.observed_at > q.observed_at => *q = p,
+            Some(_) => {}
+            None => out.push(p),
+        }
+    }
+    out
 }
 
 /// A financial decimal from a source's text, exactly (scale preserved).

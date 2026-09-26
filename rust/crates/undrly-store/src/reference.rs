@@ -10,9 +10,10 @@
 //! (`source_record_id`). A replay from another record keeps the original.
 
 use chrono::{DateTime, Utc};
+use sqlx::types::Uuid;
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
-    CanonicalId, Category, Currency, CurrencyId, DisplayName, Entity, EntityId, Instrument,
+    CanonicalId, Category, Currency, CurrencyId, DisplayName, Entity, EntityId, FxPair, Instrument,
     InstrumentId, Listing, ListingId, Provenance, SourceId, UnitOfMeasure, Venue, VenueId,
 };
 
@@ -178,14 +179,17 @@ pub async fn insert_instrument(
     insert_node(&mut tx, instrument.id.canonical()).await?;
     let inserted = sqlx::query(
         "INSERT INTO instruments
-           (id, instrument_class, name, contract_multiplier, unit_of_measure, source_record_id)
-         VALUES ($1, $2, $3, $4::numeric, $5, $6) ON CONFLICT (id) DO NOTHING",
+           (id, instrument_class, name, contract_multiplier, unit_of_measure, base_currency_id,
+            quote_currency_id, source_record_id)
+         VALUES ($1, $2, $3, $4::numeric, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING",
     )
     .bind(instrument.id.uuid())
     .bind(instrument.class.as_str())
     .bind(instrument.name.as_str())
     .bind(instrument.contract_multiplier.map(decimal_to_sql))
     .bind(instrument.unit_of_measure.map(UnitOfMeasure::as_str))
+    .bind(instrument.fx_pair.map(|p| p.base.uuid()))
+    .bind(instrument.fx_pair.map(|p| p.quote.uuid()))
     .bind(source_record.0)
     .execute(&mut *tx)
     .await?
@@ -205,20 +209,37 @@ pub async fn get_instrument(
     conn: &mut PgConnection,
     id: InstrumentId,
 ) -> Result<Option<Instrument>, StoreError> {
-    let row: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT instrument_class, name, contract_multiplier::text, unit_of_measure
+    type Row = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<Uuid>,
+        Option<Uuid>,
+    );
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT instrument_class, name, contract_multiplier::text, unit_of_measure,
+                base_currency_id, quote_currency_id
          FROM instruments WHERE id = $1",
     )
     .bind(id.uuid())
     .fetch_optional(conn)
     .await?;
-    row.map(|(class, n, multiplier, unit)| {
+    row.map(|(class, n, multiplier, unit, base, quote)| {
+        let fx_pair = match (base, quote) {
+            (Some(base), Some(quote)) => Some(FxPair {
+                base: CurrencyId::from_uuid(base).map_err(|e| corrupt("base currency", e))?,
+                quote: CurrencyId::from_uuid(quote).map_err(|e| corrupt("quote currency", e))?,
+            }),
+            _ => None,
+        };
         Ok(Instrument {
             id,
             class: instrument_class_from_sql(&class)?,
             name: name(&n)?,
             contract_multiplier: multiplier.as_deref().map(decimal_from_sql).transpose()?,
             unit_of_measure: unit.as_deref().map(unit_of_measure_from_sql).transpose()?,
+            fx_pair,
         })
     })
     .transpose()
