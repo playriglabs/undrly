@@ -20,7 +20,7 @@ curl -s localhost:8787/v1/quote/BTC/USD | jq
 | --- | --- | --- | --- |
 | Equity | `NVDA` | Alpaca (IEX feed) | the newer of IEX's last trade and IEX's book mid (with bid/ask, regular session only): an IEX venue quote |
 | Crypto spot | `BTC/USD` | Kraken + Coinbase | **one aggregate** of both venues' mid prices |
-| FX | `EUR/USD` | Kraken | Kraken's last trade, with bid/ask |
+| FX | `EUR/USD` | Kraken + Bitstamp | **one aggregate** of both venues' mid prices (V1.2; V1 served Kraken alone) |
 | Commodity | `XAU/USD` | gold-api | an aggregated reference price per troy ounce |
 | Perpetual | `BTC-PERP` | Hyperliquid | the mark price, in USDC |
 
@@ -41,6 +41,27 @@ V1.1 widens this to real universes, without changing the quote model
 - **14 commodities**: gold-api metals, EIA oil and gas, and World Bank monthly
   averages.
 
+## FX universes (V1.2, local)
+
+V1.2 adds two curated FX universes ([`docs/v1.2-fx.md`](docs/v1.2-fx.md)):
+
+- **`fx-major`** (29 pairs): live venue books where they are liquid
+  (Kraken; Kraken + Bitstamp for EUR/USD and GBP/USD), otherwise
+  central-bank **reference** rates (ECB, Bank of Canada, Federal Reserve
+  H.10). 10 crosses have no approved direct source and return `no_quote`.
+- **`fx-southeast-asia`** (9 pairs): official reference rates only (Bank
+  Indonesia JISDOR and transaction rates, Bank Negara Malaysia, Central Bank
+  of Myanmar, H.10, ECB). USD/PHP and USD/VND have no approved
+  machine-readable source.
+
+An FX market is an instrument of class `fx` between two currency nodes
+(`EUR/USD`: 1 EUR in USD). Query it as `EUR/USD`, `eur/usd` or `EURUSD`;
+`USD/EUR` is a different market and is not served inverted. Reference rates
+carry `priceType: reference` and no bid/ask, and are never aggregated with
+venue quotes. The FX definition is Undrly-authored and committed
+(`data/reference/fx-spec.json` → `undrly-collect fx build` →
+`data/reference/fx.json`).
+
 Universe data is third-party and stays **local** (`data/universe/` is
 git-ignored). Build it once per machine:
 
@@ -58,6 +79,26 @@ Symbols can collide across asset classes. The unambiguous forms are a pair
 `COINBASE:ETH-USD`, `HYPERLIQUID:ETH`), an identifier, or an id. Class
 shares take either punctuation (`BRK.B` or `BRK-B`). Equities have no constructed
 ISIN: identity is the Undrly id, and issuers carry their SEC CIK.
+
+## Market data (V1.3, local)
+
+Candles, reference history, market context and perpetual data for the same
+instruments, through the same query language
+([`docs/v1.3-market-data.md`](docs/v1.3-market-data.md)):
+
+```bash
+./scripts/history.sh      # backfill bars, reference series, calendar (~25 min), beside dev.sh
+curl -s "localhost:8787/v1/candles/BTC/USD?interval=1h&limit=5" | jq
+curl -s localhost:8787/v1/market/AAPL | jq          # marketStatus + session statistics
+curl -s localhost:8787/v1/derivatives/BTC-PERP | jq  # mark, index, funding, open interest
+curl -s "localhost:8787/v1/history/USD/IDR?limit=5" | jq
+curl -s "localhost:8787/v1/calendar/AAPL?from=2026-11-23&to=2026-11-30" | jq   # Thanksgiving, early close
+curl -s "localhost:8787/v1/economic-calendar?category=inflation" | jq
+```
+
+Candles are one venue's trade bars (Kraken, Hyperliquid, IEX; not named in the response);
+`4h` is derived from four complete hours, never filled. Reference rates have
+history, never OHLC. Missing data is `null` or `404 no_data`.
 
 ## Quickstart
 
@@ -94,6 +135,12 @@ All routes are `GET`, read-only, and answer from Undrly's own storage.
 | `/v1/resolve?q=` | what a query refers to: `resolved`, `ambiguous` or `not_found` |
 | `/v1/instruments/{id}/graph` | an instrument's direct relationships and listings |
 | `/v1/universes`, `/v1/universes/{key}` | imported universes and their latest membership (V1.1) |
+| `/v1/candles/{query}?interval=1h\|4h\|1d&limit=` | a market's venue candles (OHLCV), oldest first (V1.3) |
+| `/v1/history/{query}?limit=` | a reference series' published values (central-bank rates, commodity references) |
+| `/v1/market/{query}` | the quote with market status (`continuous`, `open`, `closed`, …) and session or rolling-24h statistics |
+| `/v1/derivatives/{query}` | a perpetual's mark, index, funding rate and open interest |
+| `/v1/calendar/{query}?from=&to=` | a stock's trading days, hours, early closes, holidays, corporate actions (dividends, splits, mergers…) and earnings dates with estimates |
+| `/v1/economic-calendar?from=&to=&category=` | scheduled US economic releases (CPI, jobs report, GDP, PCE, …) |
 
 - **Queries:** a symbol or name (`NVDA`, `Gold`, `BTC perpetual`), a pair
   (`EUR/USD`), an identifier (`isin:US67066G1040`), a venue symbol
@@ -133,7 +180,10 @@ serve       the API reads canonical quotes from storage
 Upstream data is used in **local/private demo mode only**. The
 redistribution terms of every source (Kraken, Coinbase, Hyperliquid,
 gold-api, Alpaca/IEX; for V1.1 also CoinGecko, SSGA, Nasdaq, SEC, EIA and
-the World Bank) are **unreviewed**, and Undrly does **not** currently
+the World Bank; for V1.2 also Bitstamp, the ECB, the Bank of Canada, the
+Federal Reserve, Bank Indonesia, Bank Negara Malaysia and the Central Bank of
+Myanmar; for V1.3 also FRED and Finnhub, whose free plan is personal-use
+only) are **unreviewed**, and Undrly does **not** currently
 claim production redistribution rights for any of them. Do not expose this
 data publicly. Details per source: [`docs/sources/quotes.md`](docs/sources/quotes.md).
 

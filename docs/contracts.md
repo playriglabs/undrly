@@ -71,7 +71,7 @@ schemaVersion, subject, unit,
 priceType, price, bid, ask, spread, spreadBps,
 basis,
   venue, observedAt                  ← basis = "venue" only
-receivedAt, asOf, ageMs, freshness, change24h,
+receivedAt, asOf, ageMs, freshness,
 aggregation { method, eligibleObservations, computedAt }
 ```
 
@@ -100,8 +100,7 @@ mean-of-eligible-venue bid/ask, not a best bid/offer, NBBO or a
 consolidated book; with one input they are that venue's own bid and ask.
 `/v1/quotes` observations keep their own bid/ask.
 
-All decimals (`price`, `bid`, `ask`, `spread`, `spreadBps`, and
-`change24h`'s `absolute`, `percent`, `from`) are canonical decimal
+All decimals (`price`, `bid`, `ask`, `spread`, `spreadBps`) are canonical decimal
 **strings**, never JSON numbers, computed with exact decimal arithmetic
 (no floating point). Scale is kept as stored: `price`/`bid`/`ask` carry
 the scale the source reported or the aggregation rule produced (e.g.
@@ -131,34 +130,11 @@ bid/ask.
   World Bank). A closed-market equity can be hours old and `stale`; a World
   Bank average can be weeks old and `fresh`.
 
-**`change24h`** is `{ absolute, percent, from, asOf }` or `null`:
-
-- `absolute = price - from`, exact, at the larger scale;
-- `percent = (price - from) / from × 100`, half to even at **4** places,
-  a decimal string without `%`;
-- `from` is the baseline price and `asOf` the baseline's own time.
-
-The baseline is the canonical quote the pair's **own method** would have
-served, fresh, at `τ = asOf - 24 h`, recomputed from stored observations
-(which are never deleted), from **exactly the same feeds** as the current
-quote:
-
-- `latest-observation-v1`: the pair's latest observation at or before `τ`
-  must be of the current quote's feed (source, venue, price type) and at
-  most the feed's freshness window (300 s for market data) before `τ`;
-- `mean-venue-mid-v1`: each feed's latest venue observation with bid and
-  ask at or before `τ`, at most 30 s before `τ`; their mean of mids by the
-  same rule, if those feeds are exactly the current inputs' feeds (a
-  two-venue aggregate is never compared with a single venue, or the other
-  way round). Its `asOf` is the oldest baseline input's time.
-
-`change24h` is `null` when no such baseline exists, when the baseline price
-is zero, and always for equities (session-traded: no previous close is
-presented as a 24-hour change) and for `reference` / `average` prices
-(daily to monthly series; gold-api's reference price included). Crypto
-spot, perpetual marks and Kraken FX qualify once 24 hours of observations
-exist. The baseline's observations are not named in the response; they are
-reproducible from `market_observations`.
+**No 24-hour change on quotes.** An earlier `change24h` field (baseline:
+the quote the same method served 24 h before, from the same feeds) was
+removed in V1.3: it stayed `null` until Undrly had collected 24 h of quotes.
+A market's change is served by `/v1/market` `statistics` instead, with its
+window (`rolling_24h` or `session`) stated.
 
 V1.1 additions (v1 is unreleased, so v1 itself was extended):
 
@@ -171,6 +147,27 @@ V1.1 additions (v1 is unreleased, so v1 itself was extended):
 - `freshness` uses the cadence the observation's feed declares
   (`stale_after_seconds`: 300 for market data, 14 days for EIA, 62 days for
   World Bank). `mean-venue-mid-v1` keeps its 30 s window.
+
+V1.3 additions (market data, [`v1.3-market-data.md`](v1.3-market-data.md)):
+
+- `CandlesV1` (`/v1/candles`), `HistoryV1` (`/v1/history`), `MarketV1`
+  (`/v1/market`), `DerivativesV1` (`/v1/derivatives`); semantics in the
+  schemas' doc comments (`typescript/packages/contracts/src/v1/market-data.ts`).
+- Error code `no_data` (404): the market exists, the endpoint has no data
+  for it.
+
+V1.2 additions (FX, [`v1.2-fx.md`](v1.2-fx.md)):
+
+- Instrument class `fx`: an FX market (`EUR/USD`) between two currency
+  nodes. Its `subject` carries `baseCurrency` and `quoteCurrency`
+  (`{ id, code }`), present only for `fx` and required there; the quote
+  currency equals `unit`. The price is units of the quote currency per one
+  unit of the base currency. `EUR/USD` is served with this subject (V1
+  served the EUR currency as the subject).
+- A feed may count its freshness window on a `weekdays` clock (Saturdays and
+  Sundays, UTC, do not count), for reference rates published on business
+  days. `ageMs` stays literal elapsed time.
+- Universe keys gain `fx-major` and `fx-southeast-asia`.
 
 ## Changing the API contract
 

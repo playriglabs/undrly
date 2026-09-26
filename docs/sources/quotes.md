@@ -21,6 +21,12 @@ that record.
 | `alpaca` | `GET https://data.alpaca.markets/v2/stocks/snapshots?symbols=NVDA&feed=iex` | `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` headers | `NVDA` → NVIDIA common stock in USD | **venue (IEX)** / last (trade) + mid (IEX top of book, with bid/ask) | trade time `t` / quote time `t` (ns, truncated to µs) | Alpaca Market Data agreement; the IEX feed's display and redistribution terms |
 | `undrly-curated` | `data/demo/universe.json` (this repository) | — | declares all feeds above | — | — | Undrly-authored; identifiers in it (ISIN, FIGI, LEI, MIC) were checked against their registries |
 
+V1.2 adds FX sources (Bitstamp, ECB, Bank of Canada, Federal Reserve H.10,
+Bank Indonesia, Bank Negara Malaysia, Central Bank of Myanmar); their
+semantics, cadence and terms are in [`../v1.2-fx.md`](../v1.2-fx.md) §3.
+EUR/USD is now the FX instrument EUR/USD (not the EUR currency), priced by
+Kraken and Bitstamp.
+
 ## Semantics that must not be blurred
 
 - **NVDA is an IEX venue quote**, delivered by Alpaca: `basis = venue`,
