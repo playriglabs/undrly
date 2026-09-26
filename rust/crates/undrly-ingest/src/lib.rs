@@ -45,6 +45,7 @@
 //! reconciliation's job, not ingestion's.
 
 pub mod curated;
+pub mod market_data;
 pub mod quotes;
 pub mod sec;
 

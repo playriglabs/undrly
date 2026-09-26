@@ -19,6 +19,7 @@
 pub mod decimal;
 pub mod id;
 pub mod identifier;
+pub mod market;
 pub mod observation;
 pub mod quote;
 pub mod reference;
@@ -33,6 +34,10 @@ pub use id::{
 pub use identifier::{
     Cik, CurrencyCode, ExternalIdentifier, Figi, IdentifierAssignment, IdentifierError, Isin, Lei,
     ListingSymbol, Mic, Namespace,
+};
+pub use market::{
+    Bar, BarError, BarInterval, CorporateAction, CorporateActionRole, CorporateActionType,
+    EarningsReport, PerpContext, ReportTime, TradingSession,
 };
 pub use observation::{
     BidAsk, MarketObservation, ObservationBasis, ObservationError, PriceSubject, PriceType,

@@ -20,6 +20,7 @@ pub mod identifiers;
 pub mod listing_symbols;
 pub mod mapping;
 pub mod market;
+pub mod market_data;
 pub mod reference;
 pub mod sources;
 #[cfg(feature = "testing")]

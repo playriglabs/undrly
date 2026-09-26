@@ -24,7 +24,21 @@ fn expected_unit(series: &str) -> Option<&'static str> {
 impl QuoteNormalizer for EiaNormalizer {
     type Quote = Response;
 
+    /// The newest period with a value, per series.
     fn normalize_quotes(
+        &self,
+        r: &Response,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedQuote>, NormalizeError> {
+        Ok(crate::newest_per_symbol(
+            crate::HistoryNormalizer::normalize_history(self, r, symbols)?,
+        ))
+    }
+}
+
+impl crate::HistoryNormalizer for EiaNormalizer {
+    /// Every period with a value, per series.
+    fn normalize_history(
         &self,
         r: &Response,
         symbols: &[VenueSymbol],
@@ -37,31 +51,27 @@ impl QuoteNormalizer for EiaNormalizer {
                     value: symbol.as_str().to_owned(),
                 });
             };
-            // Newest period with a value; periods are ISO dates, so the text
-            // order is the date order.
-            let Some(point) = r
+            for point in r
                 .response
                 .data
                 .iter()
                 .filter(|p| p.series == symbol.as_str() && p.value.is_some())
-                .max_by(|a, b| a.period.cmp(&b.period))
-            else {
-                continue;
-            };
-            if point.units.as_deref() != Some(unit) {
-                return Err(invalid(
-                    "units",
-                    format!("{} is in {:?}, expected {unit}", point.series, point.units),
-                ));
+            {
+                if point.units.as_deref() != Some(unit) {
+                    return Err(invalid(
+                        "units",
+                        format!("{} is in {:?}, expected {unit}", point.series, point.units),
+                    ));
+                }
+                let value = &point.value.as_ref().expect("filtered").0;
+                out.push(NormalizedQuote {
+                    symbol: symbol.clone(),
+                    price_type: PriceType::Reference,
+                    price: decimal("value", value)?,
+                    bid_ask: None,
+                    observed_at: Some(timestamp("period", &format!("{}T00:00:00Z", point.period))?),
+                });
             }
-            let value = &point.value.as_ref().expect("filtered").0;
-            out.push(NormalizedQuote {
-                symbol: symbol.clone(),
-                price_type: PriceType::Reference,
-                price: decimal("value", value)?,
-                bid_ask: None,
-                observed_at: Some(timestamp("period", &format!("{}T00:00:00Z", point.period))?),
-            });
         }
         Ok(out)
     }

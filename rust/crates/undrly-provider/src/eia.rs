@@ -26,6 +26,11 @@ pub fn route_of(series: &str) -> Option<&'static str> {
 /// The request URL for `series` (all on `route`), newest first, without the
 /// API key. The key is appended by [`fetch_series`].
 pub fn series_url(route: &str, series: &[&str]) -> String {
+    series_url_days(route, series, 10)
+}
+
+/// [`series_url`] with up to `per_series` values per series (history).
+pub fn series_url_days(route: &str, series: &[&str], per_series: usize) -> String {
     let facets: String = series
         .iter()
         .map(|s| format!("&facets[series][]={s}"))
@@ -33,7 +38,7 @@ pub fn series_url(route: &str, series: &[&str]) -> String {
     format!(
         "{API}/{route}/data/?frequency=daily&data[0]=value{facets}\
          &sort[0][column]=period&sort[0][direction]=desc&length={}",
-        series.len() * 10
+        series.len() * per_series
     )
 }
 
@@ -118,7 +123,19 @@ pub async fn fetch_series(
     route: &str,
     series: &[&str],
 ) -> Result<crate::http::FetchedRecord, crate::http::FetchError> {
-    let key = series_url(route, series);
+    fetch_series_days(client, api_key, route, series, 10).await
+}
+
+/// [`fetch_series`] with up to `per_series` values per series (history).
+#[cfg(feature = "http")]
+pub async fn fetch_series_days(
+    client: &crate::http::HttpClient,
+    api_key: &str,
+    route: &str,
+    series: &[&str],
+    per_series: usize,
+) -> Result<crate::http::FetchedRecord, crate::http::FetchError> {
+    let key = series_url_days(route, series, per_series);
     let url = format!("{key}&api_key={api_key}");
     client.get_secret_query(&url, &key, api_key).await
 }

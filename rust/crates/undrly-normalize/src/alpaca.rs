@@ -88,7 +88,8 @@ pub fn in_regular_session(at: DateTime<Utc>) -> bool {
         && (9 * 60 + 30..16 * 60).contains(&minutes)
 }
 
-fn us_daylight_saving(at: DateTime<Utc>) -> bool {
+/// Whether US daylight saving time is in effect at `at` (the 2007 rule).
+pub fn us_daylight_saving(at: DateTime<Utc>) -> bool {
     // The `n`th Sunday of a month, at a UTC hour.
     let sunday = |month: u32, n: u32, utc_hour: u32| {
         let first = NaiveDate::from_ymd_opt(at.year(), month, 1).expect("valid month");

@@ -78,6 +78,121 @@ impl KrakenProvider {
     }
 }
 
+/// Kraken OHLC (`/0/public/OHLC?pair=…&interval=…`): for one pair,
+/// `[time, open, high, low, close, vwap, volume, count]` per bar (time in
+/// Unix seconds, the bar's start; prices and volume as decimal strings;
+/// volume in the pair's base asset). At most the 720 most recent bars. The
+/// last bar is the one still in progress (`last` is the start of the last
+/// committed bar).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ohlc {
+    pub pair: String,
+    pub bars: Vec<OhlcBar>,
+    /// Start time of the last committed (complete) bar, Unix seconds.
+    pub last: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OhlcBar {
+    pub time: i64,
+    pub open: String,
+    pub high: String,
+    pub low: String,
+    pub close: String,
+    pub volume: String,
+    pub count: u64,
+}
+
+pub const OHLC_URL: &str = "https://api.kraken.com/0/public/OHLC";
+
+impl KrakenProvider {
+    /// OHLC bars of `pair` at `interval_minutes` (60, 1440), since a Unix
+    /// time when given.
+    pub fn ohlc_url(pair: &str, interval_minutes: u32, since: Option<i64>) -> String {
+        match since {
+            Some(s) => format!("{OHLC_URL}?pair={pair}&interval={interval_minutes}&since={s}"),
+            None => format!("{OHLC_URL}?pair={pair}&interval={interval_minutes}"),
+        }
+    }
+}
+
+fn decode_ohlc(payload: &[u8]) -> Result<Ohlc, String> {
+    use serde_json::Value;
+    let v: Value = serde_json::from_slice(payload).map_err(|e| e.to_string())?;
+    if let Some(errors) = v["error"].as_array()
+        && !errors.is_empty()
+    {
+        return Err(format!("Kraken error: {v}", v = v["error"]));
+    }
+    let result = v["result"].as_object().ok_or("no result")?;
+    let last = result
+        .get("last")
+        .and_then(Value::as_i64)
+        .ok_or("no `last`")?;
+    let mut pairs = result.iter().filter(|(k, _)| *k != "last");
+    let (pair, rows) = pairs.next().ok_or("no pair")?;
+    if pairs.next().is_some() {
+        return Err("more than one pair".into());
+    }
+    let text = |x: &Value| {
+        x.as_str()
+            .map(str::to_owned)
+            .ok_or("expected a decimal string")
+    };
+    let bars = rows
+        .as_array()
+        .ok_or("bars are not an array")?
+        .iter()
+        .map(|r| {
+            let r = r
+                .as_array()
+                .filter(|r| r.len() == 8)
+                .ok_or("a bar is not 8 fields")?;
+            Ok(OhlcBar {
+                time: r[0].as_i64().ok_or("time is not an integer")?,
+                open: text(&r[1])?,
+                high: text(&r[2])?,
+                low: text(&r[3])?,
+                close: text(&r[4])?,
+                volume: text(&r[6])?,
+                count: r[7].as_u64().ok_or("count is not an integer")?,
+            })
+        })
+        .collect::<Result<Vec<_>, &str>>()?;
+    Ok(Ohlc {
+        pair: pair.clone(),
+        bars,
+        last,
+    })
+}
+
+impl crate::BarsProvider for KrakenProvider {
+    type Bars = Ohlc;
+
+    fn decode_bars(&self, payload: &[u8]) -> Result<Ohlc, DecodeError> {
+        decode_ohlc(payload).map_err(|reason| DecodeError {
+            source_id: self.source_id.clone(),
+            reason,
+        })
+    }
+}
+
+/// Fetches OHLC bars (feature `http`).
+#[cfg(feature = "http")]
+pub async fn fetch_ohlc(
+    client: &crate::http::HttpClient,
+    pair: &str,
+    interval_minutes: u32,
+    since: Option<i64>,
+) -> Result<crate::http::FetchedRecord, crate::http::FetchError> {
+    client
+        .get(
+            &KrakenProvider::ohlc_url(pair, interval_minutes, since),
+            &[],
+        )
+        .await
+}
+
 /// Fetches the ticker for `pairs` (feature `http`).
 #[cfg(feature = "http")]
 pub async fn fetch_ticker(
@@ -135,6 +250,30 @@ mod tests {
         let keys: Vec<&str> = t.result.keys().map(String::as_str).collect();
         assert_eq!(keys, ["XXBTZUSD", "ZEURZUSD"]);
         assert_eq!(t.result["ZEURZUSD"].c[0], "1.13680");
+    }
+
+    #[test]
+    fn decodes_captured_ohlc_verbatim() {
+        use crate::BarsProvider;
+        let payload = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../tests/fixtures/sources/kraken/ohlc-XXBTZUSD-60.json"),
+        )
+        .unwrap();
+        let o = KrakenProvider::new().decode_bars(&payload).unwrap();
+        assert_eq!(o.pair, "XXBTZUSD");
+        assert_eq!(o.bars.len(), 6);
+        assert_eq!(o.last, 1790391600);
+        assert!(o.bars.last().unwrap().time > o.last, "last bar in progress");
+        assert!(
+            KrakenProvider::new()
+                .decode_bars(br#"{"error":["EGeneral:Invalid arguments"]}"#)
+                .is_err()
+        );
+        assert_eq!(
+            KrakenProvider::ohlc_url("XXBTZUSD", 60, Some(1)),
+            "https://api.kraken.com/0/public/OHLC?pair=XXBTZUSD&interval=60&since=1"
+        );
     }
 
     #[test]

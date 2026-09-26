@@ -2116,6 +2116,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 name = "undrly-collect"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "sqlx",
@@ -2143,6 +2144,7 @@ dependencies = [
 name = "undrly-ingest"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde_json",
  "sha2 0.10.9",
  "sqlx",

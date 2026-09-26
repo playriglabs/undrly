@@ -1,0 +1,78 @@
+{
+  "dataset": "undrly-economic-releases",
+  "version": 1,
+  "description": "Undrly-authored list of major US economic releases whose scheduled dates Undrly collects from FRED (release ids). FRED's 'FOMC Press Release' (101) is a daily data update, not the FOMC meeting schedule, and is not listed.",
+  "region": "US",
+  "releases": [
+    {
+      "key": "10",
+      "name": "Consumer Price Index",
+      "category": "inflation"
+    },
+    {
+      "key": "46",
+      "name": "Producer Price Index",
+      "category": "inflation"
+    },
+    {
+      "key": "54",
+      "name": "Personal Income and Outlays (PCE)",
+      "category": "inflation"
+    },
+    {
+      "key": "50",
+      "name": "Employment Situation",
+      "category": "labor"
+    },
+    {
+      "key": "180",
+      "name": "Unemployment Insurance Weekly Claims",
+      "category": "labor"
+    },
+    {
+      "key": "192",
+      "name": "Job Openings and Labor Turnover Survey",
+      "category": "labor"
+    },
+    {
+      "key": "11",
+      "name": "Employment Cost Index",
+      "category": "labor"
+    },
+    {
+      "key": "47",
+      "name": "Productivity and Costs",
+      "category": "labor"
+    },
+    {
+      "key": "53",
+      "name": "Gross Domestic Product",
+      "category": "growth"
+    },
+    {
+      "key": "9",
+      "name": "Advance Monthly Retail Sales",
+      "category": "consumption"
+    },
+    {
+      "key": "13",
+      "name": "Industrial Production and Capacity Utilization",
+      "category": "production"
+    },
+    {
+      "key": "27",
+      "name": "New Residential Construction",
+      "category": "housing"
+    },
+    {
+      "key": "91",
+      "name": "University of Michigan Surveys of Consumers",
+      "category": "sentiment"
+    },
+    {
+      "key": "51",
+      "name": "U.S. International Trade in Goods and Services",
+      "category": "trade"
+    }
+  ]
+}

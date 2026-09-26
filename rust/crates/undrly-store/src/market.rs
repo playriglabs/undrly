@@ -324,8 +324,8 @@ pub async fn insert_observation_with(
         "SELECT id FROM market_observations
          WHERE subject_id = $1 AND unit_id = $2 AND venue_id IS NOT DISTINCT FROM $3
            AND price_type = $4
-           AND (source_record_id = $5
-                OR (source_id = $6 AND basis = $7 AND observed_at = $8))
+           AND observed_at IS NOT DISTINCT FROM $8
+           AND (source_record_id = $5 OR (source_id = $6 AND basis = $7 AND $8::timestamptz IS NOT NULL))
          ORDER BY id LIMIT 1",
     )
     .bind(subject)

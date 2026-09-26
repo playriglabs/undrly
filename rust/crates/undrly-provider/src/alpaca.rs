@@ -91,6 +91,144 @@ impl QuoteProvider for AlpacaProvider {
     }
 }
 
+pub const BARS_URL: &str = "https://data.alpaca.markets/v2/stocks/bars";
+/// Alpaca's trading-calendar endpoint (US equity market sessions).
+pub const CALENDAR_URL: &str = "https://paper-api.alpaca.markets/v2/calendar";
+
+/// `/v2/stocks/bars` page: IEX-only bars per symbol (trade prices, IEX
+/// volume in shares). `t` is the bar start (RFC 3339); a `1Day` bar starts
+/// at 00:00 New York time. Numbers kept as their exact JSON text.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BarsPage {
+    #[serde(default)]
+    pub bars: std::collections::BTreeMap<String, Vec<StockBar>>,
+    pub next_page_token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct StockBar {
+    pub t: String,
+    pub o: JsonNumber,
+    pub h: JsonNumber,
+    pub l: JsonNumber,
+    pub c: JsonNumber,
+    pub v: JsonNumber,
+    pub n: Option<u64>,
+}
+
+/// One trading date of Alpaca's calendar: New York local times (`HH:MM`
+/// regular session; `HHMM` extended session).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CalendarDay {
+    pub date: String,
+    pub open: String,
+    pub close: String,
+    pub session_open: String,
+    pub session_close: String,
+}
+
+impl AlpacaProvider {
+    /// IEX bars for `symbols` at `timeframe` (`1Hour`, `1Day`) from `start`.
+    pub fn bars_url(symbols: &[&str], timeframe: &str, start: &str, page: Option<&str>) -> String {
+        let mut url = format!(
+            "{BARS_URL}?symbols={}&timeframe={timeframe}&start={start}&limit=10000&feed=iex&sort=asc",
+            symbols.join(",")
+        );
+        if let Some(p) = page {
+            url.push_str("&page_token=");
+            url.push_str(p);
+        }
+        url
+    }
+
+    pub fn calendar_url(start: &str, end: &str) -> String {
+        format!("{CALENDAR_URL}?start={start}&end={end}")
+    }
+}
+
+impl crate::BarsProvider for AlpacaProvider {
+    type Bars = BarsPage;
+
+    fn decode_bars(&self, payload: &[u8]) -> Result<BarsPage, DecodeError> {
+        serde_json::from_slice(payload).map_err(|e| DecodeError {
+            source_id: self.source_id.clone(),
+            reason: e.to_string(),
+        })
+    }
+}
+
+pub fn decode_calendar(payload: &[u8]) -> Result<Vec<CalendarDay>, DecodeError> {
+    serde_json::from_slice(payload).map_err(|e| DecodeError {
+        source_id: SourceId::parse(SOURCE_ID).expect("valid source id"),
+        reason: e.to_string(),
+    })
+}
+
+pub const CORPORATE_ACTIONS_URL: &str = "https://data.alpaca.markets/v1/corporate-actions";
+
+/// `/v1/corporate-actions` page: actions by type (`cash_dividends`,
+/// `forward_splits`, `stock_mergers`, …). Every field the types use is
+/// optional here; which apply is the type's. Numbers keep their JSON text.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CorporateActionsPage {
+    pub corporate_actions: std::collections::BTreeMap<String, Vec<CorporateAction>>,
+    pub next_page_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct CorporateAction {
+    pub id: String,
+    pub symbol: Option<String>,
+    pub ex_date: Option<String>,
+    pub record_date: Option<String>,
+    pub payable_date: Option<String>,
+    pub process_date: Option<String>,
+    pub effective_date: Option<String>,
+    /// Cash per share (cash dividends, cash mergers) or shares per share
+    /// (stock dividends).
+    pub rate: Option<JsonNumber>,
+    pub cash_rate: Option<JsonNumber>,
+    pub old_rate: Option<JsonNumber>,
+    pub new_rate: Option<JsonNumber>,
+    pub special: Option<bool>,
+    pub acquiree_symbol: Option<String>,
+    pub acquiree_rate: Option<JsonNumber>,
+    pub acquirer_symbol: Option<String>,
+    pub acquirer_rate: Option<JsonNumber>,
+    pub source_symbol: Option<String>,
+    pub source_rate: Option<JsonNumber>,
+    pub new_symbol: Option<String>,
+    pub old_symbol: Option<String>,
+}
+
+impl AlpacaProvider {
+    /// Corporate actions touching `symbols` between two dates (inclusive).
+    pub fn corporate_actions_url(
+        symbols: &[&str],
+        start: &str,
+        end: &str,
+        page: Option<&str>,
+    ) -> String {
+        let mut url = format!(
+            "{CORPORATE_ACTIONS_URL}?symbols={}&start={start}&end={end}&limit=1000",
+            symbols.join(",")
+        );
+        if let Some(p) = page {
+            url.push_str("&page_token=");
+            url.push_str(p);
+        }
+        url
+    }
+}
+
+pub fn decode_corporate_actions(payload: &[u8]) -> Result<CorporateActionsPage, DecodeError> {
+    serde_json::from_slice(payload).map_err(|e| DecodeError {
+        source_id: SourceId::parse(SOURCE_ID).expect("valid source id"),
+        reason: e.to_string(),
+    })
+}
+
 /// API key pair for Alpaca market data.
 #[derive(Clone)]
 pub struct Credentials {
@@ -102,6 +240,25 @@ impl std::fmt::Debug for Credentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Credentials { .. }")
     }
+}
+
+/// GET `url` with the credentials as headers (feature `http`): bars pages
+/// and the calendar.
+#[cfg(feature = "http")]
+pub async fn fetch_authenticated(
+    client: &crate::http::HttpClient,
+    credentials: &Credentials,
+    url: &str,
+) -> Result<crate::http::FetchedRecord, crate::http::FetchError> {
+    client
+        .get(
+            url,
+            &[
+                ("APCA-API-KEY-ID", credentials.key_id.as_str()),
+                ("APCA-API-SECRET-KEY", credentials.secret_key.as_str()),
+            ],
+        )
+        .await
 }
 
 /// Fetches IEX snapshots for `symbols` (feature `http`).
@@ -125,6 +282,58 @@ pub async fn fetch_snapshots(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_captured_bars_and_calendar() {
+        use crate::BarsProvider;
+        let read = |f: &str| {
+            std::fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../tests/fixtures/sources/alpaca")
+                    .join(f),
+            )
+            .unwrap()
+        };
+        let b = AlpacaProvider::new()
+            .decode_bars(&read("bars-1Day.json"))
+            .unwrap();
+        assert_eq!(b.bars["AAPL"].len(), 5);
+        assert_eq!(b.bars["AAPL"][0].t, "2026-09-21T04:00:00Z");
+        assert_eq!(b.bars["AAPL"][0].o, JsonNumber("335.49".into()));
+        assert!(b.next_page_token.is_none());
+        let c = decode_calendar(&read("calendar.json")).unwrap();
+        assert!(
+            c.iter()
+                .any(|d| d.date == "2026-11-27" && d.close == "13:00")
+        );
+        assert!(
+            c.iter().all(|d| d.date != "2026-11-26"),
+            "Thanksgiving: no session"
+        );
+    }
+
+    #[test]
+    fn decodes_captured_corporate_actions() {
+        let payload = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../tests/fixtures/sources/alpaca/corporate-actions.json"),
+        )
+        .unwrap();
+        let p = decode_corporate_actions(&payload).unwrap();
+        let nvda: Vec<_> = p.corporate_actions["cash_dividends"]
+            .iter()
+            .filter(|a| a.symbol.as_deref() == Some("NVDA"))
+            .collect();
+        assert!(!nvda.is_empty());
+        assert!(nvda.iter().all(|a| a.rate.is_some() && a.ex_date.is_some()));
+        let split = &p.corporate_actions["forward_splits"][0];
+        assert_eq!(
+            (split.old_rate.clone(), split.new_rate.clone()),
+            (Some(JsonNumber("1".into())), Some(JsonNumber("2".into())))
+        );
+        assert!(p.next_page_token.is_none());
+        assert!(decode_corporate_actions(b"{}").is_err());
+    }
 
     #[test]
     fn decodes_captured_iex_snapshot() {

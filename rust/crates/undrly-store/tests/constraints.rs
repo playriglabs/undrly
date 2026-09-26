@@ -995,7 +995,11 @@ async fn facts_name_a_matching_source_record() {
     .unwrap();
     let expected: Vec<(String, String)> = [
         "aliases",
+        "corporate_actions",
         "currencies",
+        "earnings_events",
+        "economic_calendar_windows",
+        "economic_release_dates",
         "entities",
         "graph_edges",
         "identifier_conflicts",
@@ -1003,9 +1007,13 @@ async fn facts_name_a_matching_source_record() {
         "instruments",
         "listing_symbols",
         "listings",
+        "market_bars",
         "market_observations",
+        "perp_contexts",
         "quote_aggregations",
         "quote_feeds",
+        "trading_calendar_ranges",
+        "trading_sessions",
         "universe_snapshots",
         "venues",
     ]
@@ -1267,20 +1275,30 @@ async fn observation_replays_are_idempotent() {
             ..base
         };
         observe(&db, &o).await.unwrap();
-        // The same record cannot yield the pair twice.
+        // The same record cannot yield the pair twice for one source time...
         assert_rejected(
             observe(
                 &db,
                 &Obs {
                     price: "183.4300",
-                    observed_at: Some("2026-09-24T12:00:05Z"),
                     ..o
                 },
             )
             .await,
             UNIQUE_VIOLATION,
-            Some("market_observations_record_key"),
+            Some("market_observations_replay_key"),
         );
+        // ...but a series payload yields it once per source time (V1.3 history).
+        observe(
+            &db,
+            &Obs {
+                price: "183.4300",
+                observed_at: Some("2026-09-23T12:00:00Z"),
+                ..o
+            },
+        )
+        .await
+        .unwrap();
         // Another response restating the same source time is the same
         // observation.
         assert_rejected(

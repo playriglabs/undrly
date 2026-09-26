@@ -9,6 +9,8 @@
 //! undrly-collect universe fetch     download raw universe files (the only networked step)
 //! undrly-collect universe build     raw files + id map → snapshot + report (pure)
 //! undrly-collect fx build           FX spec + id map → data/reference/fx.json + report (pure)
+//! undrly-collect history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N]
+//!                                   backfill bars, reference series and the equity calendar
 //! ```
 //!
 //! Sources are polled **one request at a time**, each on its own conservative
@@ -30,6 +32,7 @@ use std::time::{Duration, Instant};
 use sqlx::PgConnection;
 use sqlx::postgres::PgPoolOptions;
 use undrly_core::{DisplayName, Redistribution, Source, SourceId, Timestamp, VenueSymbol};
+use undrly_ingest::market_data::ingest_perp_contexts;
 use undrly_ingest::quotes::{QuoteIngestReport, ingest_quotes_for, refresh_canonical_quotes};
 use undrly_ingest::{IngestError, RawRecord, store_raw_record};
 use undrly_normalize::alpaca::AlpacaNormalizer;
@@ -75,7 +78,7 @@ const UNIVERSE_DIR: &str = "data/universe";
 
 /// Every source. Redistribution starts `unknown` (treated as restricted)
 /// until a human reviews each source's terms.
-const SOURCES: [(&str, &str); 20] = [
+const SOURCES: [(&str, &str); 22] = [
     ("undrly-curated", "Undrly curated reference data"),
     (
         "undrly-universe",
@@ -105,6 +108,11 @@ const SOURCES: [(&str, &str); 20] = [
     ),
     ("bnm", "Bank Negara Malaysia exchange rates (Open API)"),
     ("cbm", "Central Bank of Myanmar reference exchange rates"),
+    (
+        "fred",
+        "FRED (Federal Reserve Bank of St. Louis) release calendar",
+    ),
+    ("finnhub", "Finnhub earnings calendar"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -330,7 +338,7 @@ async fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: undrly-collect seed [curated.json] | run [--once] | universe fetch | universe build | fx build";
+const USAGE: &str = "usage: undrly-collect seed [curated.json] | run [--once] | universe fetch | universe build | fx build | history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N]";
 
 async fn run(args: &[String]) -> Result<ExitCode, Error> {
     let command: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -338,7 +346,7 @@ async fn run(args: &[String]) -> Result<ExitCode, Error> {
         ["universe", "fetch"] => return universe_fetch(Path::new(UNIVERSE_DIR)).await,
         ["universe", "build"] => return universe_build(Path::new(UNIVERSE_DIR)),
         ["fx", "build"] => return fx_build(),
-        ["seed", ..] | ["run", ..] => {}
+        ["seed", ..] | ["run", ..] | ["history", ..] => {}
         _ => return Err(Error::Usage(USAGE.into())),
     }
     let url = std::env::var("DATABASE_URL")
@@ -360,6 +368,7 @@ async fn run(args: &[String]) -> Result<ExitCode, Error> {
             Ok(ExitCode::SUCCESS)
         }
         ["run", rest @ ..] => collect(&mut conn, rest.contains(&"--once")).await,
+        ["history", rest @ ..] => history::run(&mut conn, rest).await,
         _ => Err(Error::Usage(USAGE.into())),
     }
 }
@@ -669,6 +678,8 @@ fn universe_build(root: &Path) -> Result<ExitCode, Error> {
     Ok(ExitCode::SUCCESS)
 }
 
+mod history;
+
 // ---------------------------------------------------------------- run
 
 async fn collect(conn: &mut PgConnection, once: bool) -> Result<ExitCode, Error> {
@@ -942,6 +953,10 @@ async fn poll_batch(
         .iter()
         .filter_map(|s| VenueSymbol::new(s).ok())
         .collect();
+    if feed == Feed::Hyperliquid {
+        // The same response carries each perpetual's context (V1.3).
+        ingest_perp_contexts(conn, &raw, &requested).await?;
+    }
     let requested = Some(requested.as_slice());
     let report: QuoteIngestReport = match feed {
         Feed::Kraken => {

@@ -40,7 +40,9 @@ pub mod curated;
 pub mod ecb;
 pub mod eia;
 pub mod fed_h10;
+pub mod finnhub;
 pub mod fixture;
+pub mod fred;
 pub mod gold_api;
 #[cfg(feature = "http")]
 pub mod http;
@@ -140,6 +142,14 @@ pub trait QuoteProvider: Provider {
     type Quote;
 
     fn decode_quote(&self, payload: &[u8]) -> Result<Self::Quote, DecodeError>;
+}
+
+/// Capability: decode historical bar payloads (V1.3).
+pub trait BarsProvider: Provider {
+    /// Provider-native bars, verbatim decimal text.
+    type Bars;
+
+    fn decode_bars(&self, payload: &[u8]) -> Result<Self::Bars, DecodeError>;
 }
 
 /// Capability: decode reference-data payloads (issuers, securities,

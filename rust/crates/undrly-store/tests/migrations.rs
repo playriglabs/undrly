@@ -8,9 +8,9 @@ use std::path::Path;
 
 use serde_json::Value;
 use undrly_core::{
-    AggregationMethod, Category, Cik, CurrencyCode, EntityKind, Figi, FreshnessClock,
-    InstrumentClass, Isin, Lei, Mic, Namespace, ObservationBasis, PriceType, RelationshipType,
-    UniverseKey,
+    AggregationMethod, BarInterval, Category, Cik, CorporateActionRole, CorporateActionType,
+    CurrencyCode, EntityKind, Figi, FreshnessClock, InstrumentClass, Isin, Lei, Mic, Namespace,
+    ObservationBasis, PriceType, RelationshipType, ReportTime, UniverseKey,
 };
 
 fn fixture(name: &str) -> Value {
@@ -36,7 +36,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 14);
+    assert_eq!(applied.len(), 17);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -73,6 +73,14 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         "quote_aggregations",
         "universe_snapshots",
         "universe_members",
+        "market_bars",
+        "perp_contexts",
+        "trading_sessions",
+        "trading_calendar_ranges",
+        "corporate_actions",
+        "economic_calendar_windows",
+        "economic_release_dates",
+        "earnings_events",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -276,6 +284,30 @@ async fn check_constraint_vocabularies_equal_core() {
             "quote_feeds",
             "quote_feeds_freshness_clock_check",
             FreshnessClock::ALL.map(FreshnessClock::as_str).to_vec(),
+        ),
+        (
+            "corporate_actions",
+            "corporate_actions_action_type_check",
+            CorporateActionType::ALL
+                .map(CorporateActionType::as_str)
+                .to_vec(),
+        ),
+        (
+            "corporate_actions",
+            "corporate_actions_role_check",
+            CorporateActionRole::ALL
+                .map(CorporateActionRole::as_str)
+                .to_vec(),
+        ),
+        (
+            "earnings_events",
+            "earnings_events_report_time_check",
+            ReportTime::ALL.map(ReportTime::as_str).to_vec(),
+        ),
+        (
+            "market_bars",
+            "market_bars_bar_interval_check",
+            BarInterval::ALL.map(BarInterval::as_str).to_vec(),
         ),
         (
             "universe_snapshots",

@@ -33,7 +33,16 @@ pub struct AssetContext {
     pub mark_px: Option<String>,
     pub mid_px: Option<String>,
     pub oracle_px: Option<String>,
+    /// Hourly funding rate, a fraction (the venue pays funding every hour).
     pub funding: Option<String>,
+    /// Open interest in the market's base units (contracts).
+    pub open_interest: Option<String>,
+    /// The price 24 hours ago.
+    pub prev_day_px: Option<String>,
+    /// Trailing 24-hour notional volume (in the settlement unit, USDC).
+    pub day_ntl_vlm: Option<String>,
+    /// Trailing 24-hour volume in base units (contracts).
+    pub day_base_vlm: Option<String>,
 }
 
 /// `(meta, contexts)`, with one context per universe entry.
@@ -98,6 +107,58 @@ impl QuoteProvider for HyperliquidProvider {
     }
 }
 
+/// One candle of `candleSnapshot`: trade prices, `t` start and `T` end
+/// (inclusive, ms), `v` volume in base units (contracts), `n` trades.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Candle {
+    pub t: i64,
+    #[serde(rename = "T")]
+    pub end: i64,
+    pub s: String,
+    pub i: String,
+    pub o: String,
+    pub h: String,
+    pub l: String,
+    pub c: String,
+    pub v: String,
+    pub n: u64,
+}
+
+/// `candleSnapshot` request body (the record key names it).
+pub fn candle_snapshot_body(coin: &str, interval: &str, start_ms: i64, end_ms: i64) -> String {
+    format!(
+        r#"{{"type":"candleSnapshot","req":{{"coin":"{coin}","interval":"{interval}","startTime":{start_ms},"endTime":{end_ms}}}}}"#
+    )
+}
+
+impl crate::BarsProvider for HyperliquidProvider {
+    type Bars = Vec<Candle>;
+
+    fn decode_bars(&self, payload: &[u8]) -> Result<Vec<Candle>, DecodeError> {
+        serde_json::from_slice(payload).map_err(|e| DecodeError {
+            source_id: self.source_id.clone(),
+            reason: e.to_string(),
+        })
+    }
+}
+
+/// Fetches candles of one coin (feature `http`).
+#[cfg(feature = "http")]
+pub async fn fetch_candles(
+    client: &crate::http::HttpClient,
+    coin: &str,
+    interval: &str,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<crate::http::FetchedRecord, crate::http::FetchError> {
+    client
+        .post_json(
+            INFO_URL,
+            &candle_snapshot_body(coin, interval, start_ms, end_ms),
+        )
+        .await
+}
+
 /// Fetches all perpetual contexts (feature `http`).
 #[cfg(feature = "http")]
 pub async fn fetch_meta_and_asset_ctxs(
@@ -123,6 +184,35 @@ mod tests {
         assert_eq!(d.universe[0].name, "BTC");
         assert!(d.context("BTC").unwrap().mark_px.is_some());
         assert!(d.context("NOPE").is_none());
+    }
+
+    #[test]
+    fn decodes_candles_and_contexts() {
+        use crate::BarsProvider;
+        let read = |f: &str| {
+            std::fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../tests/fixtures/sources/hyperliquid")
+                    .join(f),
+            )
+            .unwrap()
+        };
+        let c = HyperliquidProvider::new()
+            .decode_bars(&read("candles-BTC-1h.json"))
+            .unwrap();
+        assert_eq!(c.len(), 5);
+        assert_eq!((c[0].s.as_str(), c[0].i.as_str()), ("BTC", "1h"));
+        assert_eq!(c[0].end - c[0].t, 3_599_999);
+        let ctx = HyperliquidProvider::new()
+            .decode_quote(&read("metaAndAssetCtxs.json"))
+            .unwrap();
+        let btc = ctx.context("BTC").unwrap();
+        assert_eq!(btc.open_interest.as_deref(), Some("39202.60446"));
+        assert_eq!(btc.funding.as_deref(), Some("0.0000125"));
+        assert_eq!(
+            candle_snapshot_body("BTC", "1h", 1, 2),
+            r#"{"type":"candleSnapshot","req":{"coin":"BTC","interval":"1h","startTime":1,"endTime":2}}"#
+        );
     }
 
     #[test]

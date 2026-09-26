@@ -69,7 +69,21 @@ fn period_end(period: &str) -> Result<Timestamp, NormalizeError> {
 impl QuoteNormalizer for WorldBankNormalizer {
     type Quote = MonthlyPrices;
 
+    /// The newest month with a value, per series.
     fn normalize_quotes(
+        &self,
+        p: &MonthlyPrices,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedQuote>, NormalizeError> {
+        Ok(crate::newest_per_symbol(
+            crate::HistoryNormalizer::normalize_history(self, p, symbols)?,
+        ))
+    }
+}
+
+impl crate::HistoryNormalizer for WorldBankNormalizer {
+    /// Every month with a value, per series.
+    fn normalize_history(
         &self,
         p: &MonthlyPrices,
         symbols: &[VenueSymbol],
@@ -92,24 +106,17 @@ impl QuoteNormalizer for WorldBankNormalizer {
                     format!("{name} is in {stated}, expected {unit}"),
                 ));
             }
-            let Some((month, value)) =
-                p.months
-                    .iter()
-                    .rev()
-                    .find_map(|m| match m.values.get(column) {
-                        Some(Cell::Number(v)) => Some((m, v)),
-                        _ => None,
-                    })
-            else {
-                continue;
-            };
-            out.push(NormalizedQuote {
-                symbol: symbol.clone(),
-                price_type: PriceType::Average,
-                price: stored_double(value)?,
-                bid_ask: None,
-                observed_at: Some(period_end(&month.period)?),
-            });
+            for m in &p.months {
+                if let Some(Cell::Number(v)) = m.values.get(column) {
+                    out.push(NormalizedQuote {
+                        symbol: symbol.clone(),
+                        price_type: PriceType::Average,
+                        price: stored_double(v)?,
+                        bid_ask: None,
+                        observed_at: Some(period_end(&m.period)?),
+                    });
+                }
+            }
         }
         Ok(out)
     }
