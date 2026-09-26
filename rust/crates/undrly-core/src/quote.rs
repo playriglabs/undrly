@@ -20,7 +20,9 @@
 use chrono::TimeDelta;
 use rust_decimal::{Decimal, RoundingStrategy};
 
-use crate::observation::{MarketObservation, ObservationBasis, PriceSubject, PriceType, PriceUnit};
+use crate::observation::{
+    BidAsk, MarketObservation, ObservationBasis, PriceSubject, PriceType, PriceUnit,
+};
 use crate::reference::VenueSymbol;
 use crate::source::{Provenance, SourceId};
 use crate::time::Timestamp;
@@ -73,12 +75,15 @@ pub enum AggregationMethod {
     ///    old at compute time (effective time: source time, else receipt time);
     /// 2. `mid_i = (bid_i + ask_i) / 2`, exact, at scale
     ///    `max(scale(bid_i), scale(ask_i)) + 1`;
-    /// 3. `price = Σ mid_i / n`, at scale `max(scale(mid_i)) + 1`, rounded half
-    ///    to even (exact for n ≤ 2).
+    /// 3. `price = Σ mid_i / n`, `bid = Σ bid_i / n`, `ask = Σ ask_i / n`, all
+    ///    at one scale `max(scale(mid_i)) + 1`, rounded half to even (exact
+    ///    for n ≤ 2). One scale keeps `bid ≤ price ≤ ask`.
     ///
-    /// One eligible observation yields its mid (`eligible = 1`); zero yields
-    /// no canonical quote. The result is `basis = aggregated`, price type
-    /// `mid`, as of the oldest input's effective time.
+    /// The bid and ask are the *means* of the same inputs' bids and asks, not
+    /// a best bid/offer. One eligible observation yields its own mid, bid and
+    /// ask (`eligible = 1`); zero yields no canonical quote. The result is
+    /// `basis = aggregated`, price type `mid`, as of the oldest input's
+    /// effective time.
     MeanVenueMidV1,
 }
 
@@ -114,6 +119,9 @@ pub struct Aggregate<K> {
     pub price: Decimal,
     pub price_type: PriceType,
     pub basis: ObservationBasis,
+    /// The single input's bid and ask (`latest-observation-v1`), or the mean
+    /// bid and mean ask of the inputs (`mean-venue-mid-v1`).
+    pub bid_ask: Option<BidAsk>,
     /// The oldest effective time among the inputs.
     pub as_of: Timestamp,
     /// Exactly the observations used, each with the price it contributed
@@ -138,13 +146,14 @@ pub fn aggregate<K: Ord + Clone>(
                 price: o.price(),
                 price_type: o.price_type(),
                 basis: o.basis(),
+                bid_ask: o.bid_ask(),
                 as_of: o.effective_at(),
                 inputs: vec![(key.clone(), o.price())],
             })
         }
         AggregationMethod::MeanVenueMidV1 => {
             let max_age = TimeDelta::seconds(MEAN_VENUE_MID_MAX_AGE_SECONDS);
-            let mut inputs: Vec<(K, Decimal, Timestamp)> = candidates
+            let mut inputs: Vec<MeanInput<K>> = candidates
                 .iter()
                 .filter(|(_, o)| matches!(o.basis(), ObservationBasis::Venue(_)))
                 .filter(|(_, o)| {
@@ -152,29 +161,50 @@ pub fn aggregate<K: Ord + Clone>(
                 })
                 .filter_map(|(k, o)| {
                     let ba = o.bid_ask()?;
-                    Some((k.clone(), mid_price(ba.bid, ba.ask)?, o.effective_at()))
+                    Some(MeanInput {
+                        key: k.clone(),
+                        mid: mid_price(ba.bid, ba.ask)?,
+                        bid_ask: ba,
+                        at: o.effective_at(),
+                    })
                 })
                 .collect();
             if inputs.is_empty() {
                 return None;
             }
-            inputs.sort_by(|a, b| a.0.cmp(&b.0));
-            let scale = inputs.iter().map(|(_, m, _)| m.scale()).max()? + 1;
-            let sum = inputs
-                .iter()
-                .try_fold(Decimal::ZERO, |acc, (_, m, _)| acc.checked_add(*m))?;
+            inputs.sort_by(|a, b| a.key.cmp(&b.key));
+            let scale = inputs.iter().map(|i| i.mid.scale()).max()? + 1;
             let n = Decimal::from(inputs.len());
-            let price = rescaled(sum.checked_div(n)?, scale);
+            let mean = |value: fn(&MeanInput<K>) -> Decimal| -> Option<Decimal> {
+                let sum = inputs
+                    .iter()
+                    .try_fold(Decimal::ZERO, |acc, i| acc.checked_add(value(i)))?;
+                Some(rescaled(sum.checked_div(n)?, scale))
+            };
+            let price = mean(|i| i.mid)?;
+            let bid_ask = BidAsk {
+                bid: mean(|i| i.bid_ask.bid)?,
+                ask: mean(|i| i.bid_ask.ask)?,
+            };
             Some(Aggregate {
                 method,
                 price,
                 price_type: PriceType::Mid,
                 basis: ObservationBasis::Aggregated,
-                as_of: inputs.iter().map(|(_, _, t)| *t).min()?,
-                inputs: inputs.into_iter().map(|(k, m, _)| (k, m)).collect(),
+                bid_ask: Some(bid_ask),
+                as_of: inputs.iter().map(|i| i.at).min()?,
+                inputs: inputs.into_iter().map(|i| (i.key, i.mid)).collect(),
             })
         }
     }
+}
+
+/// One eligible input of [`AggregationMethod::MeanVenueMidV1`].
+struct MeanInput<K> {
+    key: K,
+    mid: Decimal,
+    bid_ask: BidAsk,
+    at: Timestamp,
 }
 
 /// `(bid + ask) / 2` at scale `max(scale(bid), scale(ask)) + 1`: exact, the
@@ -282,6 +312,11 @@ mod tests {
             let a = aggregate(AggregationMethod::MeanVenueMidV1, &order, now).unwrap();
             // mids 84145.950000 and 83984.365; mean at scale 7.
             assert_eq!(a.price.to_string(), "84065.1575000");
+            // Mean bid and mean ask of the same two inputs, same scale.
+            assert_eq!(
+                bid_ask_of(&a),
+                ("84065.1300000".to_owned(), "84065.1850000".to_owned())
+            );
             assert_eq!(a.basis, ObservationBasis::Aggregated);
             assert_eq!(a.price_type, PriceType::Mid);
             assert_eq!(a.as_of, at("2026-09-25T00:00:05Z"), "oldest input");
@@ -292,6 +327,89 @@ mod tests {
                 vec![(1, "84145.950000".to_owned()), (2, "83984.365".to_owned())]
             );
         }
+    }
+
+    fn bid_ask_of<K>(a: &Aggregate<K>) -> (String, String) {
+        let ba = a.bid_ask.expect("mean-venue-mid-v1 states bid and ask");
+        (ba.bid.to_string(), ba.ask.to_string())
+    }
+
+    #[test]
+    fn mean_venue_mid_bid_and_ask_are_means_of_input_bids_and_asks() {
+        // SUI/USD: Coinbase 1.1819/1.1821 (mid 1.1820), Kraken 1.1803/1.1805
+        // (mid 1.1804).
+        let coinbase = (
+            1,
+            venue_obs(
+                "1.1819",
+                "1.1821",
+                Some("2026-09-25T00:00:05Z"),
+                "2026-09-25T00:00:06Z",
+            ),
+        );
+        let kraken = (
+            2,
+            venue_obs("1.1803", "1.1805", None, "2026-09-25T00:00:07Z"),
+        );
+        let now = at("2026-09-25T00:00:20Z");
+        let mut seen = Vec::new();
+        for order in [
+            vec![coinbase.clone(), kraken.clone()],
+            vec![kraken.clone(), coinbase.clone()],
+        ] {
+            let a = aggregate(AggregationMethod::MeanVenueMidV1, &order, now).unwrap();
+            // price = (1.1820 + 1.1804) / 2; bid = (1.1819 + 1.1803) / 2;
+            // ask = (1.1821 + 1.1805) / 2; one scale (mid scale 5, plus 1).
+            assert_eq!(a.price.to_string(), "1.181200");
+            assert_eq!(
+                bid_ask_of(&a),
+                ("1.181100".to_owned(), "1.181300".to_owned())
+            );
+            let ba = a.bid_ask.unwrap();
+            assert!(ba.bid <= a.price && a.price <= ba.ask);
+            // Not a best bid/offer: max(bid) would be 1.1819, min(ask) 1.1805.
+            assert_ne!(ba.bid, parse_canonical("1.1819").unwrap());
+            assert_eq!(a.basis, ObservationBasis::Aggregated);
+            assert_eq!(a.price_type, PriceType::Mid);
+            assert_eq!(
+                a.inputs
+                    .iter()
+                    .map(|(k, m)| (*k, m.to_string()))
+                    .collect::<Vec<_>>(),
+                vec![(1, "1.18200".to_owned()), (2, "1.18040".to_owned())]
+            );
+            seen.push(a);
+        }
+        assert_eq!(seen[0], seen[1], "input order changes nothing");
+    }
+
+    #[test]
+    fn mean_venue_mid_bid_price_ask_stay_ordered_when_rounded() {
+        // Three inputs: the means are not exact, so all three are rounded at
+        // one scale; bid <= price <= ask must still hold, in any order.
+        let a = (1, venue_obs("0.01", "0.02", None, "2026-09-25T00:00:01Z"));
+        let b = (2, venue_obs("0.01", "0.01", None, "2026-09-25T00:00:02Z"));
+        let c = (3, venue_obs("0.02", "0.02", None, "2026-09-25T00:00:03Z"));
+        let now = at("2026-09-25T00:00:10Z");
+        let mut seen = Vec::new();
+        for order in [
+            vec![a.clone(), b.clone(), c.clone()],
+            vec![c.clone(), a.clone(), b.clone()],
+            vec![b.clone(), c.clone(), a.clone()],
+        ] {
+            let agg = aggregate(AggregationMethod::MeanVenueMidV1, &order, now).unwrap();
+            let ba = agg.bid_ask.unwrap();
+            assert!(ba.bid <= agg.price && agg.price <= ba.ask, "{agg:?}");
+            seen.push(agg);
+        }
+        assert!(seen.windows(2).all(|w| w[0] == w[1]));
+        // mids 0.015, 0.010, 0.020: mean 0.015 at scale 4; bids 0.0133…,
+        // asks 0.0166… rounded half to even at the same scale.
+        assert_eq!(seen[0].price.to_string(), "0.0150");
+        assert_eq!(
+            bid_ask_of(&seen[0]),
+            ("0.0133".to_owned(), "0.0167".to_owned())
+        );
     }
 
     #[test]
@@ -324,6 +442,22 @@ mod tests {
         );
         assert_eq!(one.price.to_string(), "100.100");
         assert_eq!(one.basis, ObservationBasis::Aggregated);
+        // The stale Coinbase quote contributes nothing: bid and ask are
+        // Kraken's own (100.0 / 100.2), at the aggregate's scale.
+        let ba = one.bid_ask.unwrap();
+        assert_eq!(ba.bid, parse_canonical("100.0").unwrap());
+        assert_eq!(ba.ask, parse_canonical("100.2").unwrap());
+        assert_eq!(
+            bid_ask_of(&one),
+            ("100.000".to_owned(), "100.200".to_owned())
+        );
+        // Both fresh: bid and ask are the means of both.
+        let two = aggregate(method, &both, at("2026-09-25T00:00:30Z")).unwrap();
+        assert_eq!(
+            bid_ask_of(&two),
+            ("99.950".to_owned(), "100.150".to_owned())
+        );
+        assert_eq!(two.price.to_string(), "100.050");
         // At 00:01:11 both are stale: no canonical quote.
         assert!(aggregate(method, &both, at("2026-09-25T00:01:11Z")).is_none());
     }

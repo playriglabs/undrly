@@ -16,7 +16,7 @@
   "bid": "84076.1750000",
   "ask": "84076.2300000",
   "spread": "0.0550000",
-  "spreadBps": "0.0065",
+  "spreadBps": "0.0066",
   "basis": "aggregated",
   "receivedAt": "2026-09-25T07:28:07.100Z",
   "asOf": "2026-09-25T07:28:06.386017Z",
@@ -32,8 +32,5 @@
     "method": "mean-venue-mid-v1",
     "eligibleObservations": 2,
     "computedAt": "2026-09-25T07:28:10Z"
-  },
-  "source": {
-    "id": "kraken"
   }
 }

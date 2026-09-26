@@ -15,6 +15,8 @@
   "price": 1.1368,
   "bid": "1.13679",
   "ask": "1.13680",
+  "spread": "0.00001",
+  "spreadBps": "0.0880",
   "basis": "venue",
   "venue": {
     "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
@@ -22,11 +24,10 @@
   },
   "observedAt": null,
   "receivedAt": "2026-09-25T03:52:18.500Z",
-  "source": {
-    "id": "kraken"
-  },
   "asOf": "2026-09-25T03:52:18.500Z",
+  "ageMs": 1500,
   "freshness": "stale",
+  "change24h": null,
   "aggregation": {
     "method": "latest-observation-v1",
     "eligibleObservations": 1,

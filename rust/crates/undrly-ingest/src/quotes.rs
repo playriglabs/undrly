@@ -161,6 +161,7 @@ pub async fn refresh_canonical_quotes(
                     price: a.price,
                     price_type: a.price_type,
                     basis: a.basis,
+                    bid_ask: a.bid_ask,
                     as_of: a.as_of,
                     computed_at,
                     inputs: a.inputs,

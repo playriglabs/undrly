@@ -316,6 +316,15 @@
       "priceType": "last"
     },
     {
+      "source": "alpaca",
+      "symbol": "NVDA",
+      "subject": "nvda",
+      "unit": "usd",
+      "basis": "venue",
+      "venue": "iex",
+      "priceType": "mid"
+    },
+    {
       "source": "coinbase",
       "symbol": "BTC-USD",
       "subject": "btc",

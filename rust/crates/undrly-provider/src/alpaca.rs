@@ -22,6 +22,7 @@ pub const IEX_EXCHANGE_CODE: &str = "V";
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub latest_trade: Option<Trade>,
+    pub latest_quote: Option<Quote>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -32,6 +33,20 @@ pub struct Trade {
     pub x: String,
     /// Price.
     pub p: JsonNumber,
+}
+
+/// IEX's top of book. A side with no IEX interest has price `0` and a
+/// blank exchange code.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Quote {
+    /// Quote time, RFC 3339 with nanoseconds.
+    pub t: String,
+    /// Bid price and exchange code.
+    pub bp: JsonNumber,
+    pub bx: String,
+    /// Ask price and exchange code.
+    pub ap: JsonNumber,
+    pub ax: String,
 }
 
 /// Snapshots keyed by symbol.

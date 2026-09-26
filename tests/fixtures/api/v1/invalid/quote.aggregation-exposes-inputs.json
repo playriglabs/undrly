@@ -31,9 +31,18 @@
   "aggregation": {
     "method": "mean-venue-mid-v1",
     "eligibleObservations": 2,
-    "computedAt": "2026-09-25T07:28:10Z"
-  },
-  "source": {
-    "id": "kraken"
+    "computedAt": "2026-09-25T07:28:10Z",
+    "inputs": [
+      {
+        "observationId": "42",
+        "sourceId": "kraken",
+        "venue": {
+          "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
+          "name": "Kraken"
+        },
+        "price": "84145.950000",
+        "sourceRecordId": "13"
+      }
+    ]
   }
 }

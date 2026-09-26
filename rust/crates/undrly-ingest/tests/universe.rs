@@ -333,7 +333,8 @@ async fn records_cover_only_their_requested_symbols_and_a_second_pair_is_average
     .await
     .unwrap();
     assert_eq!(alpaca.observations.len(), 1);
-    assert!(alpaca.missing.is_empty());
+    // Only NVDA's own mid feed: the recorded IEX book is one-sided (no mid).
+    assert_eq!(alpaca.missing, nvda.to_vec());
 
     // Kraken: last 1.5 with bid 1.0 / ask 2.0 → mid 1.50; Coinbase mid 1.30.
     let ticker = br#"{"error":[],"result":{"EXCUSD":{"a":["2.0","1","1.000"],"b":["1.0","1","1.000"],"c":["1.5","0.1"]}}}"#;
@@ -373,4 +374,12 @@ async fn records_cover_only_their_requested_symbols_and_a_second_pair_is_average
     assert_eq!(q.basis, ObservationBasis::Aggregated);
     assert_eq!(q.inputs.len(), 2);
     assert_eq!(q.price.to_string(), "1.400");
+    // Mean bid (1.0 + 1.2) / 2 and mean ask (2.0 + 1.4) / 2, never null.
+    let ba = q
+        .bid_ask
+        .expect("a universe multi-source pair states bid and ask");
+    assert_eq!(
+        (ba.bid.to_string(), ba.ask.to_string()),
+        ("1.100".to_owned(), "1.700".to_owned())
+    );
 }

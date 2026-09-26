@@ -143,9 +143,10 @@ describe.skipIf(url === undefined)("API with a database", () => {
     );
     await sql`INSERT INTO canonical_quotes
       (subject_id, subject_category, unit_id, unit_category, method, price, price_type, basis,
-       as_of, eligible_count, computed_at)
+       as_of, eligible_count, computed_at, bid, ask)
       VALUES (${btc}, 'instrument', ${usd}, 'currency', 'mean-venue-mid-v1', 84076.2025000, 'mid',
-              'aggregated', '2026-09-25T07:28:06.386017Z', 2, '2026-09-25T07:28:10Z')`;
+              'aggregated', '2026-09-25T07:28:06.386017Z', 2, '2026-09-25T07:28:10Z',
+              84076.1750000, 84076.2300000)`;
     await sql`INSERT INTO canonical_quote_inputs (subject_id, unit_id, observation_id, input_price)
       VALUES (${btc}, ${usd}, ${ids.kraken}, 84145.950000), (${btc}, ${usd}, ${ids.coinbase}, 84006.455)`;
 
@@ -195,12 +196,13 @@ describe.skipIf(url === undefined)("API with a database", () => {
     const res = await app("2026-09-25T07:28:10Z").request("/v1/quote/BTC/USD");
     expect(res.status).toBe(200);
     const q = v1.QuoteV1.parse(await res.json());
+    for (const key of ["venue", "source", "observedAt"]) expect(q).not.toHaveProperty(key);
     expect(q).toMatchObject({
       basis: "aggregated",
-      venue: null,
-      source: null,
       priceType: "mid",
       price: "84076.2025000",
+      bid: "84076.1750000",
+      ask: "84076.2300000",
       asOf: "2026-09-25T07:28:06.386017Z",
       receivedAt: "2026-09-25T07:28:07.100Z",
       freshness: "fresh",
@@ -208,12 +210,64 @@ describe.skipIf(url === undefined)("API with a database", () => {
     expect(q.aggregation.method).toBe("mean-venue-mid-v1");
     expect(q.aggregation.eligibleObservations).toBe(2);
     expect(q.aggregation.computedAt).toBe("2026-09-25T07:28:10Z");
-    expect(
-      q.aggregation.inputs.map((i) => [i.observationId, i.sourceId, i.price, i.sourceRecordId]),
-    ).toStrictEqual([
+  });
+
+  it("/v1/quote exposes no per-input venue, source, observation or record", async () => {
+    const res = await app("2026-09-25T07:28:10Z").request("/v1/quote/BTC/USD");
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(Object.keys(body["aggregation"] as object).sort()).toStrictEqual([
+      "computedAt",
+      "eligibleObservations",
+      "method",
+    ]);
+    const text = JSON.stringify(body);
+    for (const leak of [
+      "Kraken",
+      "Coinbase",
+      "kraken",
+      "coinbase",
+      ids.kraken,
+      ids.coinbase,
+      ids.krakenRecord,
+      ids.coinbaseRecord,
+    ]) {
+      expect(text).not.toContain(`"${leak}"`);
+    }
+  });
+
+  it("the aggregate's inputs stay stored with full provenance", async () => {
+    const rows = await sql<
+      { observation: string; input_price: string; source_id: string; record: string }[]
+    >`SELECT i.observation_id::text AS observation, i.input_price::text, o.source_id,
+             o.source_record_id::text AS record
+      FROM canonical_quote_inputs i JOIN market_observations o ON o.id = i.observation_id
+      WHERE i.subject_id = ${uuid("btc")} AND i.unit_id = ${uuid("usd")} ORDER BY o.id`;
+    expect(rows.map((r) => [r.observation, r.source_id, r.input_price, r.record])).toStrictEqual([
       [ids.kraken, "kraken", "84145.950000", ids.krakenRecord],
       [ids.coinbase, "coinbase", "84006.455", ids.coinbaseRecord],
     ]);
+  });
+
+  it("an aggregate's bid and ask are the means of its inputs' own bids and asks", async () => {
+    const at = app("2026-09-25T07:28:10Z");
+    const q = v1.QuoteV1.parse(await (await at.request("/v1/quote/BTC/USD")).json());
+    const obs = v1.ObservationsV1.parse(await (await at.request("/v1/quotes/BTC/USD")).json());
+    const stored = await sql<{ id: string }[]>`
+      SELECT observation_id::text AS id FROM canonical_quote_inputs
+      WHERE subject_id = ${uuid("btc")} AND unit_id = ${uuid("usd")}`;
+    const used = obs.observations.filter((o) => stored.some((i) => i.id === o.observationId));
+    expect(used).toHaveLength(2);
+    // Each venue observation keeps its own bid and ask.
+    const own = used.map((o) => [o.source.id, o.bid, o.ask]).sort();
+    expect(own).toStrictEqual([
+      ["coinbase", "84006.45", "84006.46"],
+      ["kraken", "84145.90000", "84146.00000"],
+    ]);
+    // (84145.90000 + 84006.45) / 2 and (84146.00000 + 84006.46) / 2.
+    expect(v1.decimalCompare(q.bid ?? "", "84076.175")).toBe(0);
+    expect(v1.decimalCompare(q.ask ?? "", "84076.23")).toBe(0);
+    expect(v1.decimalCompare(q.bid ?? "", q.price)).toBeLessThanOrEqual(0);
+    expect(v1.decimalCompare(q.price, q.ask ?? "")).toBeLessThanOrEqual(0);
   });
 
   it("an aggregate older than its window is not served; observations stay visible", async () => {

@@ -46,6 +46,7 @@ describe("API v1 valid documents", () => {
     ["api/v1/quote.perpetual-usdc.json", v1.QuoteV1],
     ["api/v1/quote.fx.json", v1.QuoteV1],
     ["api/v1/quote.btc-usd-aggregated.json", v1.QuoteV1],
+    ["api/v1/quote.xau-reference.json", v1.QuoteV1],
   ] as const;
 
   for (const [path, schema] of cases) {
@@ -162,5 +163,64 @@ describe("shared vocabulary agrees with Rust and the database", () => {
     expect([...v1.UNITS_OF_MEASURE]).toStrictEqual(vocabulary.unitsOfMeasure);
     expect([...v1.UNIVERSE_KEYS]).toStrictEqual(vocabulary.universeKeys);
     expect([...v1.AGGREGATION_METHODS]).toStrictEqual(vocabulary.aggregationMethods);
+  });
+});
+
+describe("exact quote arithmetic", () => {
+  it("spread is ask - bid and spreadBps is spread / price × 10 000, half to even at 4 places", () => {
+    // SUI/USD mean of Coinbase 1.1819/1.1821 and Kraken 1.1803/1.1805.
+    expect(v1.spreadOf("1.181200", "1.181100", "1.181300")).toStrictEqual({
+      spread: "0.000200",
+      spreadBps: "1.6932", // 1.69319...
+    });
+    // Scale is the larger of bid's and ask's; bid and ask keep theirs.
+    expect(v1.spreadOf("1.13680", "1.13679", "1.13680").spread).toBe("0.00001");
+    expect(v1.spreadOf("84076.2025000", "84076.1750000", "84076.2300000")).toStrictEqual({
+      spread: "0.0550000",
+      spreadBps: "0.0065", // 0.006541...
+    });
+    // Exact halves round to even: 1 / 20 000 × 10 000 = 0.5 bps → at 4 places exact;
+    // 0.00005 / 1 × 10 000 = 0.5; 0.000000005 / 1 × 10 000 = 0.00005 → 0.0000 (even), 0.000000015 → 0.0002.
+    expect(v1.spreadOf("1", "1.000000000", "1.000000005").spreadBps).toBe("0.0000");
+    expect(v1.spreadOf("1", "1.000000000", "1.000000015").spreadBps).toBe("0.0002");
+    expect(v1.spreadOf("1", "0.99999", "1.00004").spreadBps).toBe("0.5000");
+  });
+
+  it("no bid/ask, no spread; a non-positive price has no spreadBps", () => {
+    expect(v1.spreadOf("4286.200195", null, null)).toStrictEqual({ spread: null, spreadBps: null });
+    expect(v1.spreadOf("0", "-0.01", "0.01")).toStrictEqual({ spread: "0.02", spreadBps: null });
+  });
+
+  it("uses no floating point: 0.1 + 0.2 style values stay exact", () => {
+    expect(v1.spreadOf("0.3", "0.1", "0.3").spread).toBe("0.2");
+    expect(v1.changeOf("0.3", "0.1")).toStrictEqual({ absolute: "0.2", percent: "200.0000" });
+  });
+
+  it("24h change: positive, negative, zero, exact percent", () => {
+    expect(v1.changeOf("84076.2025000", "82950.1150000")).toStrictEqual({
+      absolute: "1126.0875000",
+      percent: "1.3575", // 1.357546...
+    });
+    expect(v1.changeOf("0.2659000000", "0.2800000000")).toStrictEqual({
+      absolute: "-0.0141000000",
+      percent: "-5.0357", // -5.035714...
+    });
+    expect(v1.changeOf("1.10", "1.1")).toStrictEqual({ absolute: "0.00", percent: "0.0000" });
+    // Half to even at 4 places: 1/16 % = 0.0625 %; 1/32 % → 0.03125 → 0.0312.
+    expect(v1.changeOf("100.0625", "100")?.percent).toBe("0.0625");
+    expect(v1.changeOf("100.03125", "100")?.percent).toBe("0.0312");
+    expect(v1.changeOf("100.09375", "100")?.percent).toBe("0.0938");
+  });
+
+  it("a zero baseline has no change", () => {
+    expect(v1.changeOf("1", "0")).toBeNull();
+    expect(v1.changeOf("1", "0.000")).toBeNull();
+  });
+
+  it("formats like rust_decimal: keeps scale, never a negative zero", () => {
+    expect(v1.formatDecimal({ mantissa: -5n, scale: 3 })).toBe("-0.005");
+    expect(v1.formatDecimal({ mantissa: 0n, scale: 2 })).toBe("0.00");
+    const neg = v1.divide({ mantissa: -1n, scale: 6 }, { mantissa: 1n, scale: 0 }, 2);
+    expect(neg && v1.formatDecimal(neg)).toBe("0.00");
   });
 });

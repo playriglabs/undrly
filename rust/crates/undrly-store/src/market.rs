@@ -425,6 +425,8 @@ pub struct StoredCanonicalQuote {
     pub price: Decimal,
     pub price_type: PriceType,
     pub basis: ObservationBasis,
+    /// The aggregation's bid and ask (mean bid/ask for `mean-venue-mid-v1`).
+    pub bid_ask: Option<BidAsk>,
     pub as_of: Timestamp,
     pub computed_at: Timestamp,
     /// The observations used, each with the price it contributed, by id.
@@ -443,8 +445,20 @@ impl StoredCanonicalQuote {
             && self.price.scale() == other.price.scale()
             && self.price_type == other.price_type
             && self.basis == other.basis
+            && same_bid_ask(self.bid_ask, other.bid_ask)
             && self.as_of == other.as_of
             && self.inputs == other.inputs
+    }
+}
+
+/// Equal values at equal scales.
+fn same_bid_ask(a: Option<BidAsk>, b: Option<BidAsk>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            a == b && a.bid.scale() == b.bid.scale() && a.ask.scale() == b.ask.scale()
+        }
+        _ => false,
     }
 }
 
@@ -479,8 +493,9 @@ pub async fn upsert_canonical_quote(
     sqlx::query(
         "INSERT INTO canonical_quotes
            (subject_id, subject_category, unit_id, unit_category, method, price, price_type,
-            basis, venue_id, as_of, eligible_count, computed_at)
-         VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8, $9, $10, $11, $12)",
+            basis, venue_id, as_of, eligible_count, computed_at, bid, ask)
+         VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8, $9, $10, $11, $12,
+                 $13::numeric, $14::numeric)",
     )
     .bind(subject)
     .bind(subject_category)
@@ -494,6 +509,8 @@ pub async fn upsert_canonical_quote(
     .bind(quote.as_of.as_datetime())
     .bind(i32::try_from(quote.inputs.len()).unwrap_or(i32::MAX))
     .bind(quote.computed_at.as_datetime())
+    .bind(quote.bid_ask.map(|ba| decimal_to_sql(ba.bid)))
+    .bind(quote.bid_ask.map(|ba| decimal_to_sql(ba.ask)))
     .execute(&mut *tx)
     .await?;
     for (observation, input_price) in &quote.inputs {
@@ -543,16 +560,19 @@ pub async fn get_canonical_quote(
         Option<Uuid>,
         DateTime<Utc>,
         DateTime<Utc>,
+        Option<String>,
+        Option<String>,
     );
     let row: Option<Row> = sqlx::query_as(
-        "SELECT method, price::text, price_type, basis, venue_id, as_of, computed_at
+        "SELECT method, price::text, price_type, basis, venue_id, as_of, computed_at,
+                bid::text, ask::text
          FROM canonical_quotes WHERE subject_id = $1 AND unit_id = $2",
     )
     .bind(subject.canonical().uuid())
     .bind(unit.canonical().uuid())
     .fetch_optional(&mut *conn)
     .await?;
-    let Some((method, price, price_type, basis, venue, as_of, computed)) = row else {
+    let Some((method, price, price_type, basis, venue, as_of, computed, bid, ask)) = row else {
         return Ok(None);
     };
     let inputs: Vec<(i64, String)> = sqlx::query_as(
@@ -570,6 +590,14 @@ pub async fn get_canonical_quote(
         price: decimal_from_sql(&price)?,
         price_type: price_type_from_sql(&price_type)?,
         basis: basis_from_sql(&basis, venue)?,
+        bid_ask: match (bid, ask) {
+            (None, None) => None,
+            (Some(bid), Some(ask)) => Some(BidAsk {
+                bid: decimal_from_sql(&bid)?,
+                ask: decimal_from_sql(&ask)?,
+            }),
+            _ => return Err(corrupt("canonical quote", "bid and ask come together")),
+        },
         as_of: timestamp_from_sql(as_of)?,
         computed_at: timestamp_from_sql(computed)?,
         inputs: inputs

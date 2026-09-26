@@ -13,43 +13,29 @@
   },
   "priceType": "mid",
   "price": "84076.2025000",
-  "bid": null,
-  "ask": null,
+  "bid": "84076.1750000",
+  "ask": "84076.2300000",
+  "spread": "0.0550000",
+  "spreadBps": "0.0065",
   "basis": "venue",
+  "receivedAt": "2026-09-25T07:28:07.100Z",
+  "asOf": "2026-09-25T07:28:06.386017Z",
+  "ageMs": 3614,
+  "freshness": "fresh",
+  "change24h": {
+    "absolute": "1126.0875000",
+    "percent": "1.3575",
+    "from": "82950.1150000",
+    "asOf": "2026-09-24T07:28:05.911204Z"
+  },
+  "aggregation": {
+    "method": "mean-venue-mid-v1",
+    "eligibleObservations": 2,
+    "computedAt": "2026-09-25T07:28:10Z"
+  },
   "venue": {
     "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
     "name": "Kraken"
   },
-  "observedAt": null,
-  "receivedAt": "2026-09-25T07:28:07.100Z",
-  "source": null,
-  "asOf": "2026-09-25T07:28:06.386017Z",
-  "freshness": "fresh",
-  "aggregation": {
-    "method": "mean-venue-mid-v1",
-    "eligibleObservations": 2,
-    "computedAt": "2026-09-25T07:28:10Z",
-    "inputs": [
-      {
-        "observationId": "42",
-        "sourceId": "kraken",
-        "venue": {
-          "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
-          "name": "Kraken"
-        },
-        "price": "84145.950000",
-        "sourceRecordId": "13"
-      },
-      {
-        "observationId": "43",
-        "sourceId": "coinbase",
-        "venue": {
-          "id": "undrly:venue:01m3bqftk8fres6cvqv9arywkm",
-          "name": "Coinbase Exchange"
-        },
-        "price": "84006.455",
-        "sourceRecordId": "14"
-      }
-    ]
-  }
+  "observedAt": null
 }

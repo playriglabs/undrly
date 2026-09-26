@@ -60,11 +60,14 @@ presentation: USDC is an asset unit, never the USD currency.
 | EUR/USD | `kraken` | same request | `ZEURZUSD` | venue (Kraken) | last (+ bid/ask) |
 | BTC perpetual | `hyperliquid` | `POST https://api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}` | `BTC` | venue (Hyperliquid) | mark |
 | XAU/USD | `gold-api` | `GET https://api.gold-api.com/price/XAU` | `XAU` | aggregated | reference |
-| NVDA | `alpaca` | `GET https://data.alpaca.markets/v2/stocks/snapshots?symbols=NVDA&feed=iex` | `NVDA` | **venue (IEX)** | last |
+| NVDA | `alpaca` | `GET https://data.alpaca.markets/v2/stocks/snapshots?symbols=NVDA&feed=iex` | `NVDA` | **venue (IEX)** | last; mid (+ bid/ask) |
 
 The NVDA quote is **an IEX venue quote** delivered by Alpaca
-(`basis = venue`, `venue = IEX`, `source = alpaca`): the last trade on IEX,
-and only on IEX. It is always presented as an IEX venue quote.
+(`basis = venue`, `venue = IEX`; observations carry `source = alpaca`): the
+newer of the last trade on IEX and the mid of IEX's own top of book (with
+its bid/ask; only books quoted during the regular session, 09:30–16:00 New
+York time), and only on IEX. It is always presented as an IEX venue
+quote.
 
 Identity and reference data without an authoritative source in scope
 (Bitcoin, USDC, Gold, the perpetual, crypto venues, aliases, feeds) come
@@ -212,12 +215,24 @@ Coinbase GET /products/BTC-USD/book?level=1        → venue observation (mid + 
    `max(scale(bid_i), scale(ask_i)) + 1`.
 3. **Canonical price:** `Σ mid_i / n`, at scale `max(scale(mid_i)) + 1`,
    rounded half to even. It is exact for one or two inputs.
+4. **Canonical bid and ask:** `bid = Σ bid_i / n` and `ask = Σ ask_i / n`
+   over the **same** eligible inputs, at the **same** scale as the price,
+   rounded half to even (exact for one or two inputs). One shared scale keeps
+   `bid ≤ price ≤ ask`.
 
-The result is labelled `basis = aggregated`, `venue = null`,
-`source = null`, `priceType = mid`, with no bid/ask. Its `asOf` is the
-**oldest** input's effective time. It is a simple mean of two venues' mids
-and nothing more: not a best bid/offer, an execution price, a fair value, an
-index, an oracle, or a market-wide price.
+The result is labelled `basis = aggregated` (served without `venue`,
+`source` or `observedAt`), `priceType = mid`. Its `bid` and `ask` are the mean of the
+inputs' bids and the mean of their asks: each is reproducible from the
+observations recorded in `canonical_quote_inputs`. They are **not** a best bid/offer
+(no `max(bid)` / `min(ask)` is taken), not NBBO, not a consolidated book and
+not a market-wide spread. Its `asOf` is the **oldest** input's effective
+time. It is a simple mean of two venues' mids and nothing more: not a best
+bid/offer, an execution price, a fair value, an index, an oracle, or a
+market-wide price.
+
+Example (SUI/USD): Coinbase 1.1819 / 1.1821 (mid 1.18200), Kraken
+1.1803 / 1.1805 (mid 1.18040) → `price = 1.181200`, `bid = 1.181100`,
+`ask = 1.181300`.
 
 No weighting, liquidity or volume scoring, outlier detection, confidence,
 source ranking, or fallback heuristics.
@@ -226,8 +241,8 @@ source ranking, or fallback heuristics.
 
 | Fresh eligible observations at compute time | Canonical quote |
 | --- | --- |
-| 2 | mean of both mids, `eligibleObservations = 2` |
-| 1 | that venue's mid, **still `basis = aggregated`**, `eligibleObservations = 1` (inputs name the venue) |
+| 2 | mean of both mids; mean of both bids and of both asks; `eligibleObservations = 2` |
+| 1 | that venue's mid, bid and ask, **still `basis = aggregated`**, `eligibleObservations = 1` (the stored inputs name the venue) |
 | 0 | **none**: the collector deletes the canonical row, and `/v1/quote` returns 404 `no_quote` |
 
 At read time the API also refuses to serve a `mean-venue-mid-v1` quote whose
@@ -240,8 +255,9 @@ window.
 
 `canonical_quote_inputs` lists exactly the observations used and the price
 each contributed. Every observation names its `source_record_id`, the exact
-upstream response bytes. `QuoteV1.aggregation.inputs` exposes
-`observationId`, `sourceId`, `venue`, `price` and `sourceRecordId`.
+upstream response bytes. This provenance is internal: `QuoteV1.aggregation`
+exposes only `method`, `eligibleObservations` and `computedAt`, never the
+inputs' observation ids, venues, sources or record ids.
 Observations are never copied, changed, or deleted by aggregation. Removing
 a canonical quote removes only its input links.
 

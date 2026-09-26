@@ -14,13 +14,16 @@
   "priceType": "last",
   "price": "1.13680",
   "bid": "1.13679",
-  "ask": null,
-  "spread": null,
-  "spreadBps": null,
+  "ask": "1.13680",
+  "spread": "0.00001",
+  "spreadBps": "0.0880",
   "basis": "venue",
   "venue": {
     "id": "undrly:venue:01m3bbjhn5fw4ss6dars5190wn",
     "name": "Kraken"
+  },
+  "source": {
+    "id": "kraken"
   },
   "observedAt": null,
   "receivedAt": "2026-09-25T03:52:18.500Z",

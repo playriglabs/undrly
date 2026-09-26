@@ -43,9 +43,8 @@ for row in "equity NVDA" "crypto_spot BTC/USD" "fx EUR/USD" "commodity XAU/USD" 
   fi
   echo "$body" | jq -r --arg m "$1" --arg q "$2" '
     [ $m, $q, (.price + " " + (.unit.code // "?")), .priceType, .basis,
-      (if .basis == "venue" then .venue.name + " (" + .source.id + ")"
-       elif .source == null then ([.aggregation.inputs[].venue.name] | join(" + "))
-       else .source.id end) ] | @tsv' |
+      (if .basis == "venue" then .venue.name
+       else "\(.aggregation.eligibleObservations) observation(s)" end) ] | @tsv' |
     while IFS=$'\t' read -r m q price type basis from; do
       printf "  %-12s %-9s %-22s %-10s %-11s %s\n" "$m" "$q" "$price" "$type" "$basis" "$from"
     done
@@ -78,7 +77,7 @@ if echo "$quote" | jq -e '.price' >/dev/null 2>&1; then
     while IFS= read -r line; do printf '%s%s%s\n' "$b" "$line" "$r"; done
   echo "$quote" | jq -r '
     "  method   \(.aggregation.method) over \(.aggregation.eligibleObservations) fresh venue(s)",
-    "  inputs   " + ([.aggregation.inputs[] | "\(.venue.name) \(.price)"] | join("  +  ")) + "  → mean of mids",
+    "  bid/ask  \(.bid) / \(.ask)  (means of the same observations)",
     "  as of    \(.asOf)  (\(.freshness)), computed \(.aggregation.computedAt[11:19])"'
 else
   printf '  %s\n' "$(echo "$quote" | jq -r '.error.message // "no quote"')"

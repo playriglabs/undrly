@@ -8,7 +8,7 @@ use std::path::Path;
 
 use undrly_core::{
     AggregationMethod, CanonicalId, DisplayName, ObservationBasis, PriceSubject, PriceType,
-    PriceUnit, Redistribution, Source, SourceId, Timestamp,
+    PriceUnit, Redistribution, Source, SourceId, Timestamp, VenueSymbol,
 };
 use undrly_ingest::RawRecord;
 use undrly_ingest::curated::ingest_universe;
@@ -390,6 +390,111 @@ async fn all_five_markets_have_canonical_quotes() {
 }
 
 #[tokio::test]
+async fn iex_trade_and_iex_book_are_two_feeds_and_the_newest_is_canonical() {
+    use undrly_normalize::alpaca::AlpacaNormalizer;
+    use undrly_provider::alpaca::AlpacaProvider;
+
+    let Some((db, mut conn)) = seeded().await else {
+        return;
+    };
+    let snapshot = |trade_t: &str, quote_t: &str| {
+        format!(
+            r#"{{"NVDA":{{"latestTrade":{{"t":"{trade_t}","x":"V","p":225.05}},"latestQuote":{{"ap":225.07,"ax":"V","bp":225.04,"bx":"V","t":"{quote_t}"}}}}}}"#
+        )
+        .into_bytes()
+    };
+    let ingest = async |conn: &mut sqlx::PgConnection, payload: Vec<u8>, at: &str| {
+        let report = ingest_quotes(
+            conn,
+            &AlpacaProvider::new(),
+            &AlpacaNormalizer,
+            &raw("alpaca NVDA", payload, at),
+        )
+        .await
+        .unwrap();
+        refresh_canonical_quotes(conn, &report.pairs, Timestamp::parse(at).unwrap())
+            .await
+            .unwrap();
+        report
+    };
+
+    // In session (15:59 New York), the book (19:59:49Z) is newer than the
+    // trade (19:59:34Z): canonical is
+    // IEX's mid, with IEX's bid and ask.
+    let first = ingest(
+        &mut conn,
+        snapshot(
+            "2026-09-25T19:59:34.720445259Z",
+            "2026-09-25T19:59:49.048604722Z",
+        ),
+        "2026-09-25T19:59:50Z",
+    )
+    .await;
+    assert_eq!(first.observations.len(), 2, "last and mid, one feed each");
+    assert!(first.missing.is_empty());
+    let q = get_canonical_quote(&mut conn, subject("nvda"), unit("usd"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(q.method, AggregationMethod::LatestObservationV1);
+    assert_eq!(q.price_type, PriceType::Mid);
+    assert_eq!(q.price.to_string(), "225.055");
+    assert_eq!(
+        q.basis,
+        ObservationBasis::Venue(curated("iex").try_into().unwrap())
+    );
+    let ba = q.bid_ask.unwrap();
+    assert_eq!(
+        (ba.bid.to_string(), ba.ask.to_string()),
+        ("225.04".into(), "225.07".into())
+    );
+    assert_eq!(
+        q.as_of,
+        Timestamp::parse("2026-09-25T19:59:49.048604Z").unwrap()
+    );
+
+    // A later trade (19:59:55Z) is newer than that book: canonical is the
+    // last trade, without bid/ask. Both observations stay stored.
+    ingest(
+        &mut conn,
+        snapshot("2026-09-25T19:59:55Z", "2026-09-25T19:59:49.048604722Z"),
+        "2026-09-25T19:59:56Z",
+    )
+    .await;
+    let q = get_canonical_quote(&mut conn, subject("nvda"), unit("usd"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(q.price_type, PriceType::Last);
+    assert_eq!(q.bid_ask, None);
+
+    // After the close (16:59:49 New York) the book is newer still, but it is
+    // not a market: no mid observation, and canonical stays the last trade.
+    let after = ingest(
+        &mut conn,
+        snapshot("2026-09-25T19:59:55Z", "2026-09-25T20:59:49.048604722Z"),
+        "2026-09-25T21:00:00Z",
+    )
+    .await;
+    assert_eq!(after.missing, vec![VenueSymbol::new("NVDA").unwrap()]);
+    let q = get_canonical_quote(&mut conn, subject("nvda"), unit("usd"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(q.price_type, PriceType::Last);
+    assert_eq!(q.price.to_string(), "225.05");
+    assert_eq!(
+        latest_observations(&mut conn, subject("nvda"), unit("usd"))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    drop(conn);
+    db.teardown().await;
+}
+
+#[tokio::test]
 async fn bad_quote_payloads_write_nothing() {
     use undrly_normalize::gold_api::GoldApiNormalizer;
     use undrly_provider::gold_api::GoldApiProvider;
@@ -541,6 +646,14 @@ async fn two_venues_coexist_and_aggregate_with_exact_provenance() {
     assert_eq!(q.price_type, PriceType::Mid);
     // (84145.950000 + 84006.455) / 2
     assert_eq!(q.price.to_string(), "84076.2025000");
+    // Mean bid (84145.90000 + 84006.45) / 2 and mean ask
+    // (84146.00000 + 84006.46) / 2 of the same inputs; stored and read back.
+    let ba = q.bid_ask.expect("mean bid and ask");
+    assert_eq!(
+        (ba.bid.to_string(), ba.ask.to_string()),
+        ("84076.1750000".to_owned(), "84076.2300000".to_owned())
+    );
+    assert!(ba.bid <= q.price && q.price <= ba.ask);
     assert_eq!(
         q.as_of,
         Timestamp::parse("2026-09-25T07:28:06.386017Z").unwrap(),
@@ -631,7 +744,12 @@ async fn aggregation_is_independent_of_ingestion_order() {
             inputs.push((o.source_id().to_string(), p.to_string()));
         }
         inputs.sort();
-        results.push((q.price.to_string(), q.as_of, inputs));
+        let ba = q.bid_ask.unwrap();
+        results.push((
+            (q.price.to_string(), ba.bid.to_string(), ba.ask.to_string()),
+            q.as_of,
+            inputs,
+        ));
         drop(conn);
         db.teardown().await;
     }
@@ -659,6 +777,12 @@ async fn stale_observations_are_excluded_with_documented_fallback() {
     assert_eq!(q.eligible_count(), 1);
     assert_eq!(q.basis, ObservationBasis::Aggregated);
     assert_eq!(q.price.to_string(), "84145.9500000");
+    // Kraken's own bid and ask; stale Coinbase contributes nothing.
+    let ba = q.bid_ask.unwrap();
+    assert_eq!(
+        (ba.bid.to_string(), ba.ask.to_string()),
+        ("84145.9000000".to_owned(), "84146.0000000".to_owned())
+    );
     let o = get_observation(&mut conn, q.inputs[0].0)
         .await
         .unwrap()

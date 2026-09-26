@@ -33,7 +33,7 @@
     "eligibleObservations": 2,
     "computedAt": "2026-09-25T07:28:10Z"
   },
-  "source": {
-    "id": "kraken"
-  }
+  "venue": null,
+  "source": null,
+  "observedAt": null
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { changeOf, decimalCompare, spreadOf } from "./decimal.ts";
 import { OBSERVATION_BASES, PriceUnitV1 } from "./market-observation.ts";
 import {
   CurrencyCode,
@@ -7,6 +8,7 @@ import {
   InstrumentId,
   SourceId,
   TimestampString,
+  timestampMicros,
   VenueId,
 } from "./primitives.ts";
 
@@ -123,65 +125,187 @@ export const ObservationV1 = consistent(
 );
 export type ObservationV1 = z.infer<typeof ObservationV1>;
 
-/** One observation a canonical quote was computed from. */
-export const AggregationInputV1 = z.strictObject({
-  observationId: StoredId,
-  sourceId: SourceId,
-  venue: VenueRefV1.nullable(),
-  /** The price this observation contributed (its mid, for `mean-venue-mid-v1`). */
+/**
+ * The price 24 hours before a canonical quote's `asOf`, and the change since.
+ * Present only where a trustworthy baseline exists (see `docs/contracts.md`):
+ * the canonical quote the same method would have served, fresh, from the
+ * same feeds, at `asOf - 24 h`. Otherwise `change24h` is `null`.
+ */
+export const Change24hV1 = z.strictObject({
+  /** `price - from`, exact. */
+  absolute: DecimalString,
+  /** `(price - from) / from × 100`, half to even at 4 places (no `%`). */
+  percent: DecimalString,
+  /** The baseline price. */
+  from: DecimalString,
+  /** When the baseline price was current (its own `asOf`). */
+  asOf: TimestampString,
+});
+export type Change24hV1 = z.infer<typeof Change24hV1>;
+
+const QuoteAggregationV1 = z.strictObject({
+  method: z.enum(AGGREGATION_METHODS),
+  eligibleObservations: z.number().int().min(1),
+  computedAt: TimestampString,
+});
+
+/** Fields every canonical quote has, whatever its basis. */
+const canonicalFields = {
+  schemaVersion: z.literal(1),
+  subject: PriceSubjectV1,
+  unit: PriceUnitV1,
+  priceType: z.enum(PRICE_TYPES),
   price: DecimalString,
-  sourceRecordId: StoredId,
+  bid: DecimalString.nullable(),
+  ask: DecimalString.nullable(),
+  /** `ask - bid`, exact; `null` without a bid and ask. */
+  spread: DecimalString.nullable(),
+  /** `(ask - bid) / price × 10 000`, half to even at 4 places; `null` without a bid and ask. */
+  spreadBps: DecimalString.nullable(),
+};
+
+/** Fields after `basis` (and, for a venue quote, its venue/source/observedAt). */
+const timingFields = {
+  /** When Undrly received the source response (the latest one, for an aggregate). */
+  receivedAt: TimestampString,
+  /** The time the price is current as of (oldest input, for an aggregate). */
+  asOf: TimestampString,
+  /**
+   * Wall-clock milliseconds from `asOf` to when this response was made,
+   * never negative. Computed per response, never stored. Not a freshness
+   * verdict: see `freshness`.
+   */
+  ageMs: z.number().int().min(0),
+  /** Policy verdict at read time, against the feed's (or method's) cadence. */
+  freshness: z.enum(["fresh", "stale"]),
+  change24h: Change24hV1.nullable(),
+  aggregation: QuoteAggregationV1,
+};
+
+/**
+ * One venue's market (e.g. IEX for NVDA, Kraken for EUR/USD). Names the
+ * venue, never the data provider that delivered it.
+ */
+export const VenueQuoteV1 = z.strictObject({
+  ...canonicalFields,
+  basis: z.literal("venue"),
+  venue: VenueRefV1,
+  /** The source's time for the price; `null` when the source states none. */
+  observedAt: TimestampString.nullable(),
+  ...timingFields,
 });
 
 /**
- * The canonical quote of a subject in a unit. Served by `/v1/quote`: one
- * price, produced from source observations by a named aggregation method.
- *
- * - `latest-observation-v1`: the quote is its single input observation
- *   (that observation's basis, venue and source).
- * - `mean-venue-mid-v1`: the mean of fresh venue mids; `basis` is
- *   `aggregated`, `venue` and `source` are `null`, `priceType` is `mid`, no
- *   bid/ask, `observedAt` is `null`, and `asOf` is the oldest input's time.
+ * Computed across sources or published without a venue (a mean of venue
+ * mids, a reference or average series). Attributed to no venue or source.
  */
-export const QuoteV1 = consistent(
-  z.strictObject({
-    ...priceFields,
-    /** The single source, or `null` for a multi-source aggregate. */
-    source: z.strictObject({ id: SourceId }).nullable(),
-    /** The time the price is current as of (oldest input, for an aggregate). */
-    asOf: TimestampString,
-    /** Computed at read time from `asOf`. */
-    freshness: z.enum(["fresh", "stale"]),
-    aggregation: z.strictObject({
-      method: z.enum(AGGREGATION_METHODS),
-      eligibleObservations: z.number().int().min(1),
-      computedAt: TimestampString,
-      /** Exactly the observations used (provenance of this quote). */
-      inputs: z.array(AggregationInputV1).min(1),
-    }),
-  }),
-)
-  .refine((q) => q.aggregation.inputs.length === q.aggregation.eligibleObservations, {
-    message: "eligibleObservations counts the inputs",
-  })
-  .refine(
-    (q) =>
-      q.aggregation.method !== "mean-venue-mid-v1" ||
-      (q.basis === "aggregated" &&
-        q.venue === null &&
-        q.source === null &&
-        q.priceType === "mid" &&
-        q.bid === null &&
-        q.observedAt === null),
-    { message: "a mean of venue mids is aggregated and attributed to no venue or source" },
-  )
-  .refine(
-    (q) =>
-      q.aggregation.method !== "latest-observation-v1" ||
-      (q.aggregation.inputs.length === 1 && q.source !== null),
-    { message: "latest-observation-v1 is its single input" },
-  );
+export const AggregatedQuoteV1 = z.strictObject({
+  ...canonicalFields,
+  basis: z.literal("aggregated"),
+  ...timingFields,
+});
+
+/** Derived from other prices (declared by curated feeds); no venue or source. */
+export const DerivedQuoteV1 = z.strictObject({
+  ...canonicalFields,
+  basis: z.literal("derived"),
+  ...timingFields,
+});
+
+type Issue = { message: string; path?: (string | number)[] };
+
+function quoteIssues(q: {
+  subject: { id: string };
+  unit: { id: string };
+  basis: string;
+  priceType: string;
+  price: string;
+  bid: string | null;
+  ask: string | null;
+  spread: string | null;
+  spreadBps: string | null;
+  asOf: string;
+  change24h: Change24hV1 | null;
+  aggregation: { method: string; eligibleObservations: number };
+}): Issue[] {
+  const issues: Issue[] = [];
+  if (q.unit.id === q.subject.id) {
+    issues.push({ message: "a subject cannot be priced in units of itself" });
+  }
+  if ((q.bid === null) !== (q.ask === null)) issues.push({ message: "bid and ask come together" });
+  const expected = spreadOf(q.price, q.bid, q.ask);
+  if (q.spread !== expected.spread || q.spreadBps !== expected.spreadBps) {
+    issues.push({ message: "spread is ask - bid and spreadBps is spread / price × 10 000" });
+  }
+  if (
+    q.priceType === "mid" &&
+    q.bid !== null &&
+    q.ask !== null &&
+    !(decimalCompare(q.bid, q.price) <= 0 && decimalCompare(q.price, q.ask) <= 0)
+  ) {
+    issues.push({ message: "a mid lies within its bid and ask" });
+  }
+  if (
+    q.aggregation.method === "mean-venue-mid-v1" &&
+    !(q.basis === "aggregated" && q.priceType === "mid" && q.bid !== null)
+  ) {
+    issues.push({
+      message: "a mean of venue mids is an aggregated mid with its mean bid and ask",
+    });
+  }
+  if (
+    q.aggregation.method === "latest-observation-v1" &&
+    q.aggregation.eligibleObservations !== 1
+  ) {
+    issues.push({ message: "latest-observation-v1 is its single input" });
+  }
+  if (q.change24h !== null) {
+    const change = changeOf(q.price, q.change24h.from);
+    if (
+      change === null ||
+      change.absolute !== q.change24h.absolute ||
+      change.percent !== q.change24h.percent
+    ) {
+      issues.push({ message: "change24h is price - from, and its percent of from" });
+    }
+    if (timestampMicros(q.change24h.asOf) > timestampMicros(q.asOf) - 86_400_000_000n) {
+      issues.push({ message: "the 24h baseline is at or before asOf - 24 h" });
+    }
+  }
+  return issues;
+}
+
+/**
+ * The canonical quote of a subject in a unit. Served by `/v1/quote`: one
+ * price, produced from source observations by a named aggregation method,
+ * shaped by `basis`:
+ *
+ * - `venue`: one venue's market; names `venue`, with the source's
+ *   `observedAt` (`null` when it states none). Its method is
+ *   `latest-observation-v1`: the quote is that one observation.
+ * - `aggregated` / `derived`: no `venue` or `observedAt` keys.
+ *
+ * No quote names its data provider (`source`); `/v1/quotes` does.
+ *   `mean-venue-mid-v1`: the mean of fresh venue mids; `priceType` is `mid`,
+ *   `asOf` is the oldest input's time, `bid` is the mean of the inputs' bids
+ *   and `ask` the mean of their asks (same inputs, same scale as `price`;
+ *   `bid <= price <= ask`). They are not a best bid/offer: no venue's best
+ *   price is selected. With one input they are that input's own bid and ask.
+ *
+ * `aggregation` states only the method, how many observations were
+ * eligible, and when it was computed. Which observations, venues, sources
+ * and raw records were used is kept in storage (`canonical_quote_inputs`)
+ * for audit, not served here.
+ */
+export const QuoteV1 = z
+  .discriminatedUnion("basis", [VenueQuoteV1, AggregatedQuoteV1, DerivedQuoteV1])
+  .superRefine((q, ctx) => {
+    for (const issue of quoteIssues(q)) ctx.addIssue({ code: "custom", ...issue });
+  });
 export type QuoteV1 = z.infer<typeof QuoteV1>;
+export type VenueQuoteV1 = z.infer<typeof VenueQuoteV1>;
+export type AggregatedQuoteV1 = z.infer<typeof AggregatedQuoteV1>;
+export type DerivedQuoteV1 = z.infer<typeof DerivedQuoteV1>;
 
 export const ObservationsV1 = z.strictObject({
   schemaVersion: z.literal(1),

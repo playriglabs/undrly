@@ -5,6 +5,7 @@
  */
 import { v1 } from "@undrly/contracts";
 import type postgres from "postgres";
+import { ageMs, meanVenueMid } from "./market.ts";
 import {
   canonicalTimestamp,
   classShareSymbol,
@@ -419,11 +420,93 @@ export type CanonicalResult =
   /** A multi-source aggregate older than its method's window: not served. */
   | { kind: "stale"; asOf: string };
 
+/** The feed an observation came from: source, venue and price type. */
+const feedKey = (o: { source_id: string; venue_id: string | null; price_type: string }) =>
+  `${o.source_id}|${o.venue_id ?? ""}|${o.price_type}`;
+
+/** Price types of continuously traded markets, which a 24-hour change suits. */
+const CHANGE_24H_PRICE_TYPES: readonly string[] = ["last", "mid", "mark"];
+
+type BaselineRow = {
+  source_id: string;
+  venue_id: string | null;
+  price_type: string;
+  basis: string;
+  price: string;
+  bid: string | null;
+  ask: string | null;
+  effective_at: string;
+};
+
+/**
+ * The 24-hour change of a canonical quote, or `null` when no trustworthy
+ * baseline exists. The baseline is the canonical quote the pair's own method
+ * would have served as fresh at `τ = asOf - 24 h`, recomputed from stored
+ * observations, and only if it comes from exactly the same feeds as the
+ * current quote (never a single venue against an aggregate):
+ *
+ * - `latest-observation-v1`: the pair's latest observation at or before `τ`
+ *   must be of the current feed and at most `window` seconds before `τ`;
+ * - `mean-venue-mid-v1`: each feed's latest observation at or before `τ`
+ *   that is a venue quote with bid and ask, at most 30 s before `τ`; their
+ *   mean of mids, if those feeds are exactly the current inputs' feeds.
+ *
+ * Only for last/mid/mark prices of non-equity subjects: equities (session
+ * closes) and reference/average series (daily to monthly) get `null`.
+ */
+async function change24h(
+  sql: Sql,
+  pair: Pair,
+  quote: { method: string; priceType: string; price: string; asOf: string },
+  subject: v1.PriceSubjectV1,
+  inputs: ObservationRow[],
+  window: number,
+): Promise<{ absolute: string; percent: string; from: string; asOf: string } | null> {
+  if (!CHANGE_24H_PRICE_TYPES.includes(quote.priceType)) return null;
+  if (subject.kind === "instrument" && subject.class === "equity") return null;
+  if (inputs.length === 0) return null;
+  const rows = await sql.unsafe<BaselineRow[]>(
+    `SELECT DISTINCT ON (${quote.method === "mean-venue-mid-v1" ? "source_id, venue_id, price_type" : "subject_id"})
+            source_id, venue_id::text, price_type, basis, price::text, bid::text, ask::text,
+            ${tsText("COALESCE(observed_at, received_at)")} AS effective_at
+     FROM market_observations
+     WHERE subject_id = $1 AND unit_id = $2
+       AND COALESCE(observed_at, received_at) <= $3::timestamptz - interval '24 hours'
+       AND COALESCE(observed_at, received_at)
+           >= $3::timestamptz - interval '24 hours' - make_interval(secs => $4)
+     ORDER BY ${quote.method === "mean-venue-mid-v1" ? "source_id, venue_id, price_type," : "subject_id,"}
+              COALESCE(observed_at, received_at) DESC, received_at DESC, id DESC`,
+    [pair.subject, pair.unit, quote.asOf, window],
+  );
+  const current = new Set(inputs.map(feedKey));
+  let from: string | null;
+  let asOf: string;
+  if (quote.method === "mean-venue-mid-v1") {
+    const eligible = rows.filter((r) => r.basis === "venue" && r.bid !== null && r.ask !== null);
+    const feeds = new Set(eligible.map(feedKey));
+    if (feeds.size !== current.size || [...current].some((k) => !feeds.has(k))) return null;
+    from = meanVenueMid(eligible.map((r) => ({ bid: r.bid ?? "", ask: r.ask ?? "" })));
+    asOf = eligible.map((r) => r.effective_at).sort()[0] ?? "";
+  } else {
+    const only = rows[0];
+    if (only === undefined || rows.length !== 1 || !current.has(feedKey(only))) return null;
+    from = only.price;
+    asOf = only.effective_at;
+  }
+  if (from === null) return null;
+  const change = v1.changeOf(quote.price, from);
+  return change === null ? null : { ...change, from, asOf: canonicalTimestamp(asOf) };
+}
+
 /**
  * The canonical quote of a pair, from `canonical_quotes` and exactly its
- * inputs. `latest-observation-v1` quotes are their single input observation
- * (unchanged behaviour, flagged fresh/stale). A `mean-venue-mid-v1`
- * aggregate older than its window is not served at all.
+ * inputs. The inputs (observations, venues, sources, raw records) stay in
+ * storage for audit and are not served. `latest-observation-v1` quotes are
+ * their single input observation (flagged fresh/stale). A
+ * `mean-venue-mid-v1` aggregate carries the mean bid and mean ask of its
+ * inputs, as computed by the aggregator; one older than its window is not
+ * served at all. `spread`, `ageMs` and `change24h` are computed per
+ * response, from `now`.
  */
 export async function canonicalQuote(
   sql: Sql,
@@ -435,59 +518,90 @@ export async function canonicalQuote(
     {
       method: v1.QuoteV1["aggregation"]["method"];
       price: string;
+      bid: string | null;
+      ask: string | null;
       price_type: v1.PriceType;
       eligible: number;
       as_of: string;
       computed_at: string;
     }[]
   >(
-    `SELECT method, price::text, price_type, eligible_count AS eligible,
+    `SELECT method, price::text, bid::text, ask::text, price_type, eligible_count AS eligible,
             ${tsText("as_of")} AS as_of, ${tsText("computed_at")} AS computed_at
      FROM canonical_quotes WHERE subject_id = $1 AND unit_id = $2`,
     [pair.subject, pair.unit],
   );
   const row = rows[0];
   if (row === undefined) return { kind: "none" };
-  const inputRows = await sql.unsafe<(ObservationRow & { input_price: string })[]>(
-    `SELECT ${OBSERVATION_COLUMNS}, i.input_price::text
+  const inputRows = await sql.unsafe<ObservationRow[]>(
+    `SELECT ${OBSERVATION_COLUMNS}
      FROM canonical_quote_inputs i
      JOIN market_observations o ON o.id = i.observation_id
      JOIN source_records r ON r.id = o.source_record_id
      WHERE i.subject_id = $1 AND i.unit_id = $2 ORDER BY o.id`,
     [pair.subject, pair.unit],
   );
-  const inputs = [];
-  for (const r of inputRows) {
-    inputs.push({
-      observationId: r.id,
-      sourceId: r.source_id,
-      venue: await venueRef(sql, r.venue_id),
-      price: r.input_price,
-      sourceRecordId: r.source_record_id,
-    });
-  }
   const aggregation = {
     method: row.method,
     eligibleObservations: row.eligible,
     computedAt: canonicalTimestamp(row.computed_at),
-    inputs,
   };
+  const priced = async (
+    subject: v1.PriceSubjectV1,
+    q: { priceType: v1.PriceType; price: string; bid: string | null; ask: string | null },
+    asOf: string,
+    window: number,
+  ) => ({
+    ...v1.spreadOf(q.price, q.bid, q.ask),
+    ageMs: ageMs(asOf, now),
+    freshness: freshness(asOf, now, window),
+    change24h: await change24h(
+      sql,
+      pair,
+      { method: row.method, priceType: q.priceType, price: q.price, asOf },
+      subject,
+      inputRows,
+      window,
+    ),
+  });
+
   if (row.method === "latest-observation-v1") {
     const only = inputRows[0];
     if (only === undefined) return { kind: "none" };
     const fields = await observationFields(sql, only);
     const asOf = fields.observedAt ?? fields.receivedAt;
     const window = await windowSeconds(sql, row.method, only, staleAfterSeconds);
-    return {
-      kind: "quote",
-      quote: v1.QuoteV1.parse({
-        ...fields,
-        source: { id: only.source_id },
-        asOf,
-        freshness: freshness(asOf, now, window),
-        aggregation,
-      }),
+    const derived = await priced(fields.subject, fields, asOf, window);
+    const common = {
+      schemaVersion: 1,
+      subject: fields.subject,
+      unit: fields.unit,
+      priceType: fields.priceType,
+      price: fields.price,
+      bid: fields.bid,
+      ask: fields.ask,
+      spread: derived.spread,
+      spreadBps: derived.spreadBps,
     };
+    const timing = {
+      receivedAt: fields.receivedAt,
+      asOf,
+      ageMs: derived.ageMs,
+      freshness: derived.freshness,
+      change24h: derived.change24h,
+      aggregation,
+    };
+    const quote =
+      fields.basis === "venue"
+        ? {
+            ...common,
+            basis: "venue",
+            venue: fields.venue,
+            observedAt: fields.observedAt,
+            ...timing,
+          }
+        : { ...common, basis: fields.basis, ...timing };
+    return { kind: "quote", quote: v1.QuoteV1.parse(quote) };
   }
 
   const asOf = canonicalTimestamp(row.as_of);
@@ -498,23 +612,25 @@ export async function canonicalQuote(
     .map((r) => canonicalTimestamp(r.received_at))
     .sort((a, b) => Date.parse(a) - Date.parse(b))
     .at(-1);
+  const subject = await subjectOf(sql, pair.subject);
+  // The mean bid and mean ask of the same inputs (not a best bid/offer).
+  const q = { priceType: row.price_type, price: row.price, bid: row.bid, ask: row.ask };
+  const derived = await priced(subject, q, asOf, MEAN_VENUE_MID_MAX_AGE_SECONDS);
   return {
     kind: "quote",
     quote: v1.QuoteV1.parse({
       schemaVersion: 1,
-      subject: await subjectOf(sql, pair.subject),
+      subject,
       unit: await unitOf(sql, pair.unit, pair.unitCategory),
-      priceType: row.price_type,
-      price: row.price,
-      bid: null,
-      ask: null,
+      ...q,
+      spread: derived.spread,
+      spreadBps: derived.spreadBps,
       basis: "aggregated",
-      venue: null,
-      observedAt: null,
       receivedAt: latestReceipt,
-      source: null,
       asOf,
-      freshness: "fresh",
+      ageMs: derived.ageMs,
+      freshness: derived.freshness,
+      change24h: derived.change24h,
       aggregation,
     }),
   };

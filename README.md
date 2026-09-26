@@ -18,7 +18,7 @@ curl -s localhost:8787/v1/quote/BTC/USD | jq
 
 | Market | Query | Source(s) | What `/v1/quote` returns |
 | --- | --- | --- | --- |
-| Equity | `NVDA` | Alpaca (IEX feed) | the last trade on IEX: an IEX venue quote |
+| Equity | `NVDA` | Alpaca (IEX feed) | the newer of IEX's last trade and IEX's book mid (with bid/ask, regular session only): an IEX venue quote |
 | Crypto spot | `BTC/USD` | Kraken + Coinbase | **one aggregate** of both venues' mid prices |
 | FX | `EUR/USD` | Kraken | Kraken's last trade, with bid/ask |
 | Commodity | `XAU/USD` | gold-api | an aggregated reference price per troy ounce |
@@ -100,10 +100,11 @@ All routes are `GET`, read-only, and answer from Undrly's own storage.
   (`NASDAQ:NVDA`), or an Undrly id.
 - **Prices** are exact decimal strings (`"83839.5975000"`), never floats. The
   trailing digits are intentional.
-- **Every quote** says where it comes from: `basis` (`venue` or `aggregated`),
-  `venue`, `source`, the `unit` (a currency such as USD, or an asset such as
-  USDC), `asOf` and `freshness`. NVDA shows `stale` outside US market hours;
-  it is the last IEX trade.
+- **Every quote** says what it is: `basis` (`venue` or `aggregated`), the
+  `venue` for a venue quote, the `unit` (a currency such as USD, or an asset
+  such as USDC), `asOf` and `freshness`. It does not name the data provider;
+  `/v1/quotes` does. NVDA shows `stale` outside US market hours; it is the
+  newer of the last IEX trade and IEX's book mid.
 - **Errors** are JSON: `bad_request` (400), `not_found` / `no_quote` (404),
   `ambiguous` (409).
 
@@ -120,7 +121,8 @@ serve       the API reads canonical quotes from storage
 
 - The **collector** (Rust) polls sources one at a time in the background.
 - **BTC/USD** averages the mid prices of fresh Kraken and Coinbase quotes
-  (`mean-venue-mid-v1`, 30 s freshness window). The venue observations stay
+  (`mean-venue-mid-v1`, 30 s freshness window); its `bid`/`ask` are the mean
+  bid and mean ask of the same quotes (not a best bid/offer). The venue observations stay
   available at `/v1/quotes/BTC/USD`.
 - The **API** (TypeScript) never calls a provider while answering a request,
   so its speed doesn't depend on any upstream.

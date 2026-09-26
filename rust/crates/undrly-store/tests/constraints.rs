@@ -1400,18 +1400,52 @@ async fn observations_feeds_aliases_and_canonical_quotes_have_provenance() {
     // A canonical quote's inputs must be observations of that very pair.
     let observation = observe(&db, &base).await.unwrap();
     let other_unit = db.node(Category::Currency).await;
-    let canonical = |unit: Uuid, method: &'static str, basis: &'static str| {
+    let quote = |unit: Uuid,
+                 method: &'static str,
+                 basis: &'static str,
+                 bid: Option<&'static str>,
+                 ask: Option<&'static str>| {
         sqlx::query(
             "INSERT INTO canonical_quotes
                (subject_id, subject_category, unit_id, unit_category, method, price, price_type,
-                basis, as_of, eligible_count, computed_at)
-             VALUES ($1, 'instrument', $2, 'currency', $3, 1, 'mid', $4, now(), 1, now())",
+                basis, as_of, eligible_count, computed_at, bid, ask)
+             VALUES ($1, 'instrument', $2, 'currency', $3, 1, 'mid', $4, now(), 1, now(),
+                     $5::numeric, $6::numeric)",
         )
         .bind(base.subject.0)
         .bind(unit)
         .bind(method)
         .bind(basis)
+        .bind(bid)
+        .bind(ask)
     };
+    let canonical = |unit: Uuid, method: &'static str, basis: &'static str| {
+        quote(unit, method, basis, Some("0.9"), Some("1.1"))
+    };
+    // A mean of venue mids states its mean bid and ask, around its price.
+    for (bid, ask) in [
+        (None, None),
+        (Some("1.1"), Some("1.2")),
+        (Some("0.8"), Some("0.9")),
+    ] {
+        assert_rejected(
+            quote(base.unit.0, "mean-venue-mid-v1", "aggregated", bid, ask)
+                .execute(&db.pool)
+                .await,
+            CHECK_VIOLATION,
+            Some("canonical_quotes_mean_has_bid_ask"),
+        );
+    }
+    // Bid and ask come together, uncrossed.
+    for (bid, ask) in [(Some("0.9"), None), (Some("1.1"), Some("0.9"))] {
+        assert_rejected(
+            quote(base.unit.0, "latest-observation-v1", "aggregated", bid, ask)
+                .execute(&db.pool)
+                .await,
+            CHECK_VIOLATION,
+            Some("canonical_quotes_bid_ask"),
+        );
+    }
     // A mean of venue mids is never attributed to a venue.
     assert_rejected(
         canonical(base.unit.0, "mean-venue-mid-v1", "derived")

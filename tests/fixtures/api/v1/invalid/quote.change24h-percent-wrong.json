@@ -24,7 +24,7 @@
   "freshness": "fresh",
   "change24h": {
     "absolute": "1126.0875000",
-    "percent": "1.3575",
+    "percent": "1.3576",
     "from": "82950.1150000",
     "asOf": "2026-09-24T07:28:05.911204Z"
   },
@@ -32,8 +32,5 @@
     "method": "mean-venue-mid-v1",
     "eligibleObservations": 2,
     "computedAt": "2026-09-25T07:28:10Z"
-  },
-  "source": {
-    "id": "kraken"
   }
 }

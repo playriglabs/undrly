@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "subject": {
+    "id": "undrly:instrument:01m3bbjhnjewwb8qvvkn6rf2c1",
+    "kind": "instrument",
+    "class": "commodity",
+    "name": "Gold (troy ounce)",
+    "unitOfMeasure": "troy_ounce"
+  },
+  "unit": {
+    "id": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+    "kind": "currency",
+    "code": "USD"
+  },
+  "priceType": "reference",
+  "price": "4286.200195",
+  "bid": null,
+  "ask": null,
+  "spread": "0.10",
+  "spreadBps": null,
+  "basis": "aggregated",
+  "receivedAt": "2026-09-26T01:12:55.104Z",
+  "asOf": "2026-09-26T01:12:54Z",
+  "ageMs": 41250,
+  "freshness": "fresh",
+  "change24h": null,
+  "aggregation": {
+    "method": "latest-observation-v1",
+    "eligibleObservations": 1,
+    "computedAt": "2026-09-26T01:12:55.260Z"
+  }
+}

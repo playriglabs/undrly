@@ -111,6 +111,17 @@ export const DecimalString = z
   .brand<"DecimalString">();
 export type DecimalString = z.infer<typeof DecimalString>;
 
+/**
+ * Microseconds since the epoch of a canonical timestamp (exact, unlike
+ * `Date.parse`, which drops microseconds). `0n` for anything else.
+ */
+export function timestampMicros(timestamp: string): bigint {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{3}|\d{6}))?Z$/.exec(timestamp);
+  if (match === null) return 0n;
+  const [, seconds = "", fraction = ""] = match;
+  return BigInt(Date.parse(`${seconds}Z`)) * 1000n + BigInt(fraction.padEnd(6, "0"));
+}
+
 // Fraction is omitted, 3 digits (not `000`), or 6 digits (not ending `000`).
 const TIMESTAMP =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(?!000Z)\d{3}|\.\d{3}(?!000)\d{3})?Z$/;

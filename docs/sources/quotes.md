@@ -18,16 +18,27 @@ that record.
 | `hyperliquid` | `POST https://api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}` | none | `BTC` → BTC perpetual in **USDC** | venue (Hyperliquid) / mark | **none stated** | Hyperliquid terms of use; the response covers every perp (~72 KB), and only `BTC` is used |
 | `gold-api` | `GET https://api.gold-api.com/price/XAU` | none | `XAU` → Gold (1 troy oz) in USD | aggregated / reference | `updatedAt` (seconds) | gold-api.com terms; the upstream contributors are undisclosed |
 | `coinbase` | `GET https://api.exchange.coinbase.com/products/BTC-USD/book?level=1` | none | `BTC-USD` → Bitcoin in USD | venue (Coinbase Exchange) / mid + bid/ask | book `time` (ns, truncated to µs) | Coinbase Exchange API / market-data terms; Coinbase requires a User-Agent |
-| `alpaca` | `GET https://data.alpaca.markets/v2/stocks/snapshots?symbols=NVDA&feed=iex` | `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` headers | `NVDA` → NVIDIA common stock in USD | **venue (IEX)** / last | trade time `t` (ns, truncated to µs) | Alpaca Market Data agreement; the IEX feed's display and redistribution terms |
+| `alpaca` | `GET https://data.alpaca.markets/v2/stocks/snapshots?symbols=NVDA&feed=iex` | `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` headers | `NVDA` → NVIDIA common stock in USD | **venue (IEX)** / last (trade) + mid (IEX top of book, with bid/ask) | trade time `t` / quote time `t` (ns, truncated to µs) | Alpaca Market Data agreement; the IEX feed's display and redistribution terms |
 | `undrly-curated` | `data/demo/universe.json` (this repository) | — | declares all feeds above | — | — | Undrly-authored; identifiers in it (ISIN, FIGI, LEI, MIC) were checked against their registries |
 
 ## Semantics that must not be blurred
 
 - **NVDA is an IEX venue quote**, delivered by Alpaca: `basis = venue`,
-  `venue = IEX`, `source = alpaca`: the last trade executed on IEX, one US
-  exchange. It is always presented as an IEX venue quote, never as a price
-  for other venues. The normalizer rejects any trade whose exchange code is
-  not `V` (IEX).
+  `venue = IEX` (the observation's source is `alpaca`; the canonical quote
+  names only the venue). Two feeds per symbol, each its own observation
+  with its own time: the **last** trade executed on IEX, and the **mid** of
+  IEX's own top of book with that bid and ask. The book is IEX's alone, not
+  a consolidated (NBBO) quote. Only a book **quoted during the regular US
+  session** (09:30–16:00 New York time, Monday–Friday, by the quote's own
+  time; US DST rule; no holiday table, as IEX stamps no quotes when closed;
+  early-close days count as full days) yields a mid observation: outside it
+  IEX's book is a few resting orders (e.g. NVDA 225.05 / 230.53 after the
+  close), not a market. A side with no IEX interest (price `0`, blank
+  exchange) or a crossed book yields none either. The canonical quote is the newer
+  of the two (`latest-observation-v1`), so `priceType` is `last` or `mid`.
+  It is always presented as an IEX venue quote, never as a price for other
+  venues. The normalizer rejects any trade or quote side whose exchange
+  code is not `V` (IEX).
 - **The BTC perpetual is priced in USDC**, its settlement asset. It is not
   converted to USD.
 - **Gold is aggregated**: gold-api does not name a venue, so no venue is
@@ -36,7 +47,7 @@ that record.
 - **BTC/USD has two venue feeds** (Kraken, Coinbase). Each is stored as its
   own venue observation. The canonical BTC/USD quote is `mean-venue-mid-v1`
   (see `docs/hackathon-v1.md` §13): `basis = aggregated`, attributed to no
-  venue or source. Coinbase's observation is its level-1 mid (normalizer
+  venue or source, with the mean bid and mean ask of its inputs. Coinbase's observation is its level-1 mid (normalizer
   computes `(bid + ask) / 2` exactly), with the book time as source time.
 - **Kraken and Hyperliquid state no timestamp.** Their observations have
   `observed_at = null`, and freshness uses `received_at`. Undrly's clock is

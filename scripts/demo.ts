@@ -35,14 +35,12 @@ function expect(condition: boolean, message: string): asserts condition {
 }
 
 function quoteLine(q: v1.QuoteV1): string {
-  const where = q.basis === "venue" ? `@ ${q.venue?.name}` : `(${q.basis})`;
-  const spread = q.bid === null ? "" : ` [${q.bid} / ${q.ask}]`;
+  const where = q.basis === "venue" ? `@ ${q.venue.name}` : `(${q.basis})`;
+  const spread = q.bid === null ? "" : ` [${q.bid} / ${q.ask}, ${q.spreadBps} bps]`;
   const unit = q.unit.code ?? q.unit.id;
-  const via =
-    q.source === null
-      ? `${q.aggregation.method} over ${q.aggregation.inputs.map((i) => `${i.venue?.name ?? i.sourceId} ${i.price}`).join(" + ")}`
-      : `via ${q.source.id}`;
-  return `${q.subject.name}: ${q.price} ${unit} ${q.priceType}${spread} ${where} ${via}, as of ${q.asOf} (${q.freshness})`;
+  const via = `${q.aggregation.method} over ${q.aggregation.eligibleObservations} observation(s)`;
+  const change = q.change24h === null ? "" : `, 24h ${q.change24h.percent}%`;
+  return `${q.subject.name}: ${q.price} ${unit} ${q.priceType}${spread} ${where} ${via}, as of ${q.asOf} (${q.freshness}, ${q.ageMs} ms)${change}`;
 }
 
 type Market = {
@@ -59,8 +57,9 @@ const markets: Market[] = [
     query: "NVDA",
     expect: (q) => {
       expect(q.subject.kind === "instrument" && q.subject.class === "equity", "NVDA is an equity");
-      expect(q.basis === "venue" && q.venue?.name === "IEX", "NVDA is an IEX venue quote");
-      expect(q.source.id === "alpaca", "NVDA comes from Alpaca");
+      expect(q.basis === "venue" && q.venue.name === "IEX", "NVDA is an IEX venue quote");
+      expect(!("source" in q), "no data provider named");
+      expect(q.priceType === "last" || q.priceType === "mid", "IEX last trade or IEX book mid");
       expect(q.unit.kind === "currency" && q.unit.code === "USD", "NVDA in USD");
     },
   },
@@ -72,12 +71,10 @@ const markets: Market[] = [
       expect(q.subject.kind === "instrument" && q.subject.class === "crypto_asset", "BTC asset");
       expect(q.unit.kind === "currency" && q.unit.code === "USD", "in USD");
       expect(q.aggregation.method === "mean-venue-mid-v1", "mean of venue mids");
-      expect(q.basis === "aggregated" && q.venue === null && q.source === null, "no single venue");
-      const venues = q.aggregation.inputs.map((i) => i.venue?.name).sort();
+      expect(q.basis === "aggregated" && !("venue" in q) && !("source" in q), "no single venue");
       expect(
-        q.aggregation.eligibleObservations === 2 &&
-          venues.join() === ["Coinbase Exchange", "Kraken"].join(),
-        `both venues contribute (got ${venues.join(", ")})`,
+        q.aggregation.eligibleObservations === 2,
+        `both venues contribute (got ${q.aggregation.eligibleObservations})`,
       );
     },
   },
@@ -94,7 +91,7 @@ const markets: Market[] = [
     query: "XAU/USD",
     expect: (q) => {
       expect(q.subject.kind === "instrument" && q.subject.class === "commodity", "gold");
-      expect(q.basis === "aggregated" && q.venue === null, "aggregated, no venue");
+      expect(q.basis === "aggregated" && !("venue" in q), "aggregated, no venue");
       expect(q.priceType === "reference", "reference price");
     },
   },
@@ -108,7 +105,7 @@ const markets: Market[] = [
       );
       expect(q.unit.kind === "asset" && q.unit.code === "USDC", "priced in USDC, not USD");
       expect(q.priceType === "mark", "mark price");
-      expect(q.basis === "venue" && q.venue?.name === "Hyperliquid", "Hyperliquid venue");
+      expect(q.basis === "venue" && q.venue.name === "Hyperliquid", "Hyperliquid venue");
     },
   },
 ];

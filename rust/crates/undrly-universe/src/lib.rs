@@ -156,7 +156,8 @@ pub fn mint(category: Category) -> CanonicalId {
 struct V1 {
     by_key: HashMap<String, String>,
     ids: HashSet<String>,
-    feeds: HashSet<(String, String)>,
+    /// V1's feeds: (source, symbol, price type).
+    feeds: HashSet<(String, String, String)>,
 }
 
 impl V1 {
@@ -177,7 +178,7 @@ impl V1 {
         let feeds = u
             .quote_feeds
             .iter()
-            .map(|f| (f.source.clone(), f.symbol.clone()))
+            .map(|f| (f.source.clone(), f.symbol.clone(), f.price_type.clone()))
             .collect();
         Self { by_key, ids, feeds }
     }
@@ -213,7 +214,7 @@ struct Out {
     listings: BTreeMap<String, ListingRecord>,
     relationships: BTreeSet<(String, String, String)>,
     aliases: BTreeSet<(String, String, String)>,
-    feeds: BTreeMap<(String, String), QuoteFeedRecord>,
+    feeds: BTreeMap<(String, String, String), QuoteFeedRecord>,
     aggregations: BTreeMap<(String, String), QuoteAggregationRecord>,
     universes: Vec<UniverseRecord>,
     /// (section, subject, reason)
@@ -313,16 +314,15 @@ impl Ctx<'_> {
     }
 
     fn feed(&mut self, feed: QuoteFeedRecord) {
-        if self
-            .v1
-            .feeds
-            .contains(&(feed.source.clone(), feed.symbol.clone()))
-        {
+        let key = (
+            feed.source.clone(),
+            feed.symbol.clone(),
+            feed.price_type.clone(),
+        );
+        if self.v1.feeds.contains(&key) {
             return;
         }
-        self.out
-            .feeds
-            .insert((feed.source.clone(), feed.symbol.clone()), feed);
+        self.out.feeds.insert(key, feed);
     }
 
     fn universe(
@@ -950,16 +950,19 @@ fn equities(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
                     figi: None,
                 },
             );
-            ctx.feed(QuoteFeedRecord {
-                source: "alpaca".into(),
-                symbol: ticker.to_owned(),
-                subject: key.clone(),
-                unit: usd.clone(),
-                basis: "venue".into(),
-                venue: Some(iex.clone()),
-                price_type: "last".into(),
-                stale_after_seconds: Some(MARKET_STALE_AFTER),
-            });
+            // IEX's last trade and IEX's top-of-book mid: two feeds.
+            for price_type in ["last", "mid"] {
+                ctx.feed(QuoteFeedRecord {
+                    source: "alpaca".into(),
+                    symbol: ticker.to_owned(),
+                    subject: key.clone(),
+                    unit: usd.clone(),
+                    basis: "venue".into(),
+                    venue: Some(iex.clone()),
+                    price_type: price_type.into(),
+                    stale_after_seconds: Some(MARKET_STALE_AFTER),
+                });
+            }
         }
         if mic == "XNAS" {
             on_nasdaq.insert(ticker.to_owned(), node.clone());

@@ -20,7 +20,7 @@
   "basis": "aggregated",
   "receivedAt": "2026-09-25T07:28:07.100Z",
   "asOf": "2026-09-25T07:28:06.386017Z",
-  "ageMs": 3614,
+  "ageMs": 12.5,
   "freshness": "fresh",
   "change24h": {
     "absolute": "1126.0875000",
@@ -32,8 +32,5 @@
     "method": "mean-venue-mid-v1",
     "eligibleObservations": 2,
     "computedAt": "2026-09-25T07:28:10Z"
-  },
-  "source": {
-    "id": "kraken"
   }
 }
