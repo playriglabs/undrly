@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { changeOf, decimalCompare, spreadOf } from "./decimal.ts";
+import { decimalCompare, spreadOf } from "./decimal.ts";
 import { OBSERVATION_BASES, PriceUnitV1 } from "./market-observation.ts";
 import {
   CurrencyCode,
@@ -8,7 +8,6 @@ import {
   InstrumentId,
   SourceId,
   TimestampString,
-  timestampMicros,
   VenueId,
 } from "./primitives.ts";
 
@@ -18,6 +17,7 @@ export const INSTRUMENT_CLASSES = [
   "crypto_asset",
   "commodity",
   "perpetual_future",
+  "fx",
 ] as const;
 export type InstrumentClass = (typeof INSTRUMENT_CLASSES)[number];
 
@@ -38,9 +38,15 @@ export const UNITS_OF_MEASURE = [
 ] as const;
 export type UnitOfMeasure = (typeof UNITS_OF_MEASURE)[number];
 
+/** A currency named by its canonical id and ISO 4217 code. */
+export const CurrencyRefV1 = z.strictObject({ id: CurrencyId, code: CurrencyCode });
+export type CurrencyRefV1 = z.infer<typeof CurrencyRefV1>;
+
 /**
  * What is priced: one unit of an instrument (a share, one BTC, one troy
- * ounce, one perpetual contract) or of a fiat currency (FX: 1 EUR).
+ * ounce, one perpetual contract, one unit of an FX market's base currency)
+ * or of a fiat currency. An FX market (`class: "fx"`, e.g. `EUR/USD`) states
+ * its base and quote currency; its price is in the quote currency.
  */
 export const PriceSubjectV1 = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -52,6 +58,10 @@ export const PriceSubjectV1 = z.discriminatedUnion("kind", [
     contractMultiplier: DecimalString.optional(),
     /** The physical unit a commodity is priced per; present only when stated. */
     unitOfMeasure: z.enum(UNITS_OF_MEASURE).optional(),
+    /** FX markets only: the currency one unit of which is priced (`EUR` in `EUR/USD`). */
+    baseCurrency: CurrencyRefV1.optional(),
+    /** FX markets only: the currency the price is in (`USD` in `EUR/USD`); equals `unit`. */
+    quoteCurrency: CurrencyRefV1.optional(),
   }),
   z.strictObject({
     id: CurrencyId,
@@ -88,7 +98,7 @@ const priceFields = {
 };
 
 type PriceShape = {
-  subject: { id: string };
+  subject: PriceSubjectV1;
   unit: { id: string };
   basis: string;
   venue: unknown;
@@ -106,6 +116,9 @@ function consistent<T extends PriceShape>(schema: z.ZodType<T>) {
     })
     .refine((q) => q.unit.id !== q.subject.id, {
       message: "a subject cannot be priced in units of itself",
+    })
+    .superRefine((q, ctx) => {
+      for (const issue of fxIssues(q)) ctx.addIssue({ code: "custom", ...issue });
     });
 }
 
@@ -124,24 +137,6 @@ export const ObservationV1 = consistent(
   }),
 );
 export type ObservationV1 = z.infer<typeof ObservationV1>;
-
-/**
- * The price 24 hours before a canonical quote's `asOf`, and the change since.
- * Present only where a trustworthy baseline exists (see `docs/contracts.md`):
- * the canonical quote the same method would have served, fresh, from the
- * same feeds, at `asOf - 24 h`. Otherwise `change24h` is `null`.
- */
-export const Change24hV1 = z.strictObject({
-  /** `price - from`, exact. */
-  absolute: DecimalString,
-  /** `(price - from) / from × 100`, half to even at 4 places (no `%`). */
-  percent: DecimalString,
-  /** The baseline price. */
-  from: DecimalString,
-  /** When the baseline price was current (its own `asOf`). */
-  asOf: TimestampString,
-});
-export type Change24hV1 = z.infer<typeof Change24hV1>;
 
 const QuoteAggregationV1 = z.strictObject({
   method: z.enum(AGGREGATION_METHODS),
@@ -178,7 +173,6 @@ const timingFields = {
   ageMs: z.number().int().min(0),
   /** Policy verdict at read time, against the feed's (or method's) cadence. */
   freshness: z.enum(["fresh", "stale"]),
-  change24h: Change24hV1.nullable(),
   aggregation: QuoteAggregationV1,
 };
 
@@ -214,8 +208,29 @@ export const DerivedQuoteV1 = z.strictObject({
 
 type Issue = { message: string; path?: (string | number)[] };
 
+/** An FX market states both currencies, differing, and is priced in its quote. */
+function fxIssues(q: { subject: PriceSubjectV1; unit: { id: string } }): Issue[] {
+  const s = q.subject;
+  if (s.kind !== "instrument") return [];
+  const stated = s.baseCurrency !== undefined || s.quoteCurrency !== undefined;
+  if (s.class !== "fx") {
+    return stated ? [{ message: "only FX markets state base and quote currencies" }] : [];
+  }
+  if (s.baseCurrency === undefined || s.quoteCurrency === undefined) {
+    return [{ message: "an FX market states its base and quote currency" }];
+  }
+  const issues: Issue[] = [];
+  if (s.baseCurrency.id === s.quoteCurrency.id) {
+    issues.push({ message: "an FX market's base and quote currencies differ" });
+  }
+  if (s.quoteCurrency.id !== q.unit.id) {
+    issues.push({ message: "an FX market is priced in its quote currency" });
+  }
+  return issues;
+}
+
 function quoteIssues(q: {
-  subject: { id: string };
+  subject: PriceSubjectV1;
   unit: { id: string };
   basis: string;
   priceType: string;
@@ -225,10 +240,9 @@ function quoteIssues(q: {
   spread: string | null;
   spreadBps: string | null;
   asOf: string;
-  change24h: Change24hV1 | null;
   aggregation: { method: string; eligibleObservations: number };
 }): Issue[] {
-  const issues: Issue[] = [];
+  const issues: Issue[] = fxIssues(q);
   if (q.unit.id === q.subject.id) {
     issues.push({ message: "a subject cannot be priced in units of itself" });
   }
@@ -258,19 +272,6 @@ function quoteIssues(q: {
     q.aggregation.eligibleObservations !== 1
   ) {
     issues.push({ message: "latest-observation-v1 is its single input" });
-  }
-  if (q.change24h !== null) {
-    const change = changeOf(q.price, q.change24h.from);
-    if (
-      change === null ||
-      change.absolute !== q.change24h.absolute ||
-      change.percent !== q.change24h.percent
-    ) {
-      issues.push({ message: "change24h is price - from, and its percent of from" });
-    }
-    if (timestampMicros(q.change24h.asOf) > timestampMicros(q.asOf) - 86_400_000_000n) {
-      issues.push({ message: "the 24h baseline is at or before asOf - 24 h" });
-    }
   }
   return issues;
 }

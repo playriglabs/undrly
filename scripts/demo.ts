@@ -39,8 +39,7 @@ function quoteLine(q: v1.QuoteV1): string {
   const spread = q.bid === null ? "" : ` [${q.bid} / ${q.ask}, ${q.spreadBps} bps]`;
   const unit = q.unit.code ?? q.unit.id;
   const via = `${q.aggregation.method} over ${q.aggregation.eligibleObservations} observation(s)`;
-  const change = q.change24h === null ? "" : `, 24h ${q.change24h.percent}%`;
-  return `${q.subject.name}: ${q.price} ${unit} ${q.priceType}${spread} ${where} ${via}, as of ${q.asOf} (${q.freshness}, ${q.ageMs} ms)${change}`;
+  return `${q.subject.name}: ${q.price} ${unit} ${q.priceType}${spread} ${where} ${via}, as of ${q.asOf} (${q.freshness}, ${q.ageMs} ms)`;
 }
 
 type Market = {
@@ -82,7 +81,13 @@ const markets: Market[] = [
     market: "fx",
     query: "EUR/USD",
     expect: (q) => {
-      expect(q.subject.kind === "currency" && q.subject.code === "EUR", "EUR is the subject");
+      // V1.2: the subject is the EUR/USD FX market (base EUR, quote USD).
+      expect(
+        q.subject.kind === "instrument" && q.subject.class === "fx",
+        "the EUR/USD FX instrument",
+      );
+      expect(q.subject.baseCurrency?.code === "EUR", "base EUR");
+      expect(q.subject.quoteCurrency?.code === "USD", "quote USD");
       expect(q.unit.kind === "currency" && q.unit.code === "USD", "in USD");
     },
   },

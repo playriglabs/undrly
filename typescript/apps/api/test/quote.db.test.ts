@@ -1,7 +1,7 @@
 /**
  * The public canonical quote against a real PostgreSQL database (synthetic
  * data): basis-specific shape, `spread` / `spreadBps`, `ageMs` versus
- * `freshness`, and `change24h` recomputed from stored observations. Canonical
+ * and `freshness` computed per response. Canonical
  * rows are seeded as the Rust collector writes them. `fetch` is stubbed to
  * fail: the API never contacts an upstream provider.
  *
@@ -437,7 +437,7 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
   };
   const quote = async (query: string, now = NOW) => v1.QuoteV1.parse(await raw(query, now));
 
-  it("BTC/USD: a two-input aggregate with its mean bid/ask, spread and 24 h change", async () => {
+  it("BTC/USD: a two-input aggregate with its mean bid/ask and spread", async () => {
     const body = await raw("BTC");
     expect(Object.keys(body)).toStrictEqual([
       "schemaVersion",
@@ -454,7 +454,6 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
       "asOf",
       "ageMs",
       "freshness",
-      "change24h",
       "aggregation",
     ]);
     const q = v1.QuoteV1.parse(body);
@@ -476,18 +475,11 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
     });
     expect(v1.decimalCompare(q.bid ?? "", q.price)).toBeLessThanOrEqual(0);
     expect(v1.decimalCompare(q.price, q.ask ?? "")).toBeLessThanOrEqual(0);
-    // Baseline: mean of the same two feeds' mids at τ = asOf - 24 h:
-    // (83000.100000 + 82900.130) / 2 at scale 7, as of the older input.
-    // Not Kraken's later 99999.05 (after τ), not Coinbase's older 81000.010.
-    expect(q.change24h).toStrictEqual({
-      absolute: "1126.0875000",
-      percent: "1.3575",
-      from: "82950.1150000",
-      asOf: "2026-09-24T07:27:45.500Z",
-    });
+    // No 24-hour change on quotes: /v1/market states it with its window.
+    expect(body).not.toHaveProperty("change24h");
   });
 
-  it("SUI/USD: aggregated bid/ask are the input means; no baseline mixing venues", async () => {
+  it("SUI/USD: aggregated bid/ask are the input means", async () => {
     const q = await quote("SUI");
     expect(q).toMatchObject({
       price: "1.181200",
@@ -497,12 +489,9 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
       spreadBps: "1.6932",
       aggregation: { eligibleObservations: 2 },
     });
-    // 24 h earlier only Kraken was fresh: a single-venue price is not the
-    // baseline of a two-venue aggregate.
-    expect(q.change24h).toBeNull();
   });
 
-  it("one-input aggregate: that venue's mid, bid and ask; a negative 24 h change", async () => {
+  it("one-input aggregate: that venue's mid, bid and ask", async () => {
     const q = await quote("ETH");
     expect(q).toMatchObject({
       basis: "aggregated",
@@ -512,12 +501,6 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
       spread: "0.0100000",
       spreadBps: "0.0372",
       aggregation: { method: "mean-venue-mid-v1", eligibleObservations: 1 },
-    });
-    expect(q.change24h).toStrictEqual({
-      absolute: "-110.7100000",
-      percent: "-3.9539",
-      from: "2800.0050000",
-      asOf: "2026-09-24T07:28:00Z",
     });
   });
 
@@ -534,7 +517,7 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
     }
   });
 
-  it("equity venue quote: venue and observedAt, no source; spread; no 24 h change", async () => {
+  it("equity venue quote: venue and observedAt, no source; spread", async () => {
     const body = await raw("NVDA", "2026-09-25T20:00:05Z");
     expect(body).not.toHaveProperty("source");
     expect(JSON.stringify(body)).not.toContain("alpaca");
@@ -550,11 +533,9 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
       spreadBps: "4.4435",
       ageMs: 5500,
     });
-    // A price exactly 24 h earlier is stored, but equities trade in sessions.
-    expect(q.change24h).toBeNull();
   });
 
-  it("venue mark without bid/ask: null spread; a zero 24 h change", async () => {
+  it("venue mark without bid/ask: null spread", async () => {
     const q = await quote("BTC-PERP");
     expect(q).toMatchObject({
       basis: "venue",
@@ -566,15 +547,9 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
       spread: null,
       spreadBps: null,
     });
-    expect(q.change24h).toStrictEqual({
-      absolute: "0.0",
-      percent: "0.0000",
-      from: "83924.0",
-      asOf: "2026-09-24T07:25:00Z",
-    });
   });
 
-  it("commodity reference quote: no bid/ask, no spread, no 24 h change", async () => {
+  it("commodity reference quote: no bid/ask, no spread", async () => {
     const q = await quote("XAU");
     expect(q).toMatchObject({
       basis: "aggregated",
@@ -584,15 +559,9 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
       ask: null,
       spread: null,
       spreadBps: null,
-      change24h: null,
       ageMs: 16_000,
       freshness: "fresh",
     });
-  });
-
-  it("a zero 24 h baseline yields no change", async () => {
-    const q = await quote("ZRO");
-    expect(q).toMatchObject({ basis: "venue", price: "0.50", change24h: null });
   });
 
   it("ageMs is elapsed time since asOf (not receivedAt), floored, never negative", async () => {
@@ -621,17 +590,11 @@ describe.skipIf(url === undefined)("canonical quote contract with a database", (
     const wti = await quote("WTI");
     expect(wti.ageMs).toBe(3 * 86_400_000 + 7 * 3_600_000 + 28 * 60_000 + 10_000);
     expect(wti.freshness).toBe("fresh");
-    expect(wti.change24h).toBeNull();
     // BTC-PERP: six minutes old, stale on its 300 s window.
     const perp = await quote("BTC-PERP", "2026-09-25T07:34:09Z");
     expect(perp.ageMs).toBe(361_000);
     expect(perp.freshness).toBe("stale");
     expect(perp.ageMs).toBeLessThan(wti.ageMs);
-  });
-
-  it("change24h depends on asOf, not on the response time", async () => {
-    const [a, b] = [await quote("ETH"), await quote("ETH", "2026-09-25T07:28:30Z")];
-    expect(a.change24h).toStrictEqual(b.change24h);
   });
 
   it("/v1/quotes still exposes each venue observation's own bid and ask", async () => {

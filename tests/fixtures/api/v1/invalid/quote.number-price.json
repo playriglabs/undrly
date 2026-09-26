@@ -27,7 +27,6 @@
   "asOf": "2026-09-25T03:52:18.500Z",
   "ageMs": 1500,
   "freshness": "stale",
-  "change24h": null,
   "aggregation": {
     "method": "latest-observation-v1",
     "eligibleObservations": 1,

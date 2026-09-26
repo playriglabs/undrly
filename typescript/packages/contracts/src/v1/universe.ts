@@ -3,7 +3,14 @@ import { NodeRefV1 } from "./discovery.ts";
 import { SourceId, TimestampString } from "./primitives.ts";
 
 /** Mirrors `undrly_core::UniverseKey`. */
-export const UNIVERSE_KEYS = ["crypto-top100", "sp500", "nasdaq100", "hyperliquid-perps"] as const;
+export const UNIVERSE_KEYS = [
+  "crypto-top100",
+  "sp500",
+  "nasdaq100",
+  "hyperliquid-perps",
+  "fx-major",
+  "fx-southeast-asia",
+] as const;
 export type UniverseKey = (typeof UNIVERSE_KEYS)[number];
 
 const StoredId = z.string().regex(/^[1-9][0-9]*$/, "invalid stored id");

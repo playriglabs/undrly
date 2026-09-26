@@ -1,7 +1,6 @@
 /**
- * Pure market arithmetic for canonical quotes served by the API: quote age
- * and the `mean-venue-mid-v1` price of a set of venue quotes (used for the
- * 24-hour baseline). Exact decimals only; no floating point.
+ * Pure market arithmetic for quotes served by the API: quote age and the
+ * freshness policy's elapsed time. Exact integer arithmetic only.
  */
 import { v1 } from "@undrly/contracts";
 
@@ -15,27 +14,28 @@ export function ageMs(asOf: string, now: Date): number {
   return elapsed <= 0n ? 0 : Number(elapsed / 1000n);
 }
 
+/** Mirrors `undrly_core::FreshnessClock`. */
+export type FreshnessClock = "continuous" | "weekdays";
+
 /**
- * `mean-venue-mid-v1` over venue quotes, exactly as `undrly_core::quote`
- * computes it: `mid_i = (bid_i + ask_i) / 2` at scale
- * `max(scale(bid_i), scale(ask_i)) + 1`; `price = Σ mid_i / n` at scale
- * `max(scale(mid_i)) + 1`, half to even (exact for n ≤ 2). `null` for no
- * quotes or a malformed decimal.
+ * Milliseconds from `from` to `to` that a freshness policy counts: all of
+ * them (`continuous`), or only those on Monday to Friday, UTC (`weekdays`:
+ * for rates published on business days, so the weekend does not age a
+ * Friday rate). No holiday calendar. Never negative. Policy only: `ageMs`
+ * stays literal elapsed time.
  */
-export function meanVenueMid(quotes: { bid: string; ask: string }[]): string | null {
-  const two: v1.Decimal = { mantissa: 2n, scale: 0 };
-  const mids: v1.Decimal[] = [];
-  for (const q of quotes) {
-    const [bid, ask] = [v1.parseDecimal(q.bid), v1.parseDecimal(q.ask)];
-    if (bid === null || ask === null) return null;
-    const mid = v1.divide(v1.add(bid, ask), two, Math.max(bid.scale, ask.scale) + 1);
-    if (mid === null) return null;
-    mids.push(mid);
+export function policyElapsedMs(from: Date, to: Date, clock: FreshnessClock): number {
+  const [start, end] = [from.getTime(), to.getTime()];
+  if (end <= start) return 0;
+  if (clock === "continuous") return end - start;
+  let counted = 0;
+  for (let t = start; t < end; ) {
+    const d = new Date(t);
+    const nextDay = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+    const until = Math.min(nextDay, end);
+    const weekday = d.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) counted += until - t;
+    t = until;
   }
-  const first = mids[0];
-  if (first === undefined) return null;
-  const sum = mids.slice(1).reduce(v1.add, first);
-  const scale = Math.max(...mids.map((m) => m.scale)) + 1;
-  const mean = v1.divide(sum, { mantissa: BigInt(mids.length), scale: 0 }, scale);
-  return mean === null ? null : v1.formatDecimal(mean);
+  return counted;
 }

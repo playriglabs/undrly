@@ -22,12 +22,6 @@
   "asOf": "2026-09-25T07:28:06.386017Z",
   "ageMs": 3614,
   "freshness": "fresh",
-  "change24h": {
-    "absolute": "1126.0875000",
-    "percent": "1.3575",
-    "from": "82950.1150000",
-    "asOf": "2026-09-24T07:28:05.911204Z"
-  },
   "aggregation": {
     "method": "mean-venue-mid-v1",
     "eligibleObservations": 2,
