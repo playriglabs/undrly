@@ -69,6 +69,14 @@ Undrly is up: http://127.0.0.1:$port   (Ctrl-C to stop)
   curl -s localhost:$port/v1/quotes/BTC/USD | jq
   curl -s localhost:$port/v1/quote/NVDA | jq
   curl -s "localhost:$port/v1/search?q=gold" | jq
+
+  Market data (V1.3; fill it with ./scripts/history.sh in another terminal):
+  curl -s "localhost:$port/v1/candles/BTC/USD?interval=1h&limit=5" | jq
+  curl -s localhost:$port/v1/market/AAPL | jq
+  curl -s localhost:$port/v1/derivatives/BTC-PERP | jq
+  curl -s "localhost:$port/v1/history/USD/IDR?limit=5" | jq
+  curl -s localhost:$port/v1/calendar/AAPL | jq
+
   ./scripts/present.sh --step
 
 EOF
