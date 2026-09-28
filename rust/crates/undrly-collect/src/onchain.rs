@@ -14,17 +14,70 @@
 
 use serde::Deserialize;
 use sqlx::PgConnection;
-use undrly_core::{AssetNamespace, Caip2, DisplayName, InstrumentId};
+use undrly_core::{
+    AssetNamespace, Caip2, ChainAsset, CurrencyCode, DisplayName, InstrumentId, Isin, Lei,
+};
 use undrly_ingest::onchain::{
-    ChainBinding, IssuerBinding, IssuerRow, ingest_circle_usdc, ingest_solana_chain,
+    ChainBinding, IssuerBinding, IssuerRow, Tip20Binding, ingest_circle_usdc, ingest_evm_chain,
+    ingest_solana_chain, ingest_tip20_asset,
+};
+use undrly_ingest::tracker::{
+    TrackerBinding, ingest_tracker_deployment, ingest_tracker_final_terms,
 };
 use undrly_ingest::{RawRecord, Resolution};
 use undrly_provider::http::{FetchedRecord, HttpClient};
-use undrly_provider::{circle, solana};
+use undrly_provider::{circle, evm_rpc, rhj, solana};
 
 use crate::Error;
 
 pub const BINDINGS: &str = "data/reference/onchain.json";
+pub const TOKENIZED: &str = "data/reference/tokenized-securities.json";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct Tokenized {
+    #[allow(dead_code)]
+    dataset: String,
+    #[allow(dead_code)]
+    version: u32,
+    #[allow(dead_code)]
+    description: String,
+    products: Vec<ProductEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ProductEntry {
+    product_name: String,
+    product_isin: String,
+    issuer_name: String,
+    issuer_lei: String,
+    underlying_isin: String,
+    currency: String,
+    relationship: String,
+    chain: String,
+    final_terms: FinalTermsEntry,
+    registry: RegistryEntry,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct FinalTermsEntry {
+    source: String,
+    url: String,
+    sha256: String,
+    #[allow(dead_code)]
+    retrieved: String,
+    #[allow(dead_code)]
+    transcribed: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RegistryEntry {
+    source: String,
+    url: String,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -37,6 +90,29 @@ struct Bindings {
     description: String,
     chains: Vec<ChainEntry>,
     issuers: Vec<IssuerEntry>,
+    #[serde(default)]
+    tip20_assets: Vec<Tip20Entry>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct Tip20Entry {
+    chain: String,
+    address: String,
+    instrument_name: String,
+    expect: Tip20Expect,
+    source: String,
+    #[allow(dead_code)]
+    authority: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Tip20Expect {
+    name: String,
+    symbol: String,
+    currency: String,
+    decimals: u8,
 }
 
 #[derive(Deserialize)]
@@ -88,19 +164,28 @@ fn raw(f: &FetchedRecord) -> RawRecord {
 pub async fn run(conn: &mut PgConnection, client: &HttpClient) -> Result<(), Error> {
     let bindings: Bindings = crate::json(BINDINGS)?;
     for c in &bindings.chains {
-        // Only Solana's identity endpoint is implemented.
-        if c.source != solana::SOURCE_ID || c.rpc_url != solana::MAINNET_RPC_URL {
-            return Err(bad(
-                "chain",
-                format!("unsupported source {} at {}", c.source, c.rpc_url),
-            ));
-        }
         let binding = ChainBinding {
             name: DisplayName::new(&c.name).map_err(|e| bad("chain name", e))?,
             caip2: Caip2::parse(&c.caip2).map_err(|e| bad("chain", e))?,
         };
-        let fetched = solana::fetch_genesis_hash(client, &c.rpc_url).await?;
-        let report = ingest_solana_chain(conn, &raw(&fetched), &binding).await?;
+        // Each chain is asked for its own identity by its own method.
+        let report = match (c.source.as_str(), c.rpc_url.as_str()) {
+            (solana::SOURCE_ID, solana::MAINNET_RPC_URL) => {
+                let fetched = solana::fetch_genesis_hash(client, &c.rpc_url).await?;
+                ingest_solana_chain(conn, &raw(&fetched), &binding).await?
+            }
+            (evm_rpc::ROBINHOOD_CHAIN_SOURCE_ID, evm_rpc::ROBINHOOD_CHAIN_MAINNET_RPC)
+            | (evm_rpc::TEMPO_SOURCE_ID, evm_rpc::TEMPO_MAINNET_RPC) => {
+                let fetched = evm_rpc::fetch_chain_id(client, &c.rpc_url).await?;
+                ingest_evm_chain(conn, &raw(&fetched), &c.source, &binding).await?
+            }
+            _ => {
+                return Err(bad(
+                    "chain",
+                    format!("unsupported source {} at {}", c.source, c.rpc_url),
+                ));
+            }
+        };
         println!(
             "onchain: {} ({}): chain {} {}, record {} ({:?})",
             c.name,
@@ -151,6 +236,119 @@ pub async fn run(conn: &mut PgConnection, client: &HttpClient) -> Result<(), Err
             println!(
                 "onchain: REVIEW: {id} {caip19} also represents {} on a bound chain but is not in {}'s current list",
                 binding.instrument, i.issuer
+            );
+        }
+    }
+    for t in &bindings.tip20_assets {
+        if t.source != evm_rpc::TEMPO_SOURCE_ID {
+            return Err(bad(
+                "tip20 asset",
+                format!("unsupported source {}", t.source),
+            ));
+        }
+        let chain = Caip2::parse(&t.chain).map_err(|e| bad("tip20 chain", e))?;
+        let binding = Tip20Binding {
+            asset: ChainAsset::new(chain.namespace(), AssetNamespace::Erc20, &t.address)
+                .map_err(|e| bad("tip20 address", e))?,
+            chain,
+            name: t.expect.name.clone(),
+            symbol: t.expect.symbol.clone(),
+            currency: CurrencyCode::parse(&t.expect.currency)
+                .map_err(|e| bad("tip20 currency", e))?,
+            decimals: t.expect.decimals,
+            instrument_name: DisplayName::new(&t.instrument_name)
+                .map_err(|e| bad("tip20 instrument name", e))?,
+        };
+        let fetched = evm_rpc::fetch_tip20_metadata(
+            client,
+            evm_rpc::TEMPO_MAINNET_RPC,
+            binding.asset.reference(),
+        )
+        .await?;
+        let report = ingest_tip20_asset(conn, &raw(&fetched), &t.source, &binding).await?;
+        println!(
+            "onchain: TIP-20 {caip19}: {name} {} ({}), deployment {} ({}), TRACKS {}, writes {:?}, record {}",
+            report.instrument.id(),
+            resolution(&report.instrument),
+            report.deployment.id(),
+            resolution(&report.deployment),
+            t.expect.currency,
+            report.writes,
+            report.source_record.0.0,
+            caip19 = report.caip19,
+            name = t.instrument_name,
+        );
+    }
+    products(conn, client).await
+}
+
+fn resolution<T>(r: &Resolution<T>) -> &'static str {
+    match r {
+        Resolution::Created(_) => "created",
+        Resolution::Existing(_) => "existing",
+    }
+}
+
+/// Tokenized products (V1.6): each product's Final Terms (reviewed, hash
+/// pinned), then its deployment from the issuer's registry.
+async fn products(conn: &mut PgConnection, client: &HttpClient) -> Result<(), Error> {
+    let tokenized: Tokenized = crate::json(TOKENIZED)?;
+    let bad =
+        |what: &str, e: &dyn std::fmt::Display| Error::Usage(format!("{TOKENIZED}: {what}: {e}"));
+    for p in &tokenized.products {
+        if p.relationship != "TRACKS"
+            || p.final_terms.source != rhj::FINAL_TERMS_SOURCE_ID
+            || p.registry.source != rhj::API_SOURCE_ID
+            || p.registry.url != rhj::ASSETS_URL
+        {
+            return Err(bad(
+                "product",
+                &format!("unsupported binding {}", p.product_isin),
+            ));
+        }
+        let binding = TrackerBinding {
+            final_terms_sha256: p.final_terms.sha256.clone(),
+            issuer_name: DisplayName::new(&p.issuer_name).map_err(|e| bad("issuer name", &e))?,
+            issuer_lei: Lei::parse(&p.issuer_lei).map_err(|e| bad("issuer LEI", &e))?,
+            product_name: DisplayName::new(&p.product_name).map_err(|e| bad("product name", &e))?,
+            product_isin: Isin::parse(&p.product_isin).map_err(|e| bad("product ISIN", &e))?,
+            underlying_isin: Isin::parse(&p.underlying_isin)
+                .map_err(|e| bad("underlying ISIN", &e))?,
+            currency: CurrencyCode::parse(&p.currency).map_err(|e| bad("currency", &e))?,
+            chain: Caip2::parse(&p.chain).map_err(|e| bad("chain", &e))?,
+        };
+        let fetched = rhj::fetch_final_terms(client, &p.final_terms.url).await?;
+        let report = ingest_tracker_final_terms(conn, &raw(&fetched), &binding).await?;
+        let tracks = report.underlying.map_or_else(
+            || format!("unresolved ({} is not in Undrly)", p.underlying_isin),
+            |u| u.to_string(),
+        );
+        println!(
+            "onchain: {} {}: product {} ({}), issuer {} ({}), TRACKS {tracks}, record {}",
+            p.issuer_name,
+            p.product_isin,
+            report.product.id(),
+            resolution(&report.product),
+            report.issuer.id(),
+            resolution(&report.issuer),
+            report.source_record.0.0,
+        );
+        let fetched = rhj::fetch_assets(client).await?;
+        let report = ingest_tracker_deployment(conn, &raw(&fetched), &binding).await?;
+        println!(
+            "onchain: {} {}: deployment {} ({:?}), REPRESENTS {} ({:?}), record {}",
+            p.issuer_name,
+            report.caip19,
+            report.deployment.id(),
+            report.deployment_write,
+            p.product_isin,
+            report.represents,
+            report.source_record.0.0,
+        );
+        for (id, caip19) in &report.others {
+            println!(
+                "onchain: REVIEW: {id} {caip19} also represents {} on {}",
+                p.product_isin, p.chain
             );
         }
     }

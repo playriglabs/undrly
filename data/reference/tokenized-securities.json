@@ -1,0 +1,36 @@
+{
+  "dataset": "undrly-tokenized-securities",
+  "version": 1,
+  "description": "Reviewed transcriptions of tokenized products' Final Terms (docs/v1.6-robinhood-chain.md). Each entry is bound to the exact document by its SHA-256: ingestion fetches the document, stores it raw, and refuses the entry if the bytes differ. No contract address is stated here; the deployment comes only from the issuer's registry, selected by the Underlying's ISIN on the stated chain. Reviewed 2026-09-28.",
+  "products": [
+    {
+      "productName": "NVIDIA • Robinhood Token (RHJ Series 1)",
+      "productIsin": "JE00BX9C6J83",
+      "issuerName": "Robinhood Assets (Jersey) Limited",
+      "issuerLei": "984500ADFHQZ9D6B9A29",
+      "underlyingIsin": "US67066G1040",
+      "currency": "USD",
+      "relationship": "TRACKS",
+      "chain": "eip155:4663",
+      "finalTerms": {
+        "source": "rhj-final-terms",
+        "url": "https://cdn.robinhood.com/assets/robinhood/legal/rhj_final_terms_for_tokenised_debt_securities_linked_to_nvidia.pdf",
+        "sha256": "75e5bdd6db275b0482c9df28e387357b3e517890a20f26b921f8c422c31ae0f4",
+        "retrieved": "2026-09-28",
+        "transcribed": {
+          "ISIN of the Product": "JE00BX9C6J83 (Series 1)",
+          "Issuer": "Robinhood Assets (Jersey) Limited, LEI 984500ADFHQZ9D6B9A29",
+          "Type": "collateralised tracker certificates ... obligations of the Issuer that track the market value of the Underlying",
+          "Underlying": "a share of NVIDIA Corporation (LEI 549300S4KLFTLO7GSQ80); ISIN US67066G1040; Bloomberg Ticker NVDA; Primary Exchange Nasdaq Global Select Market",
+          "Product currency": "USD; Redemption Amount paid in USD",
+          "Rights over the Underlying": "no shareholder rights, no voting rights, no direct right to dividends",
+          "Supported Blockchain System": "Robinhood Chain"
+        }
+      },
+      "registry": {
+        "source": "rhj-api",
+        "url": "https://api.robinhood.com/rhj/assets"
+      }
+    }
+  ]
+}

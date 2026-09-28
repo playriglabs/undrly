@@ -84,7 +84,7 @@ const UNIVERSE_DIR: &str = "data/universe";
 
 /// Every source. Redistribution starts `unknown` (treated as restricted)
 /// until a human reviews each source's terms.
-const SOURCES: [(&str, &str); 24] = [
+const SOURCES: [(&str, &str); 28] = [
     ("undrly-curated", "Undrly curated reference data"),
     (
         "undrly-universe",
@@ -127,6 +127,19 @@ const SOURCES: [(&str, &str); 24] = [
         "solana-mainnet-rpc",
         "Solana mainnet RPC (api.mainnet.solana.com)",
     ),
+    (
+        "robinhood-chain-rpc",
+        "Robinhood Chain mainnet RPC (rpc.mainnet.chain.robinhood.com)",
+    ),
+    (
+        "rhj-api",
+        "Robinhood Assets (Jersey) Limited asset registry (api.robinhood.com/rhj)",
+    ),
+    (
+        "rhj-final-terms",
+        "Robinhood Assets (Jersey) Limited Final Terms (documents)",
+    ),
+    ("tempo-rpc", "Tempo Mainnet RPC (rpc.tempo.xyz)"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
