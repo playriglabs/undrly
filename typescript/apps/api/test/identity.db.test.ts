@@ -190,6 +190,19 @@ describe.skipIf(url === undefined)("V1.4 cross-ecosystem identity", () => {
     await alias("token", "instrument", "EXMP");
     await edge("stock", "instrument", "ISSUED_BY", "issuer", "entity");
     await edge("token", "instrument", "TOKENIZES", "stock", "instrument");
+    // A tracker certificate of another issuer (V1.6): its own ISIN, its own
+    // issuer, TRACKS the stock; never TOKENIZES, never the stock's issuer.
+    await sql`INSERT INTO entities (id, entity_kind, name, source_record_id)
+              VALUES (${await node("trackerIssuer", "entity")}, 'company', 'Tracker Issuer (fixture)', ${rec ?? ""})`;
+    await instrument("tracker", "tokenized_security", "Example tracker certificate (fixture)");
+    await sql`INSERT INTO identifiers (scheme, value, node_id, node_category, source_id, received_at, source_record_id)
+              VALUES ('isin', 'JE00BX9C6J83', ${u("tracker")}, 'instrument', 'undrly-fixture', ${AT}, ${rec ?? ""})`;
+    await edge("tracker", "instrument", "ISSUED_BY", "trackerIssuer", "entity");
+    await edge("tracker", "instrument", "TRACKS", "stock", "instrument");
+    // A stablecoin tracking its reference currency (V1.7): TRACKS USD, never USD.
+    await instrument("stable", "crypto_asset", "Example USD stablecoin (fixture)");
+    await alias("stable", "instrument", "EXUSD");
+    await edge("stable", "instrument", "TRACKS", "usd", "currency");
     await deployment("tokenSol", "solana", "solana", "token", TOKEN_MINT);
     await edge("tokenSol", "deployment", "REPRESENTS", "token", "instrument");
 
@@ -606,5 +619,44 @@ describe.skipIf(url === undefined)("V1.4 cross-ecosystem identity", () => {
       ["mark", null],
       ["mid", "83520.0"],
     ]);
+  });
+
+  it("a tracker certificate TRACKS the stock without becoming it (V1.6)", async () => {
+    const e = await explainOf("isin:JE00BX9C6J83");
+    const c = e.candidates[0];
+    expect(c?.resolution).toMatchObject({ kind: "node", node: { class: "tokenized_security" } });
+    expect(c?.relationships.map((r) => [r.relationshipType, r.object.name])).toStrictEqual([
+      ["ISSUED_BY", "Tracker Issuer (fixture)"],
+      ["TRACKS", "Example common stock (fixture)"],
+    ]);
+    expect(c?.identifiers).toStrictEqual([{ namespace: "isin", value: "JE00BX9C6J83" }]);
+    // The stock: same resolution, same issuer and identifiers as before;
+    // the tracker only appears as an incoming TRACKS edge in its graph.
+    expect(nodeOf(await resolve("isin:US67066G1040"))?.id).toBe(text("instrument", "stock"));
+    const stock = (await explainOf("isin:US67066G1040")).candidates[0];
+    expect(stock?.relationships.map((r) => r.relationshipType)).toStrictEqual([
+      "ISSUED_BY",
+      "LISTED_ON",
+    ]);
+    const g = await graphOf("stock");
+    expect(
+      g.edges.filter((x) => x.relationshipType === "TRACKS").map((x) => x.subject.id),
+    ).toStrictEqual([text("instrument", "tracker")]);
+  });
+
+  it("a stablecoin TRACKS its reference currency and is never that currency (V1.7)", async () => {
+    const e = await explainOf("EXUSD");
+    const c = e.candidates[0];
+    expect(c?.resolution).toMatchObject({ kind: "node", node: { class: "crypto_asset" } });
+    expect(
+      c?.relationships.map((r) => [r.relationshipType, r.object.kind, r.object.name]),
+    ).toStrictEqual([["TRACKS", "currency", "US Dollar"]]);
+    // USD still resolves to the currency, with no edge to the stablecoin.
+    const usd = await explainOf("USD");
+    expect(usd.candidates[0]?.resolution).toMatchObject({
+      kind: "node",
+      node: { kind: "currency" },
+    });
+    expect(usd.candidates[0]?.relationships).toStrictEqual([]);
   });
 });
