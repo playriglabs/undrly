@@ -34,6 +34,10 @@ onchain`; see [`../v1.5-solana.md`](../v1.5-solana.md):
 | --- | --- | --- | --- | --- |
 | `solana-mainnet-rpc` | `POST https://api.mainnet.solana.com {"jsonrpc":"2.0","id":1,"method":"getGenesisHash"}` | none | the Solana mainnet chain (CAIP-2 from the genesis hash) | Solana public RPC usage policy (rate limits; public endpoints are not for production traffic) |
 | `circle` | `GET https://developers.circle.com/stablecoins/usdc-contract-addresses.md` | none | USDC's deployment on each bound chain (Solana) | Circle developer documentation terms; only the mainnet table is read, the page is stored raw |
+| `robinhood-chain-rpc` | `POST https://rpc.mainnet.chain.robinhood.com eth_chainId` | none | Robinhood Chain (`eip155:4663`) (V1.6) | public endpoint, rate-limited, "not recommended for production use" |
+| `rhj-final-terms` | the product's Final Terms PDF (`cdn.robinhood.com/…/rhj_final_terms_…nvidia.pdf`) | none | the NVIDIA Stock Token, its issuer (RHJ) and what it tracks, via a reviewed, hash-pinned transcription (V1.6) | RHJ website/legal terms; offer restrictions apply to the product, not to reading |
+| `rhj-api` | `GET https://api.robinhood.com/rhj/assets` | none | the token's deployment on Robinhood Chain (V1.6) | Robinhood API terms; 60 req/s |
+| `tempo-rpc` | `POST https://rpc.tempo.xyz` `eth_chainId`; one batch of `eth_chainId` + `eth_call` name/symbol/currency/decimals on pathUSD | none | Tempo (`eip155:4217`), pathUSD's deployment and that it TRACKS USD (V1.7, [`../v1.7-tempo.md`](../v1.7-tempo.md)) | public RPC; Tempo terms of use |
 
 ## Semantics that must not be blurred
 

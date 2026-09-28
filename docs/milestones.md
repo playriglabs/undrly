@@ -17,6 +17,8 @@ committed and verified locally; V1.2 and V1.3 are not yet pushed or tagged.
 | V1.3: market data surface | Candles, reference history, market status/statistics, perp data | committed |
 | V1.4: cross-ecosystem identity | Chains, deployments, tokenized securities, `/v1/explain` | local, branch `worldsfair` |
 | V1.5: Solana production identity | First production chain and deployment: Solana mainnet, Circle's USDC mint | local, branch `worldsfair` |
+| V1.6: Robinhood Chain | A tokenized security distinct from its underlying: RHJ's NVIDIA tracker on Robinhood Chain | local, branch `worldsfair` |
+| V1.7: Tempo | A payment stablecoin distinct from its fiat: pathUSD on Tempo `TRACKS` USD | local, branch `worldsfair` |
 
 **Today:**
 - 951 canonical instruments (503 equities, 219 crypto assets, 178
@@ -194,6 +196,40 @@ Ontology only: no new provider or production data
 - Perpetual quotes carry bid/ask: each perpetual's Hyperliquid order book
   (`l2Book`) is a second feed; `mark-with-venue-book-v1` keeps the mark as
   price and attaches the book's best levels, with their time (`bidAskAsOf`).
+
+## V1.6: Robinhood Chain / tokenized securities
+
+[`v1.6-robinhood-chain.md`](v1.6-robinhood-chain.md). Research first, then
+one production asset.
+
+- Official sources: Robinhood Chain docs, RHJ issuer site, the NVIDIA Stock
+  Token's Final Terms, RHJ's asset registry, the chain's own `eth_chainId`.
+- Stock Tokens are **collateralised tracker certificates** (debt securities of
+  Robinhood Assets (Jersey) Limited) that track the underlying's market value
+  with **no legal or beneficial rights** in it: `TRACKS` (new rule, migration
+  0021), not `TOKENIZES` or `DERIVES_FROM`.
+- Production: Robinhood Chain `eip155:4663`; RHJ (LEI); the NVIDIA Stock Token
+  (its own ISIN `JE00BX9C6J83`, `ISSUED_BY` RHJ, `TRACKS` NVIDIA common stock
+  by ISIN); its deployment `REPRESENTS` it. Facts from a reviewed,
+  SHA-256-pinned transcription of the Final Terms; the address only from the
+  registry.
+- Bulk import not safe: Undrly's other equities have no authoritative ISIN,
+  so their tokens' underlyings cannot be matched (AAPL included).
+
+## V1.7: Tempo / payment identity
+
+[`v1.7-tempo.md`](v1.7-tempo.md). Research first, then one production asset.
+
+- Tempo Mainnet `eip155:4217` from its own `eth_chainId` (Moderato testnet
+  42431 rejected). No native gas token; fees are paid in USD TIP-20 tokens.
+- pathUSD: TIP-20 predeployed at genesis; the chain's own name, symbol,
+  `currency()` and decimals, read in one batch with the chain id and checked
+  against the binding (mismatch fails closed). A `crypto_asset` of its own
+  that `TRACKS` USD (new rule instrument → currency, migration 0022); never
+  USD, USD Coin or Tether.
+- Issuer unresolved (Tempo names Bridge; no Bridge source names pathUSD or the
+  legal entity): no `ISSUED_BY`. USDC.e (bridged) not ingested.
+- No settlement-context endpoint: graph, explain and markets already answer.
 
 ---
 

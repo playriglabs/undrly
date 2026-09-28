@@ -182,6 +182,11 @@ V1.4 additions (cross-ecosystem identity,
 - `GraphV1` gains `deployments` (`{ id, chain, caip19 }`) and `markets`
   (`{ unit, venues }`), each **omitted** when empty, so earlier documents are
   unchanged.
+- V1.6: relationship rule `TRACKS` (instrument → instrument: a tracker whose
+  terms track the object's market value, without a claim on it).
+- V1.7: relationship rule `TRACKS` instrument → currency (a payment
+  stablecoin → the reference currency it is designed to be worth, e.g.
+  pathUSD → USD). The token is never the currency; no response shape changes.
 - V1.5: aggregation method `mark-with-venue-book-v1` (perpetuals): a venue
   mark with the same venue's best bid/ask when its book is within 60 s;
   `VenueQuoteV1.bidAskAsOf` (the book's time) is present exactly then, and

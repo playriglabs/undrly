@@ -38,6 +38,8 @@ extension (created by migration 0001).
 | 0018 | `chains` | blockchain networks, one per CAIP-2 id (`eip155`, `solana`) |
 | 0018 | `deployments` | an asset on one chain, one per (chain, CAIP-19 asset namespace, reference); namespace/format/chain consistency enforced by constraints |
 | 0018 | — | categories `chain`, `deployment`; class `tokenized_security`; rules `REPRESENTS` deployment → instrument, `TOKENIZES` instrument → instrument |
+| 0021 | — | rule `TRACKS` instrument → instrument (tracker certificates, V1.6) |
+| 0022 | — | rule `TRACKS` instrument → currency (stablecoin → reference currency, V1.7) |
 | 0020 | — | aggregation method `mark-with-venue-book-v1` in `quote_aggregations` and `canonical_quotes`; such a quote is a venue mark (`canonical_quotes_mark_is_venue`) |
 | 0019 | — | rule `MARGINED_IN` instrument → currency \| instrument; withdraws Hyperliquid feed declarations (re-declared by `seed` in their documented price unit) and drops perpetuals' derived canonical quotes; observations, contexts and bars stay as normalized |
 

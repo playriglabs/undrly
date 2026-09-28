@@ -489,6 +489,8 @@ fund        HOLDS           instrument
 fund        TRACKS          index | instrument
 instrument  MEMBER_OF       index
 instrument  TOKENIZES       instrument      (wrapped/bridged/share-backed claim → what backs it)
+instrument  TRACKS          instrument      (tracker → what its terms track; no claim on it; V1.6)
+instrument  TRACKS          currency        (stablecoin → its reference currency; never that currency; V1.7)
 deployment  REPRESENTS      instrument      (the instrument on one chain)
 instrument  PRICED_BY       oracle feed
 instrument  AVAILABLE_ON    venue | chain   (not stored: a deployment expresses chain presence)

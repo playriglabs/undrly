@@ -74,10 +74,17 @@ set and equals the database's `relationship_rules`. `DERIVES_FROM` is
 storable instrument → instrument (a perpetual → its underlying). V1.4 adds
 `TOKENIZES` instrument → instrument and `REPRESENTS` deployment → instrument;
 V1.4.1 adds `MARGINED_IN` instrument → currency | instrument (collateral).
+V1.6 makes `TRACKS` instrument → instrument storable: a tracker (e.g. a
+collateralised tracker certificate issued as a token) → the instrument whose
+market value its terms track; it confers no claim on that instrument, unlike
+`TOKENIZES`, and is not a derivative contract (`DERIVES_FROM`).
+V1.7 adds `TRACKS` instrument → currency: a stablecoin → the fiat currency
+one unit is designed to be worth (TIP-20 `currency()`); USD, USD Coin, Tether
+and pathUSD stay four distinct objects.
 A derivative's price unit (`DENOMINATED_IN`), the asset its cash flows are
 paid in (`SETTLES_IN`) and its collateral (`MARGINED_IN`) are separate facts.
 `DEPLOYED_ON` is projected from a deployment's chain. Types with no rules yet
-(`HOLDS`, `TRACKS`, `MEMBER_OF`, `PRICED_BY`, `AVAILABLE_ON`, `RELATED_TO`)
+(`HOLDS`, `MEMBER_OF`, `PRICED_BY`, `AVAILABLE_ON`, `RELATED_TO`)
 cannot be constructed. Provenance is mandatory. A relationship is a current
 assertion by a source; validity periods are deferred.
 
