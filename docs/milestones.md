@@ -19,12 +19,13 @@ committed and verified locally; V1.2 and V1.3 are not yet pushed or tagged.
 | V1.5: Solana production identity | First production chain and deployment: Solana mainnet, Circle's USDC mint | local, branch `worldsfair` |
 | V1.6: Robinhood Chain | A tokenized security distinct from its underlying: RHJ's NVIDIA tracker on Robinhood Chain | local, branch `worldsfair` |
 | V1.7: Tempo | A payment stablecoin distinct from its fiat: pathUSD on Tempo `TRACKS` USD | local, branch `worldsfair` |
+| V1.8: Agent / MCP discovery | Nine read-only MCP tools over the same API code; four ecosystem journeys | local, branch `worldsfair` |
 
 **Today:**
 - 951 canonical instruments (503 equities, 219 crypto assets, 178
   perpetuals, 37 FX, 14 commodities) and 803 priced markets.
 - 22 sources, most for quotes, a few for reference data.
-- Eleven read endpoints.
+- Eleven read endpoints, and an MCP server (V1.8) with nine read-only tools.
 - `scripts/check.sh` is green and `scripts/demo.sh` passes 22/22.
 
 ---
@@ -231,6 +232,27 @@ one production asset.
   legal entity): no `ISSUED_BY`. USDC.e (bridged) not ingested.
 - No settlement-context endpoint: graph, explain and markets already answer.
 
+## V1.8: Agent / MCP financial discovery
+
+[`v1.8-mcp.md`](v1.8-mcp.md). A thin interface, not a second architecture.
+
+- `typescript/apps/mcp`: MCP server on stdio (official TypeScript SDK v2,
+  spec 2026-07-28 and 2025-11-25). It reads through the API's own routes
+  (in process over a read-only pool, or over HTTP); no SQL, no resolver of
+  its own.
+- Nine tools: search, resolve, explain, get_instrument (identifiers + data
+  availability per market), graph (bounded, filterable, counted), quote,
+  markets (listing / market / feed kept apart), history (bounded candles or
+  reference series), derivatives (price unit, margin and settlement kept
+  apart). Resource `undrly://vocabulary`. No prompts; no one-shot discovery
+  tool (it would have to pick among ambiguous candidates).
+- Structured errors: `not_found`, `ambiguous`, `invalid_query`,
+  `invalid_identifier`, `no_data`, `unsupported`, `internal` (no leaks).
+- API: `?unit=<id>` selects one market (additive).
+- Journeys (Hyperliquid, Solana, Robinhood Chain, Tempo) and ten semantic
+  invariants frozen in fixture tests; `scripts/mcp.sh` verifies the stdio
+  server over production data.
+
 ---
 
 ## Principles held throughout
@@ -271,5 +293,5 @@ one production asset.
 - Label `/v1/quotes` internal before any public exposure.
 - Phase 5: cross-source identity resolution
   ([`phase-5-identity-resolution.md`](phase-5-identity-resolution.md)).
-- Later, per `AGENT.md`: public site and data explorer, SDK, agent/MCP
-  layer, streaming.
+- Later, per `AGENT.md`: public site and data explorer, SDK, remote
+  (Streamable HTTP) MCP, streaming.

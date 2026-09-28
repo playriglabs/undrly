@@ -253,7 +253,8 @@ undrly/
 │   └── Cargo.toml
 ├── typescript/
 │   ├── apps/
-│   │   └── api/
+│   │   ├── api/
+│   │   └── mcp/
 │   └── packages/
 │       ├── contracts/
 │       └── config/
@@ -266,7 +267,7 @@ undrly/
 ```
 
 Do not create empty packages for hypothetical future features such as
-SDK, billing, MCP, or streaming.
+SDK, billing, or streaming. (`apps/mcp` exists since V1.8; see §30.)
 
 Crate boundaries:
 
@@ -1033,20 +1034,31 @@ Core Undrly semantics remain unchanged between hackathons.
 
 ---
 
-## 30. Agent / MCP Layer --- Later
+## 30. Agent / MCP Layer
 
-Agents are future consumers, not V0.
+V1.8 (`typescript/apps/mcp`, [`docs/v1.8-mcp.md`](docs/v1.8-mcp.md)): a
+read-only, stateless MCP server on stdio.
 
-Potential tools:
+Tools:
 
 ```text
-resolve_instrument
-get_instrument
-get_instrument_graph
-get_markets
-get_price
-find_onchain_representations
+search_instruments      resolve_instrument     explain_instrument
+get_instrument          get_instrument_graph   get_quote
+get_markets             get_history            get_derivatives
 ```
+
+Rules:
+
+- MCP is an interface, not a second architecture. It reads through the
+  API's own routes (`createApp` in process, or HTTP); it has no SQL and no
+  resolver, relationship or pricing logic of its own.
+- MCP never creates identity, never picks among ambiguous candidates, never
+  fills a missing relationship or issuer, and never collapses price unit,
+  margin and settlement into one "currency".
+- Every result keeps its unit and provenance; failures are structured
+  (`not_found`, `ambiguous`, `invalid_query`, `invalid_identifier`,
+  `no_data`, `unsupported`, `internal`) and never leak internals.
+- Responses are bounded (search, graph lists, history length).
 
 LLMs must never become the authority for financial equivalence.
 Deterministic Undrly data remains authoritative.

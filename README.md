@@ -100,6 +100,28 @@ Candles are one venue's trade bars (Kraken, Hyperliquid, IEX; not named in the r
 `4h` is derived from four complete hours, never filled. Reference rates have
 history, never OHLC. Missing data is `null` or `404 no_data`.
 
+## Agents / MCP (V1.8, local)
+
+Undrly as an MCP server (stdio) for AI agents: nine read-only tools over the
+same resolver, explain, graph and market-data code as the REST API
+([`docs/v1.8-mcp.md`](docs/v1.8-mcp.md)). It provides stored facts with their
+units and provenance; it never infers, ranks or writes.
+
+```bash
+UNDRLY_DB=undrly_v14 ./scripts/local-db.sh mcp.sh    # verify the server end to end (both protocol eras)
+```
+
+```json
+{ "mcpServers": { "undrly": {
+    "command": "bun",
+    "args": ["run", "<path to undrly>/typescript/apps/mcp/src/stdio.ts"],
+    "env": { "DATABASE_URL": "postgres://undrly:<password>@127.0.0.1:55432/undrly_v14" } } } }
+```
+
+Tools: `search_instruments`, `resolve_instrument`, `explain_instrument`,
+`get_instrument`, `get_instrument_graph`, `get_quote`, `get_markets`,
+`get_history`, `get_derivatives`; resource `undrly://vocabulary`.
+
 ## Quickstart
 
 Needs Docker, Rust (`rustup`), Bun ≥ 1.4 and `jq`.
@@ -155,6 +177,9 @@ All routes are `GET`, read-only, and answer from Undrly's own storage.
   newer of the last IEX trade and IEX's book mid.
 - **Errors** are JSON: `bad_request` (400), `not_found` / `no_quote` (404),
   `ambiguous` (409).
+- **One market by id** (V1.8): the quote, quotes, candles, history, market,
+  derivatives and calendar routes take `?unit=<currency or asset id>` to pick
+  one of an instrument's markets.
 
 Full contract: [`docs/contracts.md`](docs/contracts.md).
 
@@ -231,11 +256,12 @@ undrly/
 │   └── undrly-collect/     collector binary (seed, poll)
 ├── typescript/
 │   ├── apps/api/           read-only Hono API
+│   ├── apps/mcp/           read-only MCP server (stdio) over the API routes
 │   └── packages/contracts/ JSON API contract (Zod)
 ├── database/migrations/    PostgreSQL schema
 ├── data/demo/              curated demo universe
 ├── tests/fixtures/         captured source responses and contract fixtures
-├── scripts/                dev.sh, present.sh, demo.sh, check.sh
+├── scripts/                dev.sh, present.sh, demo.sh, check.sh, worldsfair.sh, mcp.sh
 └── docs/                   design notes
 ```
 
