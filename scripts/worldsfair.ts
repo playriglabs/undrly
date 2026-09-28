@@ -203,14 +203,166 @@ await check(
 
 // --- Not yet integrated ------------------------------------------------------
 
-notConfigured(
+// --- Robinhood Chain (V1.6) ----------------------------------------------------
+
+// RHJ's Final Terms for the NVIDIA Stock Token (docs/v1.6-robinhood-chain.md).
+const RH_CHAIN = "eip155:4663";
+const RH_TOKEN_ISIN = "JE00BX9C6J83";
+const NVDA_ISIN = "US67066G1040";
+const RH_DEPLOYMENT = `${RH_CHAIN}/erc20:0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec`;
+
+await check("Robinhood Chain", "the chain is eip155:4663 (its own eth_chainId)", async () => {
+  const chain = node(await explain(`caip2:${RH_CHAIN}`));
+  expect(chain.kind === "chain" && chain.name === "Robinhood Chain", "Robinhood Chain");
+  return `${chain.id} = ${RH_CHAIN}`;
+});
+
+await check(
   "Robinhood Chain",
-  "no authoritative tokenized-security or chain source integrated (V1.5 scope)",
+  "the NVIDIA Stock Token is RHJ's tracker, distinct from NVIDIA common stock",
+  async () => {
+    const e = await explain(`isin:${RH_TOKEN_ISIN}`);
+    const token = node(e);
+    expect(token.class === "tokenized_security", "a tokenized security");
+    const c = e.candidates[0];
+    const rel = (t: string) => c?.relationships.filter((r) => r.relationshipType === t) ?? [];
+    const issuer = rel("ISSUED_BY");
+    expect(
+      issuer.length === 1 && issuer[0]?.object.name === "Robinhood Assets (Jersey) Limited",
+      "issued by RHJ, not NVIDIA",
+    );
+    const share = node(await explain(`isin:${NVDA_ISIN}`));
+    expect(share.class === "equity" && share.id !== token.id, "the share is its own equity");
+    const tracks = rel("TRACKS");
+    expect(tracks.length === 1 && tracks[0]?.object.id === share.id, "TRACKS NVIDIA common stock");
+    expect(rel("TOKENIZES").length === 0 && rel("DERIVES_FROM").length === 0, "only TRACKS");
+    expect(
+      c?.relationships.every((r) => r.provenance.sourceId === "rhj-final-terms") === true,
+      "asserted by the Final Terms record",
+    );
+    // Identifiers stay on their own object.
+    expect(
+      JSON.stringify(c?.identifiers) ===
+        JSON.stringify([{ namespace: "isin", value: RH_TOKEN_ISIN }]),
+      "the token has only its own ISIN",
+    );
+    const shareExplain = await explain(`isin:${NVDA_ISIN}`);
+    const shareIds = shareExplain.candidates[0]?.identifiers.map((i) => i.value) ?? [];
+    expect(!shareIds.includes(RH_TOKEN_ISIN), "the share never gets the token's ISIN");
+    const shareIssuer = shareExplain.candidates[0]?.relationships.find(
+      (r) => r.relationshipType === "ISSUED_BY",
+    );
+    expect(shareIssuer?.object.name === "NVIDIA Corporation", "the share keeps its issuer");
+    return `${token.name} (${token.class}) TRACKS ${share.name}; issuer ${issuer[0]?.object.name}`;
+  },
 );
-notConfigured(
+
+await check(
+  "Robinhood Chain",
+  "its deployment REPRESENTS the token and is DEPLOYED_ON Robinhood Chain",
+  async () => {
+    const e = await explain(`caip19:${RH_DEPLOYMENT}`);
+    const d = node(e);
+    expect(d.kind === "deployment", "a deployment");
+    const rels = e.candidates[0]?.relationships ?? [];
+    const represents = rels.find((r) => r.relationshipType === "REPRESENTS");
+    expect(represents?.object.kind === "instrument", "REPRESENTS an instrument");
+    expect(represents.provenance.sourceId === "rhj-api", "asserted by RHJ's registry");
+    const token = node(await explain(`isin:${RH_TOKEN_ISIN}`));
+    expect(represents.object.id === token.id, "REPRESENTS the token, not the share");
+    const on = rels.find((r) => r.relationshipType === "DEPLOYED_ON");
+    expect(on?.object.name === "Robinhood Chain" && on.projected, "DEPLOYED_ON Robinhood Chain");
+    const bare = await explain("0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC");
+    expect(bare.status === "not_found", "an address without its chain is not identity");
+    return `${d.id} ${RH_DEPLOYMENT}`;
+  },
+);
+
+await check(
+  "Robinhood Chain",
+  "NVDA and AAPL still resolve to the traditional equities",
+  async () => {
+    const lines = [];
+    for (const q of ["NVDA", "AAPL"]) {
+      const n = node(await explain(q));
+      expect(n.class === "equity", `${q} is an equity`);
+      lines.push(`${q} → ${n.name}`);
+    }
+    return lines.join(", ");
+  },
+);
+// --- Tempo (V1.7) ---------------------------------------------------------------
+
+// Tempo Mainnet and pathUSD, a TIP-20 predeployed at genesis
+// (docs/v1.7-tempo.md). Expectations only; the data is the chain's answers.
+const TEMPO = "eip155:4217";
+const PATH_USD = `${TEMPO}/erc20:0x20c0000000000000000000000000000000000000`;
+
+await check(
   "Tempo",
-  "no authoritative chain or stablecoin deployment source integrated (V1.5 scope)",
+  "the chain is eip155:4217 (its own eth_chainId), not the testnet",
+  async () => {
+    const chain = node(await explain(`caip2:${TEMPO}`));
+    expect(chain.kind === "chain" && chain.name === "Tempo", "Tempo");
+    const testnet = await explain("caip2:eip155:42431");
+    expect(testnet.status === "not_found", "Moderato (42431) was never ingested");
+    return `${chain.id} = ${TEMPO}`;
+  },
 );
+
+await check("Tempo", "pathUSD is its own crypto asset that TRACKS USD", async () => {
+  const e = await explain("pathUSD");
+  const asset = node(e);
+  expect(asset.kind === "instrument" && asset.class === "crypto_asset", "a crypto asset");
+  const rels = e.candidates[0]?.relationships ?? [];
+  expect(rels.length === 1, "one relationship: its reference currency");
+  const tracks = rels[0];
+  expect(
+    tracks?.relationshipType === "TRACKS" && tracks.object.kind === "currency",
+    "TRACKS a currency",
+  );
+  expect(tracks.object.name === "US Dollar", "the US Dollar");
+  expect(tracks.provenance.sourceId === "tempo-rpc", "asserted by the chain's own answer");
+  expect(!rels.some((r) => r.relationshipType === "ISSUED_BY"), "issuer unresolved, not guessed");
+  // USD, USDC, USDT and pathUSD are four distinct objects.
+  const ids = new Set([asset.id]);
+  for (const q of ["USD", "USDC", "USDT"]) ids.add(node(await explain(q)).id);
+  expect(ids.size === 4, "USD, USDC, USDT, pathUSD distinct");
+  return `${asset.name} (${asset.class}) TRACKS ${tracks.object.name}`;
+});
+
+await check(
+  "Tempo",
+  "the pathUSD deployment REPRESENTS pathUSD and is DEPLOYED_ON Tempo",
+  async () => {
+    const e = await explain(`caip19:${PATH_USD}`);
+    const d = node(e);
+    expect(d.kind === "deployment", "a deployment");
+    const rels = e.candidates[0]?.relationships ?? [];
+    const represents = rels.find((r) => r.relationshipType === "REPRESENTS");
+    expect(represents?.object.name === "pathUSD", "REPRESENTS pathUSD");
+    expect(represents.provenance.sourceId === "tempo-rpc", "provenance: the chain");
+    const usdc = node(await explain("USDC"));
+    expect(represents.object.id !== usdc.id, "not USD Coin");
+    const on = rels.find((r) => r.relationshipType === "DEPLOYED_ON");
+    expect(on?.object.name === "Tempo" && on.projected, "DEPLOYED_ON Tempo");
+    const bare = await explain("0x20c0000000000000000000000000000000000000");
+    expect(bare.status === "not_found", "an address without its chain is not identity");
+    return `${d.id} ${PATH_USD}`;
+  },
+);
+
+await check("Tempo", "explain is deterministic and FX stays separate", async () => {
+  const a = await explain("pathUSD");
+  const b = await explain("pathUSD");
+  expect(JSON.stringify(a) === JSON.stringify(b), "same explanation twice");
+  const fx = (await get("/v1/resolve?q=EUR/USD")).body as v1.ResolveResultV1;
+  expect(
+    fx.match?.kind === "pair" && fx.match.unit.code === "USD",
+    "EUR/USD priced in the USD currency",
+  );
+  return "EUR/USD → USD currency; pathUSD TRACKS USD; no USD ↔ stablecoin identity";
+});
 
 let failed = 0;
 for (const r of results) {
