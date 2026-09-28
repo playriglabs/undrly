@@ -13,8 +13,10 @@ use chrono::{DateTime, Utc};
 use sqlx::types::Uuid;
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
-    CanonicalId, Category, Currency, CurrencyId, DisplayName, Entity, EntityId, FxPair, Instrument,
-    InstrumentId, Listing, ListingId, Provenance, SourceId, UnitOfMeasure, Venue, VenueId,
+    AssetNamespace, Caip2, CanonicalId, Category, Chain, ChainAsset, ChainId, ChainNamespace,
+    Currency, CurrencyId, Deployment, DeploymentId, DisplayName, Entity, EntityId, FxPair,
+    Instrument, InstrumentId, Listing, ListingId, Provenance, SourceId, UnitOfMeasure, Venue,
+    VenueId,
 };
 
 use crate::Write;
@@ -69,6 +71,8 @@ pub async fn has_object(conn: &mut PgConnection, id: CanonicalId) -> Result<bool
         Category::Listing => "SELECT EXISTS (SELECT 1 FROM listings WHERE id = $1)",
         Category::Venue => "SELECT EXISTS (SELECT 1 FROM venues WHERE id = $1)",
         Category::Currency => "SELECT EXISTS (SELECT 1 FROM currencies WHERE id = $1)",
+        Category::Chain => "SELECT EXISTS (SELECT 1 FROM chains WHERE id = $1)",
+        Category::Deployment => "SELECT EXISTS (SELECT 1 FROM deployments WHERE id = $1)",
     };
     Ok(sqlx::query_scalar(sql)
         .bind(id.uuid())
@@ -87,6 +91,8 @@ pub async fn object_source_record(
         Category::Listing => "SELECT source_record_id FROM listings WHERE id = $1",
         Category::Venue => "SELECT source_record_id FROM venues WHERE id = $1",
         Category::Currency => "SELECT source_record_id FROM currencies WHERE id = $1",
+        Category::Chain => "SELECT source_record_id FROM chains WHERE id = $1",
+        Category::Deployment => "SELECT source_record_id FROM deployments WHERE id = $1",
     };
     let id: Option<i64> = sqlx::query_scalar(sql)
         .bind(id.uuid())
@@ -433,4 +439,188 @@ pub async fn listings_for_instrument(
     .fetch_all(conn)
     .await?;
     rows.into_iter().map(listing_from_row).collect()
+}
+
+// --- chains --------------------------------------------------------------------
+
+/// Inserts a chain. Its CAIP-2 id names one chain node: a different id
+/// claiming the same CAIP-2 id is [`StoreError::ExistingRecordDiffers`]
+/// (keyed by the CAIP-2 id), never a second node.
+pub async fn insert_chain(
+    conn: &mut PgConnection,
+    chain: &Chain,
+    source_record: SourceRecordId,
+) -> Result<Write, StoreError> {
+    let mut tx = conn.begin().await?;
+    if let Some(existing) = chain_by_caip2(&mut tx, &chain.caip2).await?
+        && existing.id != chain.id
+    {
+        return Err(StoreError::ExistingRecordDiffers {
+            what: "chain",
+            key: chain.caip2.to_string(),
+        });
+    }
+    insert_node(&mut tx, chain.id.canonical()).await?;
+    let inserted = sqlx::query(
+        "INSERT INTO chains (id, name, caip2_namespace, caip2_reference, source_record_id)
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(chain.id.uuid())
+    .bind(chain.name.as_str())
+    .bind(chain.caip2.namespace().as_str())
+    .bind(chain.caip2.reference())
+    .bind(source_record.0)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    let existing = if inserted {
+        None
+    } else {
+        get_chain(&mut tx, chain.id).await?
+    };
+    let result = outcome(inserted, existing, chain, "chain", chain.id)?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+type ChainRow = (Uuid, String, String, String);
+
+fn chain_from_row((id, n, namespace, reference): ChainRow) -> Result<Chain, StoreError> {
+    let namespace = ChainNamespace::parse(&namespace).map_err(|e| corrupt("chain namespace", e))?;
+    Ok(Chain {
+        id: ChainId::from_uuid(id).map_err(|e| corrupt("chain id", e))?,
+        name: name(&n)?,
+        caip2: Caip2::new(namespace, &reference).map_err(|e| corrupt("CAIP-2 chain id", e))?,
+    })
+}
+
+const CHAIN_COLUMNS: &str = "id, name, caip2_namespace, caip2_reference";
+
+pub async fn get_chain(conn: &mut PgConnection, id: ChainId) -> Result<Option<Chain>, StoreError> {
+    let row: Option<ChainRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {CHAIN_COLUMNS} FROM chains WHERE id = $1"
+    )))
+    .bind(id.uuid())
+    .fetch_optional(conn)
+    .await?;
+    row.map(chain_from_row).transpose()
+}
+
+/// The chain with this CAIP-2 id (exact, case-sensitive), if any.
+pub async fn chain_by_caip2(
+    conn: &mut PgConnection,
+    caip2: &Caip2,
+) -> Result<Option<Chain>, StoreError> {
+    let row: Option<ChainRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {CHAIN_COLUMNS} FROM chains WHERE caip2_namespace = $1 AND caip2_reference = $2"
+    )))
+    .bind(caip2.namespace().as_str())
+    .bind(caip2.reference())
+    .fetch_optional(conn)
+    .await?;
+    row.map(chain_from_row).transpose()
+}
+
+// --- deployments ---------------------------------------------------------------
+
+/// Inserts a deployment. `(chain, asset)` names one deployment node: a
+/// different id claiming the same asset on the same chain is
+/// [`StoreError::ExistingRecordDiffers`] (keyed by the asset), never a second
+/// node. The chain must exist; the database also checks that the asset's
+/// namespace is the chain's.
+pub async fn insert_deployment(
+    conn: &mut PgConnection,
+    deployment: &Deployment,
+    source_record: SourceRecordId,
+) -> Result<Write, StoreError> {
+    let mut tx = conn.begin().await?;
+    if let Some(existing) =
+        deployment_by_asset(&mut tx, deployment.chain_id, &deployment.asset).await?
+        && existing.id != deployment.id
+    {
+        return Err(StoreError::ExistingRecordDiffers {
+            what: "deployment",
+            key: format!(
+                "{} {}:{}",
+                deployment.chain_id,
+                deployment.asset.namespace(),
+                deployment.asset.reference()
+            ),
+        });
+    }
+    insert_node(&mut tx, deployment.id.canonical()).await?;
+    let inserted = sqlx::query(
+        "INSERT INTO deployments
+           (id, chain_id, chain_namespace, asset_namespace, asset_reference, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(deployment.id.uuid())
+    .bind(deployment.chain_id.uuid())
+    .bind(deployment.asset.chain_namespace().as_str())
+    .bind(deployment.asset.namespace().as_str())
+    .bind(deployment.asset.reference())
+    .bind(source_record.0)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    let existing = if inserted {
+        None
+    } else {
+        get_deployment(&mut tx, deployment.id).await?
+    };
+    let result = outcome(inserted, existing, deployment, "deployment", deployment.id)?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+type DeploymentRow = (Uuid, Uuid, String, String, String);
+
+fn deployment_from_row(
+    (id, chain, chain_namespace, namespace, reference): DeploymentRow,
+) -> Result<Deployment, StoreError> {
+    let chain_namespace =
+        ChainNamespace::parse(&chain_namespace).map_err(|e| corrupt("chain namespace", e))?;
+    let namespace = AssetNamespace::parse(&namespace).map_err(|e| corrupt("asset namespace", e))?;
+    Ok(Deployment {
+        id: DeploymentId::from_uuid(id).map_err(|e| corrupt("deployment id", e))?,
+        chain_id: ChainId::from_uuid(chain).map_err(|e| corrupt("chain id", e))?,
+        asset: ChainAsset::new(chain_namespace, namespace, &reference)
+            .map_err(|e| corrupt("chain asset", e))?,
+    })
+}
+
+const DEPLOYMENT_COLUMNS: &str = "id, chain_id, chain_namespace, asset_namespace, asset_reference";
+
+pub async fn get_deployment(
+    conn: &mut PgConnection,
+    id: DeploymentId,
+) -> Result<Option<Deployment>, StoreError> {
+    let row: Option<DeploymentRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {DEPLOYMENT_COLUMNS} FROM deployments WHERE id = $1"
+    )))
+    .bind(id.uuid())
+    .fetch_optional(conn)
+    .await?;
+    row.map(deployment_from_row).transpose()
+}
+
+/// The deployment of `asset` on `chain`, if any. The chain is part of the
+/// key: the same address on another chain is another deployment.
+pub async fn deployment_by_asset(
+    conn: &mut PgConnection,
+    chain: ChainId,
+    asset: &ChainAsset,
+) -> Result<Option<Deployment>, StoreError> {
+    let row: Option<DeploymentRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {DEPLOYMENT_COLUMNS} FROM deployments
+         WHERE chain_id = $1 AND asset_namespace = $2 AND asset_reference = $3"
+    )))
+    .bind(chain.uuid())
+    .bind(asset.namespace().as_str())
+    .bind(asset.reference())
+    .fetch_optional(conn)
+    .await?;
+    row.map(deployment_from_row).transpose()
 }

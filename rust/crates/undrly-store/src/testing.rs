@@ -123,6 +123,9 @@ impl TestDb {
                 "INSERT INTO currencies (id, name, source_record_id) VALUES ($1, 'Test Currency', $2)"
             }
             Category::Listing => panic!("use TestDb::listing"),
+            Category::Chain | Category::Deployment => {
+                panic!("use undrly_store::reference::insert_chain / insert_deployment")
+            }
         };
         sqlx::query(sql)
             .bind(id)

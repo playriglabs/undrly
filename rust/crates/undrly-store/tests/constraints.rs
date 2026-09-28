@@ -995,8 +995,10 @@ async fn facts_name_a_matching_source_record() {
     .unwrap();
     let expected: Vec<(String, String)> = [
         "aliases",
+        "chains",
         "corporate_actions",
         "currencies",
+        "deployments",
         "earnings_events",
         "economic_calendar_windows",
         "economic_release_dates",

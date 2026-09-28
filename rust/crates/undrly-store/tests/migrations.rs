@@ -36,7 +36,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 17);
+    assert_eq!(applied.len(), 19);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -81,6 +81,8 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         "economic_calendar_windows",
         "economic_release_dates",
         "earnings_events",
+        "chains",
+        "deployments",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -198,7 +200,7 @@ async fn check_constraint_vocabularies_equal_core() {
     for c in Category::ALL {
         assert!(accepted(&db, node_sql, c.as_str()).await, "{c}");
     }
-    for bogus in ["chain", "company", "Entity", ""] {
+    for bogus in ["token", "network", "company", "Entity", ""] {
         assert!(!accepted(&db, node_sql, bogus).await, "{bogus}");
     }
 
