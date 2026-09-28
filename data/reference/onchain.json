@@ -1,0 +1,31 @@
+{
+  "dataset": "undrly-onchain-bindings",
+  "version": 1,
+  "description": "Which chain each chain source must describe, and which existing Undrly instrument each issuer address list is about (docs/v1.5-solana.md). No address or mint is stated here: those come only from the issuer's own published list, stored raw first. Reviewed 2026-09-28.",
+  "chains": [
+    {
+      "name": "Solana",
+      "caip2": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      "source": "solana-mainnet-rpc",
+      "rpcUrl": "https://api.mainnet.solana.com",
+      "authority": "The cluster's own getGenesisHash (Solana docs: https://solana.com/docs/references/clusters, https://solana.com/docs/rpc/http/getgenesishash); CAIP-2 Solana profile: the genesis hash truncated to 32 characters (https://github.com/ChainAgnostic/namespaces/blob/main/solana/caip2.md). A response for any other cluster is rejected."
+    }
+  ],
+  "issuers": [
+    {
+      "instrument": "undrly:instrument:01m3bbjhnfe5k9378rwq0sv1kj",
+      "instrumentName": "USD Coin",
+      "issuer": "Circle",
+      "source": "circle",
+      "url": "https://developers.circle.com/stablecoins/usdc-contract-addresses.md",
+      "authority": "Circle issues USDC; its developer documentation lists the USDC contract address on every supported mainnet. Only the `## Mainnet` table is read.",
+      "deployments": [
+        {
+          "label": "Solana",
+          "chain": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          "assetNamespace": "token"
+        }
+      ]
+    }
+  ]
+}

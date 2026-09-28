@@ -46,6 +46,7 @@
 
 pub mod curated;
 pub mod market_data;
+pub mod onchain;
 pub mod quotes;
 pub mod sec;
 
@@ -190,6 +191,14 @@ pub enum IngestError {
     /// identifier or listing symbol). The whole record is rejected.
     #[error("curated data disagrees with stored data: {0}")]
     CuratedDisagrees(String),
+    /// A chain's own source describes another chain than the binding
+    /// expects (e.g. a devnet answer on a mainnet endpoint). Nothing is
+    /// written.
+    #[error("expected chain {expected}, the source describes {found}")]
+    UnexpectedChain { expected: String, found: String },
+    /// A deployment's chain has not been ingested from its own source.
+    #[error("chain {0} is not stored; ingest it from its own source first")]
+    MissingChain(String),
     /// A fetched record describes something other than what was requested.
     #[error("requested {requested:?}, but the record is for {found:?}")]
     UnexpectedRecord {

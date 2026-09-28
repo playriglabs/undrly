@@ -22,6 +22,7 @@ pub mod gold_api;
 pub mod hyperliquid;
 pub mod kraken;
 pub mod market_data;
+pub mod onchain;
 pub mod sec;
 pub mod worldbank;
 

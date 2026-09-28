@@ -11,6 +11,8 @@
 //! undrly-collect fx build           FX spec + id map → data/reference/fx.json + report (pure)
 //! undrly-collect history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N]
 //!                                   backfill bars, reference series and the equity calendar
+//! undrly-collect onchain            chains and issuer deployments from their own sources
+//!                                   (data/reference/onchain.json; V1.5)
 //! ```
 //!
 //! Sources are polled **one request at a time**, each on its own conservative
@@ -78,7 +80,7 @@ const UNIVERSE_DIR: &str = "data/universe";
 
 /// Every source. Redistribution starts `unknown` (treated as restricted)
 /// until a human reviews each source's terms.
-const SOURCES: [(&str, &str); 22] = [
+const SOURCES: [(&str, &str); 24] = [
     ("undrly-curated", "Undrly curated reference data"),
     (
         "undrly-universe",
@@ -113,6 +115,14 @@ const SOURCES: [(&str, &str); 22] = [
         "FRED (Federal Reserve Bank of St. Louis) release calendar",
     ),
     ("finnhub", "Finnhub earnings calendar"),
+    (
+        "circle",
+        "Circle developer documentation (USDC contract addresses)",
+    ),
+    (
+        "solana-mainnet-rpc",
+        "Solana mainnet RPC (api.mainnet.solana.com)",
+    ),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -338,7 +348,7 @@ async fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: undrly-collect seed [curated.json] | run [--once] | universe fetch | universe build | fx build | history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N]";
+const USAGE: &str = "usage: undrly-collect seed [curated.json] | run [--once] | universe fetch | universe build | fx build | history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N] | onchain";
 
 async fn run(args: &[String]) -> Result<ExitCode, Error> {
     let command: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -346,7 +356,7 @@ async fn run(args: &[String]) -> Result<ExitCode, Error> {
         ["universe", "fetch"] => return universe_fetch(Path::new(UNIVERSE_DIR)).await,
         ["universe", "build"] => return universe_build(Path::new(UNIVERSE_DIR)),
         ["fx", "build"] => return fx_build(),
-        ["seed", ..] | ["run", ..] | ["history", ..] => {}
+        ["seed", ..] | ["run", ..] | ["history", ..] | ["onchain"] => {}
         _ => return Err(Error::Usage(USAGE.into())),
     }
     let url = std::env::var("DATABASE_URL")
@@ -369,6 +379,13 @@ async fn run(args: &[String]) -> Result<ExitCode, Error> {
         }
         ["run", rest @ ..] => collect(&mut conn, rest.contains(&"--once")).await,
         ["history", rest @ ..] => history::run(&mut conn, rest).await,
+        ["onchain"] => {
+            register_sources(&mut conn).await?;
+            let user_agent = std::env::var("UNDRLY_USER_AGENT")
+                .unwrap_or_else(|_| DEFAULT_USER_AGENT.to_owned());
+            onchain::run(&mut conn, &HttpClient::new(&user_agent)?).await?;
+            Ok(ExitCode::SUCCESS)
+        }
         _ => Err(Error::Usage(USAGE.into())),
     }
 }
@@ -679,6 +696,7 @@ fn universe_build(root: &Path) -> Result<ExitCode, Error> {
 }
 
 mod history;
+mod onchain;
 
 // ---------------------------------------------------------------- run
 

@@ -13,6 +13,7 @@ example Apple's ISIN and LEI) are used only as check-digit test vectors.
 | `sources/reference-fixture/` | Rust ingest tests | Raw records for the deterministic fixture provider (see below). |
 | `sources/sec-edgar/` | Rust provider and ingest tests | Captured SEC EDGAR responses, byte for byte (see below). |
 | `sources/kraken/`, `sources/coinbase/`, `sources/hyperliquid/`, `sources/gold-api/`, `sources/alpaca/` | Rust provider, normalize and ingest tests | Captured quote responses, byte for byte (see below). |
+| `sources/circle/`, `sources/solana/` | Rust provider, normalize and ingest tests (V1.5) | Circle's USDC contract address page (Markdown) and Solana `getGenesisHash` responses (mainnet, devnet), captured 2026-09-28, byte for byte. |
 | `api/v1/` | TypeScript | External JSON API contract v1: valid documents (accepted unchanged) and `invalid/` (rejected). |
 
 Released API fixtures are append-only; a breaking change goes in `api/v2/`.
