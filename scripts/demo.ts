@@ -108,7 +108,11 @@ const markets: Market[] = [
         q.subject.kind === "instrument" && q.subject.class === "perpetual_future",
         "perpetual",
       );
-      expect(q.unit.kind === "asset" && q.unit.code === "USDC", "priced in USDC, not USD");
+      // Hyperliquid: "USDC margining, USDT denominated linear contracts".
+      expect(
+        q.unit.kind === "asset" && q.unit.code === "USDT",
+        "priced in its USDT denomination, not USD and not its USDC margin",
+      );
       expect(q.priceType === "mark", "mark price");
       expect(q.basis === "venue" && q.venue.name === "Hyperliquid", "Hyperliquid venue");
     },
@@ -186,7 +190,9 @@ await check("graph of the BTC perpetual", async () => {
   const g = v1.GraphV1.parse(r.body);
   const edge = (t: string) => g.edges.find((e) => e.relationshipType === t)?.object.name;
   expect(edge("DERIVES_FROM") === "Bitcoin", "DERIVES_FROM Bitcoin");
+  expect(edge("DENOMINATED_IN") === "Tether", "DENOMINATED_IN Tether (USDT)");
   expect(edge("SETTLES_IN") === "USD Coin", "SETTLES_IN USDC");
+  expect(edge("MARGINED_IN") === "USD Coin", "MARGINED_IN USDC");
   expect(edge("TRADES_ON") === "Hyperliquid", "TRADES_ON Hyperliquid");
   return { detail: g.edges.map((e) => `${e.relationshipType} ${e.object.name}`).join(", "), ms: r.ms };
 });
