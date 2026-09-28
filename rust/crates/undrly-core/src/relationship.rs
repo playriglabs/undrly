@@ -22,8 +22,13 @@ pub enum RelationshipType {
     TradesOn,
     /// instrument → currency or asset it is denominated in.
     DenominatedIn,
-    /// instrument → currency or asset it settles in.
+    /// instrument → currency or asset its cash flows are paid in: delivery
+    /// or cash settlement, or, for a contract without expiry, variation
+    /// (profit and loss) and funding. Not its price unit (`DENOMINATED_IN`)
+    /// and not its collateral (`MARGINED_IN`).
     SettlesIn,
+    /// instrument → currency or asset posted as margin (collateral) for it.
+    MarginedIn,
     /// derivative → underlying. Inverse view: `UNDERLYING_OF`.
     DerivesFrom,
     /// fund → instrument it holds.
@@ -32,24 +37,29 @@ pub enum RelationshipType {
     Tracks,
     /// instrument → index it is a member of.
     MemberOf,
-    /// token → instrument it tokenizes.
+    /// instrument → instrument it is a token-form claim on, held in custody
+    /// or escrow (a wrapped or bridged asset, a share-backed token).
     Tokenizes,
-    /// token → asset it represents.
+    /// deployment → the instrument it is on its chain (a USDC token contract
+    /// → USDC). The deployment's chain is projected (`DEPLOYED_ON`), not an
+    /// edge.
     Represents,
     /// instrument → oracle/reference feed pricing it.
     PricedBy,
-    /// instrument → venue or chain where it is available.
+    /// instrument → venue or chain where it is available. Not storable: an
+    /// instrument's presence on a chain is a deployment that `REPRESENTS` it.
     AvailableOn,
     /// Fallback when no precise type applies.
     RelatedTo,
 }
 
 impl RelationshipType {
-    pub const ALL: [RelationshipType; 13] = [
+    pub const ALL: [RelationshipType; 14] = [
         RelationshipType::IssuedBy,
         RelationshipType::TradesOn,
         RelationshipType::DenominatedIn,
         RelationshipType::SettlesIn,
+        RelationshipType::MarginedIn,
         RelationshipType::DerivesFrom,
         RelationshipType::Holds,
         RelationshipType::Tracks,
@@ -67,6 +77,7 @@ impl RelationshipType {
             RelationshipType::TradesOn => "TRADES_ON",
             RelationshipType::DenominatedIn => "DENOMINATED_IN",
             RelationshipType::SettlesIn => "SETTLES_IN",
+            RelationshipType::MarginedIn => "MARGINED_IN",
             RelationshipType::DerivesFrom => "DERIVES_FROM",
             RelationshipType::Holds => "HOLDS",
             RelationshipType::Tracks => "TRACKS",
@@ -81,26 +92,28 @@ impl RelationshipType {
 
     /// Allowed `(subject, object)` categories. Empty means the type is not
     /// storable yet: the node categories or classes it needs (fund, index,
-    /// derivative, token, chain, oracle feed) do not exist, or, for
-    /// `RELATED_TO`, no symmetric-ordering rule exists. Unknown is preferable
-    /// to wrong.
+    /// oracle feed) do not exist, deployments already express it
+    /// (`AVAILABLE_ON` a chain), or, for `RELATED_TO`, no symmetric-ordering
+    /// rule exists. Unknown is preferable to wrong.
     ///
     /// Must equal the `relationship_rules` table; `undrly-store` tests this.
     pub const fn allowed_endpoints(self) -> &'static [(Category, Category)] {
-        use Category::{Currency, Entity, Instrument, Venue};
+        use Category::{Currency, Deployment, Entity, Instrument, Venue};
         match self {
             RelationshipType::IssuedBy => &[(Instrument, Entity)],
             RelationshipType::TradesOn => &[(Instrument, Venue)],
-            RelationshipType::DenominatedIn | RelationshipType::SettlesIn => {
-                &[(Instrument, Currency), (Instrument, Instrument)]
-            }
+            RelationshipType::DenominatedIn
+            | RelationshipType::SettlesIn
+            | RelationshipType::MarginedIn => &[(Instrument, Currency), (Instrument, Instrument)],
             // A derivative instrument (e.g. a perpetual) → its underlying.
             RelationshipType::DerivesFrom => &[(Instrument, Instrument)],
+            // A wrapped, bridged or share-backed instrument → what backs it.
+            RelationshipType::Tokenizes => &[(Instrument, Instrument)],
+            // A chain deployment → the instrument it is on that chain.
+            RelationshipType::Represents => &[(Deployment, Instrument)],
             RelationshipType::Holds
             | RelationshipType::Tracks
             | RelationshipType::MemberOf
-            | RelationshipType::Tokenizes
-            | RelationshipType::Represents
             | RelationshipType::PricedBy
             | RelationshipType::AvailableOn
             | RelationshipType::RelatedTo => &[],
@@ -259,6 +272,27 @@ mod tests {
         let b: CanonicalId = InstrumentId::generate().into();
         assert!(Relationship::new(a, RelationshipType::Holds, b, provenance()).is_err());
         assert!(Relationship::new(a, RelationshipType::RelatedTo, b, provenance()).is_err());
+    }
+
+    #[test]
+    fn price_unit_settlement_and_margin_are_separate_facts() {
+        // A quanto perpetual: priced in one stablecoin, margined and settled
+        // in another. Three distinct relationships, three distinct objects.
+        let perp: CanonicalId = InstrumentId::generate().into();
+        let usdt: CanonicalId = InstrumentId::generate().into();
+        let usdc: CanonicalId = InstrumentId::generate().into();
+        for (kind, unit) in [
+            (RelationshipType::DenominatedIn, usdt),
+            (RelationshipType::SettlesIn, usdc),
+            (RelationshipType::MarginedIn, usdc),
+        ] {
+            assert!(Relationship::new(perp, kind, unit, provenance()).is_ok());
+        }
+        assert_ne!(RelationshipType::MarginedIn, RelationshipType::SettlesIn);
+        let venue: CanonicalId = VenueId::generate().into();
+        assert!(
+            Relationship::new(perp, RelationshipType::MarginedIn, venue, provenance()).is_err()
+        );
     }
 
     #[test]

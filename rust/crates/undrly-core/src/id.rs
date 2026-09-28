@@ -32,15 +32,22 @@ pub enum Category {
     Venue,
     /// Fiat currency. Crypto assets are instruments.
     Currency,
+    /// A blockchain network, identified by its CAIP-2 chain id.
+    Chain,
+    /// An asset's existence on one chain (a token contract, a mint, or the
+    /// chain's native asset). Never the economic asset itself.
+    Deployment,
 }
 
 impl Category {
-    pub const ALL: [Category; 5] = [
+    pub const ALL: [Category; 7] = [
         Category::Entity,
         Category::Instrument,
         Category::Listing,
         Category::Venue,
         Category::Currency,
+        Category::Chain,
+        Category::Deployment,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -50,6 +57,8 @@ impl Category {
             Category::Listing => "listing",
             Category::Venue => "venue",
             Category::Currency => "currency",
+            Category::Chain => "chain",
+            Category::Deployment => "deployment",
         }
     }
 }
@@ -284,6 +293,16 @@ typed_id!(
     CurrencyId,
     Category::Currency
 );
+typed_id!(
+    /// Blockchain network.
+    ChainId,
+    Category::Chain
+);
+typed_id!(
+    /// An asset's deployment on one chain.
+    DeploymentId,
+    Category::Deployment
+);
 
 #[cfg(test)]
 mod tests {
@@ -386,6 +405,6 @@ mod tests {
         for c in Category::ALL {
             assert_eq!(c.as_str().parse::<Category>(), Ok(c));
         }
-        assert!("chain".parse::<Category>().is_err());
+        assert!("token".parse::<Category>().is_err());
     }
 }

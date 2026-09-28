@@ -157,15 +157,22 @@ pub enum InstrumentClass {
     /// is units of the quote currency per one unit of the base currency.
     /// The currencies stay currency nodes; only the market is an instrument.
     Fx,
+    /// An instrument issued as tokens whose value is tied to another
+    /// instrument, e.g. a token backed one to one by a share. How it is tied
+    /// is an edge (`TOKENIZES` for a custodial claim, `DERIVES_FROM` for a
+    /// derivative); it is never the instrument it refers to and never carries
+    /// that instrument's identifiers, listings or quotes.
+    TokenizedSecurity,
 }
 
 impl InstrumentClass {
-    pub const ALL: [InstrumentClass; 5] = [
+    pub const ALL: [InstrumentClass; 6] = [
         InstrumentClass::Equity,
         InstrumentClass::CryptoAsset,
         InstrumentClass::Commodity,
         InstrumentClass::PerpetualFuture,
         InstrumentClass::Fx,
+        InstrumentClass::TokenizedSecurity,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -175,6 +182,7 @@ impl InstrumentClass {
             InstrumentClass::Commodity => "commodity",
             InstrumentClass::PerpetualFuture => "perpetual_future",
             InstrumentClass::Fx => "fx",
+            InstrumentClass::TokenizedSecurity => "tokenized_security",
         }
     }
 }

@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 chrono.workspace = true
 rust_decimal.workspace = true
+# Keccak-256 for EIP-55 address checksums (pure computation, no I/O).
+sha3 = { version = "0.10", default-features = false }
 thiserror.workspace = true
 uuid.workspace = true
 

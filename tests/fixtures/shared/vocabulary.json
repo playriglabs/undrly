@@ -4,7 +4,9 @@
     "instrument",
     "listing",
     "venue",
-    "currency"
+    "currency",
+    "chain",
+    "deployment"
   ],
   "entityKinds": [
     "company"
@@ -14,13 +16,15 @@
     "crypto_asset",
     "commodity",
     "perpetual_future",
-    "fx"
+    "fx",
+    "tokenized_security"
   ],
   "relationshipTypes": [
     "ISSUED_BY",
     "TRADES_ON",
     "DENOMINATED_IN",
     "SETTLES_IN",
+    "MARGINED_IN",
     "DERIVES_FROM",
     "HOLDS",
     "TRACKS",
@@ -64,6 +68,26 @@
     ],
     [
       "DERIVES_FROM",
+      "instrument",
+      "instrument"
+    ],
+    [
+      "TOKENIZES",
+      "instrument",
+      "instrument"
+    ],
+    [
+      "REPRESENTS",
+      "deployment",
+      "instrument"
+    ],
+    [
+      "MARGINED_IN",
+      "instrument",
+      "currency"
+    ],
+    [
+      "MARGINED_IN",
       "instrument",
       "instrument"
     ]

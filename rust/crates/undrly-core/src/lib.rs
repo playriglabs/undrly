@@ -13,6 +13,7 @@
 //! - [`source`]: data sources, redistribution terms, provenance.
 //! - [`reference`]: entities, instruments, venues, currencies, listings.
 //! - [`relationship`]: directed relationships in canonical direction.
+//! - [`onchain`]: blockchain networks (CAIP-2) and asset deployments on them (CAIP-19).
 //! - [`observation`]: normalized market observations.
 //! - [`quote`]: the aggregation boundary from observations to canonical quotes.
 
@@ -21,6 +22,7 @@ pub mod id;
 pub mod identifier;
 pub mod market;
 pub mod observation;
+pub mod onchain;
 pub mod quote;
 pub mod reference;
 pub mod relationship;
@@ -29,7 +31,8 @@ pub mod time;
 pub mod universe;
 
 pub use id::{
-    CanonicalId, Category, CurrencyId, EntityId, IdError, InstrumentId, ListingId, VenueId,
+    CanonicalId, Category, ChainId, CurrencyId, DeploymentId, EntityId, IdError, InstrumentId,
+    ListingId, VenueId,
 };
 pub use identifier::{
     Cik, CurrencyCode, ExternalIdentifier, Figi, IdentifierAssignment, IdentifierError, Isin, Lei,
@@ -42,6 +45,9 @@ pub use market::{
 pub use observation::{
     BidAsk, MarketObservation, ObservationBasis, ObservationError, PriceSubject, PriceType,
     PriceUnit,
+};
+pub use onchain::{
+    AssetNamespace, Caip2, Chain, ChainAsset, ChainNamespace, Deployment, OnchainError,
 };
 pub use quote::{
     Aggregate, AggregationMethod, DEFAULT_STALE_AFTER_SECONDS, FreshnessClock,

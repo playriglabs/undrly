@@ -27,6 +27,16 @@
         "text": "undrly:currency:01jagv5gymfsfvmtvwhpf0y6g5"
       },
       {
+        "category": "chain",
+        "uuid": "0192a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a06",
+        "text": "undrly:chain:01jagv5gymfsfrmtvwhpf0y6g6"
+      },
+      {
+        "category": "deployment",
+        "uuid": "0192a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a07",
+        "text": "undrly:deployment:01jagv5gymfsfrmtvwhpf0y6g7"
+      },
+      {
         "category": "instrument",
         "uuid": "00000000-0000-7000-8000-000000000000",
         "text": "undrly:instrument:0000000000e008000000000000"
@@ -46,7 +56,7 @@
       "UNDRLY:entity:01jagv5gymfsfrmtvwhpf0y6g1",
       "undrly:Entity:01jagv5gymfsfrmtvwhpf0y6g1",
       "undrly:company:01jagv5gymfsfrmtvwhpf0y6g1",
-      "undrly:chain:01jagv5gymfsfrmtvwhpf0y6g1",
+      "undrly:token:01jagv5gymfsfrmtvwhpf0y6g1",
       "undrly:entity:01JAGV5GYMFSFRMTVWHPF0Y6G1",
       "undrly:entity:1jagv5gymfsfrmtvwhpf0y6g1",
       "undrly:entity:01jagv5gymfsfrmtvwhpf0y6g10",
