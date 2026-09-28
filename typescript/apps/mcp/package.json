@@ -1,0 +1,21 @@
+{
+  "name": "@undrly/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only MCP server (stdio) over the Undrly API: resolve, explain, graph, quotes, market data (docs/v1.8-mcp.md).",
+  "scripts": {
+    "start": "bun run src/stdio.ts",
+    "verify": "bun run src/verify.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.1.0",
+    "@undrly/api": "workspace:*",
+    "@undrly/contracts": "workspace:*",
+    "postgres": "^3.4.9",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.1.0"
+  }
+}
