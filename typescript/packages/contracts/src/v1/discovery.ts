@@ -167,6 +167,7 @@ export const EXPLAIN_RELATIONSHIP_TYPES = [
   ...RELATIONSHIP_TYPES,
   "LISTED_ON",
   "DEPLOYED_ON",
+  "TRACKED_BY",
 ] as const;
 
 /**
@@ -181,7 +182,9 @@ export const EXPLAIN_RELATIONSHIP_TYPES = [
  *   deployment's CAIP-19 id);
  * - `relationships`: its outgoing edges in canonical direction with their
  *   provenance, plus the projections `LISTED_ON` (an instrument's listings'
- *   venues) and `DEPLOYED_ON` (a deployment's chain), marked `projected`;
+ *   venues), `DEPLOYED_ON` (a deployment's chain) and `TRACKED_BY` (V1.7:
+ *   each instrument that TRACKS it, e.g. a tracker certificate or a
+ *   stablecoin, with that edge's provenance), marked `projected`;
  * - `quoted`: for a pair, whether a quote feed declares it; `null` for nodes.
  *
  * `quotedPairsOnly` is true when several pair combinations matched and only

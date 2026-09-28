@@ -10,6 +10,7 @@ import {
 /**
  * Mirrors `undrly_core::RelationshipType`: the stored vocabulary, in canonical
  * direction (`subject → object`). Inverse labels such as `UNDERLYING_OF` and
+ * `TRACKED_BY` and
  * the projections `LISTED_ON` (from listings) and `DEPLOYED_ON` (from a
  * deployment's chain) are derived by the API at query time and are not part
  * of this contract.

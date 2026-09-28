@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "query": "USD",
+  "parsedAs": "alias",
+  "status": "resolved",
+  "method": "alias",
+  "quotedPairsOnly": false,
+  "candidates": [
+    {
+      "resolution": {
+        "kind": "node",
+        "node": {
+          "id": "undrly:currency:01jagv5gymfsfrmtvwhpf0y6g1",
+          "kind": "currency",
+          "name": "US Dollar",
+          "class": null
+        }
+      },
+      "matches": [
+        {
+          "rule": "alias",
+          "side": null,
+          "namespace": "iso4217",
+          "value": "USD",
+          "venue": null,
+          "source": {
+            "id": "example-source"
+          }
+        }
+      ],
+      "identifiers": [],
+      "relationships": [
+        {
+          "relationshipType": "TRACKED_BY",
+          "object": {
+            "id": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g8",
+            "kind": "instrument",
+            "name": "Example USD stablecoin",
+            "class": "crypto_asset"
+          },
+          "projected": true,
+          "provenance": {
+            "sourceId": "example-source",
+            "receivedAt": "2026-09-24T12:00:00Z"
+          }
+        }
+      ],
+      "quoted": null
+    }
+  ]
+}

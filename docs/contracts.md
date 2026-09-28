@@ -187,6 +187,10 @@ V1.4 additions (cross-ecosystem identity,
 - V1.7: relationship rule `TRACKS` instrument → currency (a payment
   stablecoin → the reference currency it is designed to be worth, e.g.
   pathUSD → USD). The token is never the currency; no response shape changes.
+- V1.7: explain relationship label `TRACKED_BY`, a projection (`projected:
+  true`) listing each instrument that TRACKS the node, with that edge's
+  provenance. `explain/NVDA` shows the NVIDIA Stock Token; `explain/USD`
+  shows pathUSD. Resolution is unchanged; nothing new is stored.
 - V1.5: aggregation method `mark-with-venue-book-v1` (perpetuals): a venue
   mark with the same venue's best bid/ask when its book is within 60 s;
   `VenueQuoteV1.bidAskAsOf` (the book's time) is present exactly then, and

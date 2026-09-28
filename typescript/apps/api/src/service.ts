@@ -594,7 +594,8 @@ async function identifiersOf(sql: Sql, uuid: string) {
 /**
  * A node's outgoing edges (canonical direction, with provenance), then the
  * projections: `LISTED_ON` for an instrument's listings, `DEPLOYED_ON` for a
- * deployment's chain.
+ * deployment's chain, and `TRACKED_BY` for each instrument that TRACKS the
+ * node (the stored edge read from its object's side, with its provenance).
  */
 async function relationshipsOf(sql: Sql, uuid: string) {
   const rows = await sql.unsafe<
@@ -611,6 +612,9 @@ async function relationshipsOf(sql: Sql, uuid: string) {
        UNION ALL
        SELECT 2, 0, 'DEPLOYED_ON', d.chain_id::text, true, r.source_id, r.received_at
        FROM deployments d JOIN source_records r ON r.id = d.source_record_id WHERE d.id = $1
+       UNION ALL
+       SELECT 3, id, 'TRACKED_BY', subject_id::text, true, source_id, received_at
+       FROM graph_edges WHERE object_id = $1 AND relationship_type = 'TRACKS'
      ) x ORDER BY part, ord`,
     [uuid],
   );

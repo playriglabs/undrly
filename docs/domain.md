@@ -68,7 +68,7 @@ relationships or identifier assignments, not fields.
 ## Relationships
 
 `subject TYPE object` in one canonical direction: dependent → thing it depends
-on. Inverses (`UNDERLYING_OF`) are derived at query time; `LISTED_ON` is
+on. Inverses (`UNDERLYING_OF`, `TRACKED_BY`) are derived at query time; `LISTED_ON` is
 projected from listings. `RelationshipType::allowed_endpoints` is the storable
 set and equals the database's `relationship_rules`. `DERIVES_FROM` is
 storable instrument → instrument (a perpetual → its underlying). V1.4 adds

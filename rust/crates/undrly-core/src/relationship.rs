@@ -3,7 +3,8 @@
 //! A relationship reads `subject TYPE object`, e.g.
 //! `<NVDA instrument> ISSUED_BY <NVIDIA entity>`. Only one canonical direction
 //! is ever stored: `dependent → thing it depends on`. Inverses (for example
-//! `UNDERLYING_OF`, the inverse of [`RelationshipType::DerivesFrom`]) are labels
+//! `UNDERLYING_OF`, the inverse of [`RelationshipType::DerivesFrom`], and
+//! `TRACKED_BY`, the inverse of [`RelationshipType::Tracks`]) are labels
 //! derived at query time and are not part of this vocabulary. `LISTED_ON` is
 //! projected from [`Listing`](crate::Listing)s rather than stored as an edge.
 
@@ -233,7 +234,7 @@ mod tests {
         for t in RelationshipType::ALL {
             assert_eq!(t.as_str().parse::<RelationshipType>(), Ok(t));
         }
-        for not_stored in ["UNDERLYING_OF", "LISTED_ON", "issued_by"] {
+        for not_stored in ["UNDERLYING_OF", "TRACKED_BY", "LISTED_ON", "issued_by"] {
             assert!(not_stored.parse::<RelationshipType>().is_err());
         }
     }

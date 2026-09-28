@@ -500,7 +500,8 @@ instrument  AVAILABLE_ON    venue | chain   (not stored: a deployment expresses 
   chain, never stored. The `Token` node of §11 is the `deployment` category
   (V1.4, `docs/v1.4-cross-ecosystem-identity.md`), identified by CAIP-19.
 
-- `UNDERLYING_OF` is a query-time inverse label only; it is never stored.
+- `UNDERLYING_OF` and `TRACKED_BY` (explain: who TRACKS this node) are
+  query-time inverse labels only; they are never stored.
 - `LISTED_ON` is projected from the listings table, not stored as an edge.
 - `RELATED_TO` requires a symmetric-ordering rule before it may be stored.
 - Phase 2 `graph_edges` rows are **current assertions** by a source, not

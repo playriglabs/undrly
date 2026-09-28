@@ -478,6 +478,8 @@ describe.skipIf(url === undefined)("V1.4 cross-ecosystem identity", () => {
     ).toStrictEqual([
       ["ISSUED_BY", "Example Issuer (fixture)", false],
       ["LISTED_ON", "Nasdaq", true],
+      // The V1.6 tracker's inverse; the TOKENIZES token has no inverse label.
+      ["TRACKED_BY", "Example tracker certificate (fixture)", true],
     ]);
     expect(token?.identifiers).toStrictEqual([]);
     expect(token?.relationships.map((r) => [r.relationshipType, r.object.id])).toStrictEqual([
@@ -631,12 +633,15 @@ describe.skipIf(url === undefined)("V1.4 cross-ecosystem identity", () => {
     ]);
     expect(c?.identifiers).toStrictEqual([{ namespace: "isin", value: "JE00BX9C6J83" }]);
     // The stock: same resolution, same issuer and identifiers as before;
-    // the tracker only appears as an incoming TRACKS edge in its graph.
+    // the tracker appears only as the projected inverse of its TRACKS edge.
     expect(nodeOf(await resolve("isin:US67066G1040"))?.id).toBe(text("instrument", "stock"));
     const stock = (await explainOf("isin:US67066G1040")).candidates[0];
-    expect(stock?.relationships.map((r) => r.relationshipType)).toStrictEqual([
-      "ISSUED_BY",
-      "LISTED_ON",
+    expect(
+      stock?.relationships.map((r) => [r.relationshipType, r.object.id, r.projected]),
+    ).toStrictEqual([
+      ["ISSUED_BY", text("entity", "issuer"), false],
+      ["LISTED_ON", text("venue", "nasdaq"), true],
+      ["TRACKED_BY", text("instrument", "tracker"), true],
     ]);
     const g = await graphOf("stock");
     expect(
@@ -651,12 +656,15 @@ describe.skipIf(url === undefined)("V1.4 cross-ecosystem identity", () => {
     expect(
       c?.relationships.map((r) => [r.relationshipType, r.object.kind, r.object.name]),
     ).toStrictEqual([["TRACKS", "currency", "US Dollar"]]);
-    // USD still resolves to the currency, with no edge to the stablecoin.
+    // USD still resolves to the currency; its only relationship is the
+    // projected inverse of the stablecoin's TRACKS edge.
     const usd = await explainOf("USD");
     expect(usd.candidates[0]?.resolution).toMatchObject({
       kind: "node",
       node: { kind: "currency" },
     });
-    expect(usd.candidates[0]?.relationships).toStrictEqual([]);
+    expect(
+      usd.candidates[0]?.relationships.map((r) => [r.relationshipType, r.object.name, r.projected]),
+    ).toStrictEqual([["TRACKED_BY", "Example USD stablecoin (fixture)", true]]);
   });
 });

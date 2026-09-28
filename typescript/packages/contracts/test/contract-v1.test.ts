@@ -53,6 +53,7 @@ describe("API v1 valid documents", () => {
     ["api/v1/graph.deployments-markets.json", v1.GraphV1],
     ["api/v1/explain.perpetual.json", v1.ExplainV1],
     ["api/v1/explain.deployment.json", v1.ExplainV1],
+    ["api/v1/explain.tracked-by.json", v1.ExplainV1],
   ] as const;
 
   for (const [path, schema] of cases) {
