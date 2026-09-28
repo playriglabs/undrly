@@ -482,16 +482,21 @@ query time, never persisted as a duplicate edge. Canonical direction is
 instrument  ISSUED_BY       entity
 instrument  TRADES_ON       venue
 instrument  DENOMINATED_IN  currency | asset
-instrument  SETTLES_IN      currency | asset
+instrument  SETTLES_IN      currency | asset   (what cash flows are paid in)
+instrument  MARGINED_IN     currency | asset   (collateral; V1.4.1)
 derivative  DERIVES_FROM    underlying      (inverse view: UNDERLYING_OF)
 fund        HOLDS           instrument
 fund        TRACKS          index | instrument
 instrument  MEMBER_OF       index
-token       TOKENIZES       instrument
-token       REPRESENTS      asset
+instrument  TOKENIZES       instrument      (wrapped/bridged/share-backed claim → what backs it)
+deployment  REPRESENTS      instrument      (the instrument on one chain)
 instrument  PRICED_BY       oracle feed
-instrument  AVAILABLE_ON    venue | chain
+instrument  AVAILABLE_ON    venue | chain   (not stored: a deployment expresses chain presence)
 ```
+
+- `DEPLOYED_ON` (deployment → chain) is projected from the deployment's
+  chain, never stored. The `Token` node of §11 is the `deployment` category
+  (V1.4, `docs/v1.4-cross-ecosystem-identity.md`), identified by CAIP-19.
 
 - `UNDERLYING_OF` is a query-time inverse label only; it is never stored.
 - `LISTED_ON` is projected from the listings table, not stored as an edge.

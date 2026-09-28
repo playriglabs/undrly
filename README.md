@@ -22,7 +22,7 @@ curl -s localhost:8787/v1/quote/BTC/USD | jq
 | Crypto spot | `BTC/USD` | Kraken + Coinbase | **one aggregate** of both venues' mid prices |
 | FX | `EUR/USD` | Kraken + Bitstamp | **one aggregate** of both venues' mid prices (V1.2; V1 served Kraken alone) |
 | Commodity | `XAU/USD` | gold-api | an aggregated reference price per troy ounce |
-| Perpetual | `BTC-PERP` | Hyperliquid | the mark price, in USDC |
+| Perpetual | `BTC-PERP` | Hyperliquid | the mark price, in USDT (its denomination; margined in USDC) |
 
 Every answer has the same shape, whatever the market. This set is frozen for
 the hackathon (see [Scope](#scope)).
@@ -133,7 +133,8 @@ All routes are `GET`, read-only, and answer from Undrly's own storage.
 | `/v1/quotes/{query}` | the per-source observations behind it |
 | `/v1/search?q=` | matching instruments, currencies and venues |
 | `/v1/resolve?q=` | what a query refers to: `resolved`, `ambiguous` or `not_found` |
-| `/v1/instruments/{id}/graph` | an instrument's direct relationships and listings |
+| `/v1/explain?q=` | why a query resolves the way it does: the matching rule and stored value per candidate, identifiers, relationships (V1.4) |
+| `/v1/instruments/{id}/graph` | an instrument's direct relationships and listings, plus its chain deployments and priced markets (V1.4) |
 | `/v1/universes`, `/v1/universes/{key}` | imported universes and their latest membership (V1.1) |
 | `/v1/candles/{query}?interval=1h\|4h\|1d&limit=` | a market's venue candles (OHLCV), oldest first (V1.3) |
 | `/v1/history/{query}?limit=` | a reference series' published values (central-bank rates, commodity references) |

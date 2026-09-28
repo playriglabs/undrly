@@ -50,6 +50,7 @@ Fixtures: `tests/fixtures/api/v1/` (valid documents must round-trip unchanged,
 | `GET /v1/resolve?q=` | `ResolveResultV1`: `resolved` / `ambiguous` / `not_found` |
 | `GET /v1/search?q=` | `SearchResultV1` (discovery only) |
 | `GET /v1/instruments/:id/graph` | `GraphV1` |
+| `GET /v1/explain?q=` | `ExplainV1` (V1.4): why `resolve` concluded what it did |
 | `GET /v1/universes` | `UniversesV1`: each universe with a snapshot (key, name, description, source, `asOf`, `memberCount`) |
 | `GET /v1/universes/:key` | `UniverseV1`: the latest snapshot's members (`node`, `rank`, `sourceSymbol`) and its upstream `sourceRecord`; unknown key or no snapshot → 404 |
 | errors | `ErrorV1` (`bad_request` 400, `not_found`/`no_quote` 404, `ambiguous` 409) |
@@ -168,6 +169,28 @@ V1.2 additions (FX, [`v1.2-fx.md`](v1.2-fx.md)):
   Sundays, UTC, do not count), for reference rates published on business
   days. `ageMs` stays literal elapsed time.
 - Universe keys gain `fx-major` and `fx-southeast-asia`.
+
+V1.4 additions (cross-ecosystem identity,
+[`v1.4-cross-ecosystem-identity.md`](v1.4-cross-ecosystem-identity.md)):
+
+- Categories `chain` and `deployment`; instrument class `tokenized_security`.
+- Relationship rules `REPRESENTS` (deployment → instrument) and `TOKENIZES`
+  (instrument → instrument). `DEPLOYED_ON` is a projection (deployment →
+  chain), like `LISTED_ON`, and is never stored.
+- Resolve accepts `caip2:<chain id>` and `caip19:<asset type>` (method
+  `identifier`). ERC-20 addresses are compared in lowercase.
+- `GraphV1` gains `deployments` (`{ id, chain, caip19 }`) and `markets`
+  (`{ unit, venues }`), each **omitted** when empty, so earlier documents are
+  unchanged.
+- V1.4.1: relationship rule `MARGINED_IN` (instrument → currency |
+  instrument: the collateral). `DerivativesV1.unit` is the contract's price
+  denomination, not the settlement asset; `/v1/derivatives` serves only
+  contexts normalized under the market's current unit. Hyperliquid
+  perpetuals are quoted in Tether (USDT) except PURR and HYPE (USD Coin).
+- `ExplainV1` (`GET /v1/explain?q=`): the resolver's own status, method and
+  candidates, each with its `matches` (rule, side, namespace, value, venue,
+  source), current `identifiers`, outgoing `relationships` (with the
+  projections, marked `projected`) and, for pairs, `quoted`. No scores.
 
 ## Changing the API contract
 

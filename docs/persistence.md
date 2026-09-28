@@ -35,6 +35,10 @@ extension (created by migration 0001).
 | 0010 | `quote_aggregations` | the aggregation method declared for a pair, with provenance (default `latest-observation-v1`) |
 | 0010 | `canonical_quotes` (replaced) | derived cache: the method's output (price, price type, basis, `as_of`, eligible count) per pair |
 | 0010 | `canonical_quote_inputs` | exactly the observations a canonical quote used, with the price each contributed |
+| 0018 | `chains` | blockchain networks, one per CAIP-2 id (`eip155`, `solana`) |
+| 0018 | `deployments` | an asset on one chain, one per (chain, CAIP-19 asset namespace, reference); namespace/format/chain consistency enforced by constraints |
+| 0018 | — | categories `chain`, `deployment`; class `tokenized_security`; rules `REPRESENTS` deployment → instrument, `TOKENIZES` instrument → instrument |
+| 0019 | — | rule `MARGINED_IN` instrument → currency \| instrument; withdraws Hyperliquid feed declarations (re-declared by `seed` in their documented price unit) and drops perpetuals' derived canonical quotes; observations, contexts and bars stay as normalized |
 
 Shared domains: `display_name`, `financial_decimal` (numeric within
 `rust_decimal` range, scale preserved), `validity` (half-open non-empty
@@ -109,7 +113,7 @@ provider logic. No generic CRUD abstraction.
 | Module | Operations |
 | --- | --- |
 | `sources` | `insert_source`, `get_source`, `insert_source_record` → `RecordProvenance`, `get_source_record`, `facts_from_source_record` → `DerivedFacts` |
-| `reference` | `get_node`, `has_object`, `object_source_record`, `insert_entity`/`get_entity`, `insert_instrument`/`get_instrument`, `insert_venue`/`get_venue`, `insert_currency`/`get_currency`, `insert_listing`/`get_listing`, `listings_for_instrument` |
+| `reference` | `get_node`, `has_object`, `object_source_record`, `insert_entity`/`get_entity`, `insert_instrument`/`get_instrument`, `insert_venue`/`get_venue`, `insert_currency`/`get_currency`, `insert_listing`/`get_listing`, `listings_for_instrument`, `insert_chain`/`get_chain`/`chain_by_caip2`, `insert_deployment`/`get_deployment`/`deployment_by_asset` (V1.4) |
 | `identifiers` | `assign_identifier` → `AssignOutcome`, `resolve_identifier(at)`, `identifier_history`, `identifiers_for_node` |
 | `listing_symbols` | `assign_listing_symbol` → `SymbolAssignOutcome`, `resolve_listing_symbol(venue, at)`, `listings_with_symbol(at)`, `symbols_for_listing` |
 | `graph` | `insert_relationship`, `relationships_from` (forward), `relationships_to` (inverse) → `StoredRelationship` |

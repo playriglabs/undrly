@@ -15,6 +15,8 @@ committed and verified locally; V1.2 and V1.3 are not yet pushed or tagged.
 | V1.1: universes | From 5 instruments to 914, without changing the model | committed |
 | V1.2: FX | 37 FX markets, live venue vs. central-bank reference, Southeast Asia | committed |
 | V1.3: market data surface | Candles, reference history, market status/statistics, perp data | committed |
+| V1.4: cross-ecosystem identity | Chains, deployments, tokenized securities, `/v1/explain` | local, branch `worldsfair` |
+| V1.5: Solana production identity | First production chain and deployment: Solana mainnet, Circle's USDC mint | local, branch `worldsfair` |
 
 **Today:**
 - 951 canonical instruments (503 equities, 219 crypto assets, 178
@@ -55,7 +57,7 @@ One query, one quote shape, five markets.
 | Crypto spot | `BTC/USD` | Kraken + Coinbase, **aggregated** |
 | FX | `EUR/USD` | Kraken |
 | Commodity | `XAU/USD` | gold-api |
-| Perpetual | `BTC-PERP` | Hyperliquid (mark, in USDC) |
+| Perpetual | `BTC-PERP` | Hyperliquid (mark; in USDT since V1.4.1, margined in USDC) |
 
 - **Query language:** symbols, names, pairs (`BTC/USD`), identifiers
   (`isin:…`), venue symbols (`NASDAQ:NVDA`) and canonical ids.
@@ -156,6 +158,40 @@ Coverage and collection:
 - **Removed:** `change24h` on `/v1/quote`. A market's change is served by
   `/v1/market` with its window stated.
 
+## V1.4: cross-ecosystem identity
+
+Ontology only: no new provider or production data
+([`v1.4-cross-ecosystem-identity.md`](v1.4-cross-ecosystem-identity.md)).
+
+- **Chains** (CAIP-2) and **deployments** (CAIP-19: chain + asset
+  namespace + address/mint) as node categories. The same address on two
+  chains is two deployments; a Solana mint cannot match an EVM address.
+- `deployment REPRESENTS instrument`, `instrument TOKENIZES instrument`
+  (wrapped, bridged, share-backed), `DEPLOYED_ON` projected. Class
+  `tokenized_security`. No `SAME_AS`.
+- `/v1/explain`: the resolver's own result with the rule and stored value
+  behind every candidate. Graph gains `deployments` and `markets`.
+- Hyperliquid validated on the existing graph (176/178 underlyings).
+- **V1.4.1:** Hyperliquid contract semantics from the official
+  specification: 176 perpetuals `DENOMINATED_IN` Tether (USDT), PURR and HYPE
+  in USD Coin; all `MARGINED_IN` (new) and `SETTLES_IN` USD Coin. Marks are
+  now quoted in their denomination. Earlier rows stay as normalized.
+
+## V1.5: Solana production identity
+
+[`v1.5-solana.md`](v1.5-solana.md). No schema change.
+
+- **Solana mainnet** (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`) from the
+  cluster's own `getGenesisHash`, stored raw; any other cluster is rejected.
+- **USDC on Solana**: Circle's published mint, from Circle's own address page
+  stored raw, as a deployment that `REPRESENTS` the existing USD Coin.
+- `undrly-collect onchain`, driven by the reviewed binding
+  `data/reference/onchain.json` (no address in it).
+- `scripts/worldsfair.sh`: Hyperliquid and Solana checks over production
+  data; Robinhood Chain and Tempo report `NOT_CONFIGURED`.
+- Pyth and Jupiter researched, not integrated (no deterministic identity
+  mapping; unreviewed terms).
+
 ---
 
 ## Principles held throughout
@@ -184,7 +220,8 @@ Coverage and collection:
 - **Nasdaq-100 import deferred** (no approved machine-readable source).
 - **Weekly FX data.** Some FX pairs (USD/JPY, NZD/USD, USD/SGD, USD/THB)
   rely on the weekly Fed H.10.
-- **Unavailable data.** No spot/perp basis (USD vs. USDC units), no
+- **Unavailable data.** No spot/perp basis (USD vs. USDT units, plus USDC
+  pnl; see the V1.4 doc §15 for what it would need), no
   next-funding time, and no oracle-price history.
 - **Unreviewed redistribution rights** for every source.
 

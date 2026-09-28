@@ -52,6 +52,12 @@ BTC perpetual ─DERIVES_FROM─▶ Bitcoin
 Its quote is its own **mark price in USDC**. It is not converted to USD for
 presentation: USDC is an asset unit, never the USD currency.
 
+> **Corrected in V1.4.1.** Hyperliquid documents these contracts as "USDC
+> margining, USDT denominated": the mark is in **USDT** (Tether), and USDC is
+> the margin and the asset profit and loss and funding are paid in. The
+> perpetual now also has `DENOMINATED_IN Tether` and `MARGINED_IN USD Coin`.
+> See [`v1.4-cross-ecosystem-identity.md` §15](v1.4-cross-ecosystem-identity.md#15-hyperliquid-contract-semantics).
+
 ## 4. Sources and exact feeds
 
 | Market | Source id | Upstream | Feed symbol | Basis | Price type |

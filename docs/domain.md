@@ -7,7 +7,7 @@ file records how the code implements it.
 
 ```text
 undrly:<category>:<id>
-category = entity | instrument | listing | venue | currency
+category = entity | instrument | listing | venue | currency | chain | deployment
 id       = UUIDv7 as 26 characters of lowercase Crockford base32 (first char 0–7)
 ```
 
@@ -71,11 +71,26 @@ relationships or identifier assignments, not fields.
 on. Inverses (`UNDERLYING_OF`) are derived at query time; `LISTED_ON` is
 projected from listings. `RelationshipType::allowed_endpoints` is the storable
 set and equals the database's `relationship_rules`. `DERIVES_FROM` is
-storable instrument → instrument (a perpetual → its underlying). Types with
-no rules yet (`HOLDS`, `TRACKS`, `MEMBER_OF`, `TOKENIZES`, `REPRESENTS`,
-`PRICED_BY`, `AVAILABLE_ON`, `RELATED_TO`) cannot be constructed until their
-node categories exist. Provenance is mandatory. A relationship is a current
+storable instrument → instrument (a perpetual → its underlying). V1.4 adds
+`TOKENIZES` instrument → instrument and `REPRESENTS` deployment → instrument;
+V1.4.1 adds `MARGINED_IN` instrument → currency | instrument (collateral).
+A derivative's price unit (`DENOMINATED_IN`), the asset its cash flows are
+paid in (`SETTLES_IN`) and its collateral (`MARGINED_IN`) are separate facts.
+`DEPLOYED_ON` is projected from a deployment's chain. Types with no rules yet
+(`HOLDS`, `TRACKS`, `MEMBER_OF`, `PRICED_BY`, `AVAILABLE_ON`, `RELATED_TO`)
+cannot be constructed. Provenance is mandatory. A relationship is a current
 assertion by a source; validity periods are deferred.
+
+## Chains and deployments (V1.4)
+
+`undrly_core::onchain`. A `Chain` is identified by its CAIP-2 id
+(`eip155:<chain id>`, `solana:<32 base58 chars>`). A `Deployment` is an asset
+on one chain: `(chain, ChainAsset)` where `ChainAsset` is a CAIP-19 asset
+namespace and reference validated for the chain's namespace (`erc20` EVM
+address, lowercase, EIP-55 verified when mixed case; `token` base58 32-byte
+Solana mint; `slip44` native coin type). What a deployment is a form of is a
+`REPRESENTS` relationship, never a field. See
+[`v1.4-cross-ecosystem-identity.md`](v1.4-cross-ecosystem-identity.md).
 
 ## Market observations
 

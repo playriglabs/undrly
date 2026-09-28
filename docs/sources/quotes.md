@@ -15,7 +15,7 @@ that record.
 | Source id | Upstream | Auth | Feeds (symbol → subject in unit) | Basis / price type | Source time | Terms to review |
 | --- | --- | --- | --- | --- | --- | --- |
 | `kraken` | `GET https://api.kraken.com/0/public/Ticker?pair=XXBTZUSD,ZEURZUSD` | none | `XXBTZUSD` → Bitcoin in USD; `ZEURZUSD` → EUR in USD | venue (Kraken) / last + bid/ask | **none stated** (`observed_at = null`) | Kraken Terms of Service and API terms; market-data redistribution |
-| `hyperliquid` | `POST https://api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}` | none | `BTC` → BTC perpetual in **USDC** | venue (Hyperliquid) / mark | **none stated** | Hyperliquid terms of use; the response covers every perp (~72 KB), and only `BTC` is used |
+| `hyperliquid` | `POST https://api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}` | none | `BTC` → BTC perpetual in **USDT** (its denomination since V1.4.1; margined in USDC) | venue (Hyperliquid) / mark | **none stated** | Hyperliquid terms of use; the response covers every perp (~72 KB), and only `BTC` is used |
 | `gold-api` | `GET https://api.gold-api.com/price/XAU` | none | `XAU` → Gold (1 troy oz) in USD | aggregated / reference | `updatedAt` (seconds) | gold-api.com terms; the upstream contributors are undisclosed |
 | `coinbase` | `GET https://api.exchange.coinbase.com/products/BTC-USD/book?level=1` | none | `BTC-USD` → Bitcoin in USD | venue (Coinbase Exchange) / mid + bid/ask | book `time` (ns, truncated to µs) | Coinbase Exchange API / market-data terms; Coinbase requires a User-Agent |
 | `alpaca` | `GET https://data.alpaca.markets/v2/stocks/snapshots?symbols=NVDA&feed=iex` | `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` headers | `NVDA` → NVIDIA common stock in USD | **venue (IEX)** / last (trade) + mid (IEX top of book, with bid/ask) | trade time `t` / quote time `t` (ns, truncated to µs) | Alpaca Market Data agreement; the IEX feed's display and redistribution terms |
@@ -26,6 +26,14 @@ Bank Indonesia, Bank Negara Malaysia, Central Bank of Myanmar); their
 semantics, cadence and terms are in [`../v1.2-fx.md`](../v1.2-fx.md) §3.
 EUR/USD is now the FX instrument EUR/USD (not the EUR currency), priced by
 Kraken and Bitstamp.
+
+V1.5 adds two identity sources (no prices), used by `undrly-collect
+onchain`; see [`../v1.5-solana.md`](../v1.5-solana.md):
+
+| Source id | Upstream | Auth | Asserts | Terms to review |
+| --- | --- | --- | --- | --- |
+| `solana-mainnet-rpc` | `POST https://api.mainnet.solana.com {"jsonrpc":"2.0","id":1,"method":"getGenesisHash"}` | none | the Solana mainnet chain (CAIP-2 from the genesis hash) | Solana public RPC usage policy (rate limits; public endpoints are not for production traffic) |
+| `circle` | `GET https://developers.circle.com/stablecoins/usdc-contract-addresses.md` | none | USDC's deployment on each bound chain (Solana) | Circle developer documentation terms; only the mainnet table is read, the page is stored raw |
 
 ## Semantics that must not be blurred
 
