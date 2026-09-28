@@ -14,6 +14,8 @@ example Apple's ISIN and LEI) are used only as check-digit test vectors.
 | `sources/sec-edgar/` | Rust provider and ingest tests | Captured SEC EDGAR responses, byte for byte (see below). |
 | `sources/kraken/`, `sources/coinbase/`, `sources/hyperliquid/`, `sources/gold-api/`, `sources/alpaca/` | Rust provider, normalize and ingest tests | Captured quote responses, byte for byte (see below). |
 | `sources/circle/`, `sources/solana/` | Rust provider, normalize and ingest tests (V1.5) | Circle's USDC contract address page (Markdown) and Solana `getGenesisHash` responses (mainnet, devnet), captured 2026-09-28, byte for byte. |
+| `sources/robinhood-chain/`, `sources/rhj/` | Rust provider, normalize and ingest tests (V1.6) | Robinhood Chain `eth_chainId` (mainnet, testnet) and RHJ's asset registry (`/rhj/assets`, 195 assets), captured 2026-09-28. The Final Terms PDF is not stored here (3.2 MB); tests use synthetic bytes. |
+| `sources/tempo/` | Rust provider and ingest tests (V1.7) | Tempo `eth_chainId` (mainnet 4217, Moderato 42431) and the pathUSD TIP-20 metadata batch from both, captured 2026-09-28. |
 | `api/v1/` | TypeScript | External JSON API contract v1: valid documents (accepted unchanged) and `invalid/` (rejected). |
 
 Released API fixtures are append-only; a breaking change goes in `api/v2/`.

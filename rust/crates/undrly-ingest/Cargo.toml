@@ -14,10 +14,11 @@ undrly-core.workspace = true
 undrly-normalize.workspace = true
 undrly-provider = { workspace = true, features = ["http"] }
 undrly-store.workspace = true
+# SHA-256 of a reviewed document, checked before its facts are used (V1.6).
+sha2 = "0.10"
 
 [dev-dependencies]
 serde_json.workspace = true
-sha2 = "0.10"
 tokio = { workspace = true, features = ["net", "io-util"] }
 undrly-store = { workspace = true, features = ["testing"] }
 

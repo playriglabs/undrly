@@ -49,6 +49,7 @@ pub mod market_data;
 pub mod onchain;
 pub mod quotes;
 pub mod sec;
+pub mod tracker;
 
 use sqlx::{Acquire, PgConnection};
 use undrly_core::identifier::AssignmentError;
