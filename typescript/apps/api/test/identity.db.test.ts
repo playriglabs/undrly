@@ -623,6 +623,30 @@ describe.skipIf(url === undefined)("V1.4 cross-ecosystem identity", () => {
     ]);
   });
 
+  it("unit selects one market by id and never widens resolution (V1.8)", async () => {
+    const perp = text("instrument", "perp");
+    const usdt = text("instrument", "usdt");
+    const at = (path: string, unit: string) => get(`${path}?unit=${encodeURIComponent(unit)}`);
+    const q = await at(`/v1/quote/${perp}`, usdt);
+    expect(q.status).toBe(200);
+    expect(v1.QuoteV1.parse(q.body).unit.id).toBe(usdt);
+    // The perpetual is margined in USDC but not priced in it.
+    const usdc = await at("/v1/quote/BTC-PERP", text("instrument", "usdc"));
+    expect([usdc.status, (usdc.body["error"] as { code: string }).code]).toStrictEqual([
+      404,
+      "no_quote",
+    ]);
+    for (const bad of ["USDT", text("venue", "hyperliquid")]) {
+      const r = await at("/v1/quote/BTC-PERP", bad);
+      expect([r.status, (r.body["error"] as { code: string }).code]).toStrictEqual([
+        400,
+        "bad_request",
+      ]);
+    }
+    const quotes = await get(`/v1/quotes?q=BTC-PERP&unit=${encodeURIComponent(usdt)}`);
+    expect(v1.ObservationsV1.parse(quotes.body).observations).toHaveLength(2);
+  });
+
   it("a tracker certificate TRACKS the stock without becoming it (V1.6)", async () => {
     const e = await explainOf("isin:JE00BX9C6J83");
     const c = e.candidates[0];

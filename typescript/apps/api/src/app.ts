@@ -17,7 +17,9 @@
  * GET /v1/calendar/:query        a session market's trading calendar (?from=&to= dates)
  * GET /v1/economic-calendar      scheduled US economic releases (?from=&to=&category=)
  *
- * Queries may contain `/` (`EUR/USD`); path forms accept it unencoded.
+ * Queries may contain `/` (`EUR/USD`); path forms accept it unencoded. The
+ * quote, quotes, candles, history, market, derivatives and calendar routes
+ * also take `?unit=<currency or instrument id>` (V1.8) to select one market.
  */
 import { v1 } from "@undrly/contracts";
 import { Hono } from "hono";
@@ -156,20 +158,34 @@ export function createApp(sql: Sql, options: AppOptions) {
   app.get("/v1/explain", (c) => explainRoute((c.req.query("q") ?? "").trim()));
   app.get("/v1/explain/:query{.+}", (c) => explainRoute(queryOf(c.req.param("query"), undefined)));
 
-  /** Resolution → exactly one priced pair, or an error response. */
-  const onePair = async (query: string) => {
+  /**
+   * Resolution → exactly one priced pair, or an error response. `unit` (V1.8,
+   * optional) is the canonical id of a currency or instrument: only pairs
+   * priced in exactly that unit are kept, so one market (subject, unit) is
+   * addressable by ids alone. It filters; it never widens resolution.
+   */
+  const onePair = async (query: string, unit?: string) => {
+    let unitUuid: string | null = null;
+    if (unit !== undefined) {
+      const category = v1.canonicalIdCategory(unit);
+      unitUuid =
+        category === "currency" || category === "instrument" ? v1.canonicalIdUuid(unit) : null;
+      if (unitUuid === null) return fail("bad_request", "unit must be a currency or instrument id");
+    }
     const r = await resolveQuery(sql, query);
     if (r === null) return fail("bad_request", "invalid query");
     if (r.status === "not_found") return fail("not_found", `nothing resolves to ${query}`);
-    const pairs = await pricedPairs(sql, r);
+    const pairs = (await pricedPairs(sql, r)).filter(
+      (p) => unitUuid === null || p.unit === unitUuid,
+    );
     if (pairs.length === 1 && pairs[0]) return pairs[0];
     if (pairs.length === 0 && r.status === "resolved")
       return fail("no_quote", `no quote for ${query}`);
     return fail("ambiguous", `${query} is ambiguous; use a pair or an id`, r.resolutions);
   };
 
-  const quoteRoute = async (query: string) => {
-    const pair = await onePair(query);
+  const quoteRoute = async (query: string, unit: string | undefined) => {
+    const pair = await onePair(query, unit);
     if (pair instanceof Response) return pair;
     const result = await canonicalQuote(sql, pair, now(), options.staleAfterSeconds);
     if (result.kind === "none") return fail("no_quote", `no quote for ${query}`);
@@ -181,11 +197,13 @@ export function createApp(sql: Sql, options: AppOptions) {
     }
     return Response.json(result.quote);
   };
-  app.get("/v1/quote", (c) => quoteRoute((c.req.query("q") ?? "").trim()));
-  app.get("/v1/quote/:query{.+}", (c) => quoteRoute(queryOf(c.req.param("query"), undefined)));
+  app.get("/v1/quote", (c) => quoteRoute((c.req.query("q") ?? "").trim(), c.req.query("unit")));
+  app.get("/v1/quote/:query{.+}", (c) =>
+    quoteRoute(queryOf(c.req.param("query"), undefined), c.req.query("unit")),
+  );
 
-  const quotesRoute = async (query: string) => {
-    const pair = await onePair(query);
+  const quotesRoute = async (query: string, unit: string | undefined) => {
+    const pair = await onePair(query, unit);
     if (pair instanceof Response) return pair;
     const body = v1.ObservationsV1.parse({
       schemaVersion: 1,
@@ -194,8 +212,10 @@ export function createApp(sql: Sql, options: AppOptions) {
     });
     return Response.json(body);
   };
-  app.get("/v1/quotes", (c) => quotesRoute((c.req.query("q") ?? "").trim()));
-  app.get("/v1/quotes/:query{.+}", (c) => quotesRoute(queryOf(c.req.param("query"), undefined)));
+  app.get("/v1/quotes", (c) => quotesRoute((c.req.query("q") ?? "").trim(), c.req.query("unit")));
+  app.get("/v1/quotes/:query{.+}", (c) =>
+    quotesRoute(queryOf(c.req.param("query"), undefined), c.req.query("unit")),
+  );
 
   /** `limit`, `start`, `end` query parameters, or an error response. */
   const bounds = (q: (name: string) => string | undefined): Bounds | Response => {
@@ -234,7 +254,7 @@ export function createApp(sql: Sql, options: AppOptions) {
     const b = bounds((n) => c.req.query(n));
     if (b instanceof Response) return b;
     const query = queryOf(c.req.param("query"), undefined);
-    const pair = await onePair(query);
+    const pair = await onePair(query, c.req.query("unit"));
     if (pair instanceof Response) return pair;
     const r = await candles(sql, pair, interval as v1.CandleInterval, b);
     return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
@@ -244,7 +264,7 @@ export function createApp(sql: Sql, options: AppOptions) {
     const b = bounds((n) => c.req.query(n));
     if (b instanceof Response) return b;
     const query = queryOf(c.req.param("query"), undefined);
-    const pair = await onePair(query);
+    const pair = await onePair(query, c.req.query("unit"));
     if (pair instanceof Response) return pair;
     const r = await history(sql, pair, b);
     return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
@@ -252,7 +272,7 @@ export function createApp(sql: Sql, options: AppOptions) {
 
   app.get("/v1/market/:query{.+}", async (c) => {
     const query = queryOf(c.req.param("query"), undefined);
-    const pair = await onePair(query);
+    const pair = await onePair(query, c.req.query("unit"));
     if (pair instanceof Response) return pair;
     const at = now();
     const q = await canonicalQuote(sql, pair, at, options.staleAfterSeconds);
@@ -262,7 +282,7 @@ export function createApp(sql: Sql, options: AppOptions) {
 
   app.get("/v1/derivatives/:query{.+}", async (c) => {
     const query = queryOf(c.req.param("query"), undefined);
-    const pair = await onePair(query);
+    const pair = await onePair(query, c.req.query("unit"));
     if (pair instanceof Response) return pair;
     const r = await derivatives(sql, pair, now(), options.staleAfterSeconds);
     return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
@@ -309,7 +329,7 @@ export function createApp(sql: Sql, options: AppOptions) {
     if (w instanceof Response) return w;
     const { from, to } = w;
     const query = queryOf(c.req.param("query"), undefined);
-    const pair = await onePair(query);
+    const pair = await onePair(query, c.req.query("unit"));
     if (pair instanceof Response) return pair;
     const r = await calendar(sql, pair, from, to, at);
     return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);

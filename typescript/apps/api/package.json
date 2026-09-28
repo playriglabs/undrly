@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "description": "Read-only HTTP API: search, resolve, quote, quotes, graph (docs/hackathon-v1.md).",
+  "exports": {
+    "./app": "./src/app.ts",
+    "./query": "./src/query.ts"
+  },
   "scripts": {
     "start": "bun run src/server.ts"
   },
