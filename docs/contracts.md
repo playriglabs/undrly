@@ -182,6 +182,10 @@ V1.4 additions (cross-ecosystem identity,
 - `GraphV1` gains `deployments` (`{ id, chain, caip19 }`) and `markets`
   (`{ unit, venues }`), each **omitted** when empty, so earlier documents are
   unchanged.
+- V1.5: aggregation method `mark-with-venue-book-v1` (perpetuals): a venue
+  mark with the same venue's best bid/ask when its book is within 60 s;
+  `VenueQuoteV1.bidAskAsOf` (the book's time) is present exactly then, and
+  omitted otherwise, so earlier documents are unchanged.
 - V1.4.1: relationship rule `MARGINED_IN` (instrument → currency |
   instrument: the collateral). `DerivativesV1.unit` is the contract's price
   denomination, not the settlement asset; `/v1/derivatives` serves only

@@ -15,7 +15,7 @@ that record.
 | Source id | Upstream | Auth | Feeds (symbol → subject in unit) | Basis / price type | Source time | Terms to review |
 | --- | --- | --- | --- | --- | --- | --- |
 | `kraken` | `GET https://api.kraken.com/0/public/Ticker?pair=XXBTZUSD,ZEURZUSD` | none | `XXBTZUSD` → Bitcoin in USD; `ZEURZUSD` → EUR in USD | venue (Kraken) / last + bid/ask | **none stated** (`observed_at = null`) | Kraken Terms of Service and API terms; market-data redistribution |
-| `hyperliquid` | `POST https://api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}` | none | `BTC` → BTC perpetual in **USDT** (its denomination since V1.4.1; margined in USDC) | venue (Hyperliquid) / mark | **none stated** | Hyperliquid terms of use; the response covers every perp (~72 KB), and only `BTC` is used |
+| `hyperliquid` | `POST https://api.hyperliquid.xyz/info {"type":"metaAndAssetCtxs"}`; since V1.5 also `{"type":"l2Book","coin":…}` per perpetual | none | `BTC` → BTC perpetual in **USDT** (its denomination since V1.4.1; margined in USDC): mark, and the book's mid with best bid/ask | venue (Hyperliquid) / mark | **none stated** | Hyperliquid terms of use; the response covers every perp (~72 KB), and only `BTC` is used |
 | `gold-api` | `GET https://api.gold-api.com/price/XAU` | none | `XAU` → Gold (1 troy oz) in USD | aggregated / reference | `updatedAt` (seconds) | gold-api.com terms; the upstream contributors are undisclosed |
 | `coinbase` | `GET https://api.exchange.coinbase.com/products/BTC-USD/book?level=1` | none | `BTC-USD` → Bitcoin in USD | venue (Coinbase Exchange) / mid + bid/ask | book `time` (ns, truncated to µs) | Coinbase Exchange API / market-data terms; Coinbase requires a User-Agent |
 | `alpaca` | `GET https://data.alpaca.markets/v2/stocks/snapshots?symbols=NVDA&feed=iex` | `APCA-API-KEY-ID` / `APCA-API-SECRET-KEY` headers | `NVDA` → NVIDIA common stock in USD | **venue (IEX)** / last (trade) + mid (IEX top of book, with bid/ask) | trade time `t` / quote time `t` (ns, truncated to µs) | Alpaca Market Data agreement; the IEX feed's display and redistribution terms |
@@ -63,9 +63,10 @@ onchain`; see [`../v1.5-solana.md`](../v1.5-solana.md):
   (see `docs/hackathon-v1.md` §13): `basis = aggregated`, attributed to no
   venue or source, with the mean bid and mean ask of its inputs. Coinbase's observation is its level-1 mid (normalizer
   computes `(bid + ask) / 2` exactly), with the book time as source time.
-- **Kraken and Hyperliquid state no timestamp.** Their observations have
-  `observed_at = null`, and freshness uses `received_at`. Undrly's clock is
-  never presented as source time.
+- **Kraken and Hyperliquid's `metaAndAssetCtxs` state no timestamp.** Their
+  observations have `observed_at = null`, and freshness uses `received_at`.
+  Undrly's clock is never presented as source time. Hyperliquid's `l2Book`
+  does state one (`time`), which its book observations keep.
 
 ## Request behaviour
 

@@ -191,6 +191,9 @@ Ontology only: no new provider or production data
   data; Robinhood Chain and Tempo report `NOT_CONFIGURED`.
 - Pyth and Jupiter researched, not integrated (no deterministic identity
   mapping; unreviewed terms).
+- Perpetual quotes carry bid/ask: each perpetual's Hyperliquid order book
+  (`l2Book`) is a second feed; `mark-with-venue-book-v1` keeps the mark as
+  price and attaches the book's best levels, with their time (`bidAskAsOf`).
 
 ---
 
