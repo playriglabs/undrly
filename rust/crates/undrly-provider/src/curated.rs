@@ -225,7 +225,7 @@ mod tests {
             .decode_reference(&std::fs::read(path).unwrap())
             .unwrap();
         assert_eq!(u.dataset, "undrly-demo-universe");
-        assert_eq!(u.instruments.len(), 6);
+        assert_eq!(u.instruments.len(), 7, "incl. Tether (V1.4.1)");
         assert_eq!(u.quote_feeds.len(), 7);
         assert_eq!(u.quote_aggregations.len(), 1);
     }

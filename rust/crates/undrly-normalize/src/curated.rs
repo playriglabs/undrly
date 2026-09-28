@@ -517,7 +517,7 @@ mod tests {
     fn normalizes_the_demo_universe() {
         let n = normalize_universe(&universe()).unwrap();
         assert_eq!(n.currencies.len(), 2);
-        assert_eq!(n.instruments.len(), 6);
+        assert_eq!(n.instruments.len(), 7);
         let classes: Vec<InstrumentClass> = n.instruments.iter().map(|(i, _, _)| i.class).collect();
         assert_eq!(
             classes,
@@ -525,26 +525,34 @@ mod tests {
                 InstrumentClass::Equity,
                 InstrumentClass::CryptoAsset,
                 InstrumentClass::CryptoAsset,
+                InstrumentClass::CryptoAsset,
                 InstrumentClass::Commodity,
                 InstrumentClass::PerpetualFuture,
                 InstrumentClass::Fx,
             ]
         );
-        // The perpetual derives from Bitcoin and settles in USDC.
-        let perp = n.instruments[4].0.id.canonical();
+        // The perpetual (Hyperliquid's contract specification) derives from
+        // Bitcoin, is denominated in USDT, settles and is margined in USDC.
+        let perp = n.instruments[5].0.id.canonical();
         let btc = n.instruments[1].0.id.canonical();
         let usdc = n.instruments[2].0.id.canonical();
+        let usdt = n.instruments[3].0.id.canonical();
+        assert_ne!(usdc, usdt);
+        for edge in [
+            (perp, RelationshipType::DerivesFrom, btc),
+            (perp, RelationshipType::DenominatedIn, usdt),
+            (perp, RelationshipType::SettlesIn, usdc),
+            (perp, RelationshipType::MarginedIn, usdc),
+        ] {
+            assert!(n.relationships.contains(&edge), "{edge:?}");
+        }
         assert!(
-            n.relationships
-                .contains(&(perp, RelationshipType::DerivesFrom, btc))
-        );
-        assert!(
-            n.relationships
-                .contains(&(perp, RelationshipType::SettlesIn, usdc))
+            !n.relationships
+                .contains(&(perp, RelationshipType::DenominatedIn, usdc))
         );
         // FX: the EUR/USD market (base EUR, quote USD) is priced in USD; the
-        // perp is priced in USDC.
-        let (eur_usd, _, _) = &n.instruments[5];
+        // perp is priced in USDT.
+        let (eur_usd, _, _) = &n.instruments[6];
         let pair = eur_usd.fx_pair.unwrap();
         assert_eq!(pair.base, n.currencies[1].0.id);
         assert_eq!(pair.quote, n.currencies[0].0.id);
@@ -566,7 +574,11 @@ mod tests {
             .iter()
             .find(|f| f.symbol.as_str() == "BTC")
             .unwrap();
-        assert_eq!(perp_feed.unit.canonical(), usdc);
+        assert_eq!(
+            perp_feed.unit.canonical(),
+            usdt,
+            "the mark is in the denomination"
+        );
         assert_eq!(perp_feed.price_type, PriceType::Mark);
         let nvda_feed = n
             .quote_feeds

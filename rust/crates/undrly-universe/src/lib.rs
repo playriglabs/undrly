@@ -28,7 +28,10 @@ use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use undrly_core::{CanonicalId, Category, CurrencyId, EntityId, InstrumentId, ListingId, VenueId};
+use undrly_core::{
+    CanonicalId, Category, ChainId, CurrencyId, DeploymentId, EntityId, InstrumentId, ListingId,
+    VenueId,
+};
 use undrly_provider::QuoteProvider;
 use undrly_provider::curated::{
     AliasRecord, EntityRecord, InstrumentRecord, ListingRecord, QuoteAggregationRecord,
@@ -151,6 +154,8 @@ pub fn mint(category: Category) -> CanonicalId {
         Category::Listing => ListingId::generate().canonical(),
         Category::Venue => VenueId::generate().canonical(),
         Category::Currency => CurrencyId::generate().canonical(),
+        Category::Chain => ChainId::generate().canonical(),
+        Category::Deployment => DeploymentId::generate().canonical(),
     }
 }
 
@@ -195,9 +200,10 @@ impl V1 {
 /// V1 objects the build reuses, by build key. Hand-pinned: the equity and
 /// issuer pins are NVIDIA's SPY CUSIP key and CIK, stated here explicitly,
 /// not derived from V1's ISIN.
-const V1_PINS: [(&str, &str); 9] = [
+const V1_PINS: [(&str, &str); 10] = [
     ("coingecko:bitcoin", "btc"),
     ("coingecko:usd-coin", "usdc"),
+    ("coingecko:tether", "usdt"),
     ("hyperliquid:BTC", "btc-perp"),
     ("spy:67066G104", "nvda"),
     ("sec:1045810", "nvidia"),
@@ -612,6 +618,21 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
 
 // ---------------------------------------------------------------- perps
 
+/// Hyperliquid's contract specification (read 2026-09-28):
+/// <https://hyperliquid.gitbook.io/hyperliquid-docs/trading/contract-specifications>
+/// "USDC margining, USDT denominated linear contracts. That is, the oracle
+/// price is denominated in USDT, but the collateral is USDC. [...] these
+/// contracts are technically quanto contracts where USDT pnl is denominated
+/// in USDC." and "Currently, the only USDC-denominated perpetual contracts are
+/// PURR-USD and HYPE-USD". Market names of those exceptions on the first
+/// perp dex; every other main-dex perpetual is USDT-denominated.
+pub const HYPERLIQUID_USDC_DENOMINATED: [&str; 2] = ["HYPE", "PURR"];
+
+/// The spot token the documentation names as the first perp dex's
+/// collateral (USDC is spot token 0). If `meta.collateralToken` says
+/// otherwise, no margin or settlement edge is asserted.
+pub const HYPERLIQUID_USDC_TOKEN: u32 = 0;
+
 /// Hyperliquid's `k` prefix denotes a 1,000-unit contract (`kPEPE`).
 pub fn contract_multiplier(name: &str) -> Option<&'static str> {
     let rest = name.strip_prefix('k')?;
@@ -648,7 +669,21 @@ fn perps(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
     }
 
     let usdc = ctx.v1.id("usdc")?;
+    let usdt = ctx.v1.id("usdt")?;
     let venue = ctx.v1.id("hyperliquid")?;
+    // Margin and cash flows (profit and loss, funding) are in the dex's
+    // collateral; only assert USDC when the response confirms the token.
+    let collateral = (meta.collateral_token == Some(HYPERLIQUID_USDC_TOKEN)).then(|| usdc.clone());
+    if collateral.is_none() {
+        ctx.exclude(
+            "hyperliquid-perps / collateral",
+            "meta",
+            format!(
+                "collateralToken is {:?}, not the documented USDC token: no MARGINED_IN or SETTLES_IN edges",
+                meta.collateral_token
+            ),
+        );
+    }
     let mut live: Vec<&str> = meta
         .universe
         .iter()
@@ -668,6 +703,12 @@ fn perps(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
         if multiplier.is_some() {
             multiplied += 1;
         }
+        // The price unit: what the oracle and mark are denominated in.
+        let denomination = if HYPERLIQUID_USDC_DENOMINATED.contains(&name) {
+            usdc.clone()
+        } else {
+            usdt.clone()
+        };
         if !ctx.is_v1(&id) {
             let base = name
                 .strip_prefix('k')
@@ -695,9 +736,23 @@ fn perps(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
             );
             ctx.alias(&key, &format!("{name}-PERP"), "symbol");
             ctx.alias(&key, &format!("{name} perpetual"), "name");
-            ctx.out
-                .relationships
-                .insert((key.clone(), "SETTLES_IN".into(), usdc.clone()));
+            ctx.out.relationships.insert((
+                key.clone(),
+                "DENOMINATED_IN".into(),
+                denomination.clone(),
+            ));
+            if let Some(collateral) = &collateral {
+                ctx.out.relationships.insert((
+                    key.clone(),
+                    "SETTLES_IN".into(),
+                    collateral.clone(),
+                ));
+                ctx.out.relationships.insert((
+                    key.clone(),
+                    "MARGINED_IN".into(),
+                    collateral.clone(),
+                ));
+            }
             ctx.out
                 .relationships
                 .insert((key.clone(), "TRADES_ON".into(), venue.clone()));
@@ -741,7 +796,7 @@ fn perps(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
             source: "hyperliquid".into(),
             symbol: name.to_owned(),
             subject: node.clone(),
-            unit: usdc.clone(),
+            unit: denomination.clone(),
             basis: "venue".into(),
             venue: Some(venue.clone()),
             price_type: "mark".into(),

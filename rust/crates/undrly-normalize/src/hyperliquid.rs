@@ -1,7 +1,9 @@
 //! Normalizer for [`undrly_provider::hyperliquid`] asset contexts.
 //!
-//! Price is the perpetual's **mark price** (`markPx`), in the market's quote
-//! asset (USDC; the unit comes from the feed). No bid/ask, no source time.
+//! Price is the perpetual's **mark price** (`markPx`), in the contract's
+//! price denomination, which the feed declares as its unit (Tether USD for
+//! USDT-denominated perpetuals, USD Coin for the USDC-denominated ones). The
+//! margin asset is not the price unit. No bid/ask, no source time.
 
 use undrly_core::{PriceType, VenueSymbol};
 use undrly_provider::hyperliquid::MetaAndAssetCtxs;

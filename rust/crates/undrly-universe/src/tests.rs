@@ -141,8 +141,8 @@ fn files() -> BTreeMap<String, Vec<u8>> {
     );
     put(
         paths::HYPERLIQUID_META,
-        br#"[{"universe":[{"name":"BTC"},{"name":"kPEPE"},{"name":"EXC"},{"name":"NOPE"},{"name":"OLD","isDelisted":true}]},
-             [{"markPx":"1"},{"markPx":"1"},{"markPx":"1"},{"markPx":"1"},{"markPx":"1"}]]"#,
+        br#"[{"universe":[{"name":"BTC"},{"name":"kPEPE"},{"name":"EXC"},{"name":"NOPE"},{"name":"OLD","isDelisted":true},{"name":"HYPE"}],"collateralToken":0},
+             [{"markPx":"1"},{"markPx":"1"},{"markPx":"1"},{"markPx":"1"},{"markPx":"1"},{"markPx":"1"}]]"#,
     );
     put(
         paths::HYPERLIQUID_DERIVATIVES,
@@ -290,7 +290,7 @@ fn perps_are_discovered_with_multipliers_and_crosswalked_underlyings() {
         .collect();
     assert_eq!(
         symbols,
-        vec!["BTC", "EXC", "NOPE", "kPEPE"],
+        vec!["BTC", "EXC", "HYPE", "NOPE", "kPEPE"],
         "delisted OLD skipped"
     );
     let kpepe = b
@@ -442,4 +442,99 @@ fn rejects_tampered_inputs() {
         build(&inputs, &mut counter()),
         Err(BuildError::Hash { .. })
     ));
+}
+
+/// Hyperliquid's contract specification: USDT-denominated (PURR and HYPE:
+/// USDC-denominated), USDC-margined, profit and loss in USDC.
+#[test]
+fn perps_carry_their_documented_denomination_margin_and_settlement() {
+    let b = run(IdMap::default());
+    let v1 = v1();
+    let id = |k: &str| {
+        v1.instruments
+            .iter()
+            .find(|i| i.key == k)
+            .unwrap()
+            .id
+            .clone()
+    };
+    let (usdc, usdt) = (id("usdc"), id("usdt"));
+    assert_ne!(usdc, usdt);
+    let edges = |s: &str, t: &str| -> Vec<String> {
+        b.snapshot
+            .relationships
+            .iter()
+            .filter(|(a, k, _)| a == s && k == t)
+            .map(|(_, _, o)| o.clone())
+            .collect()
+    };
+    let unit = |symbol: &str| {
+        b.snapshot
+            .quote_feeds
+            .iter()
+            .find(|f| f.source == "hyperliquid" && f.symbol == symbol)
+            .map(|f| f.unit.clone())
+            .unwrap()
+    };
+    for perp in ["EXC", "NOPE", "kPEPE"] {
+        let key = format!("hyperliquid:{perp}");
+        assert_eq!(edges(&key, "DENOMINATED_IN"), vec![usdt.clone()], "{perp}");
+        assert_eq!(edges(&key, "MARGINED_IN"), vec![usdc.clone()], "{perp}");
+        assert_eq!(edges(&key, "SETTLES_IN"), vec![usdc.clone()], "{perp}");
+        assert_eq!(unit(perp), usdt, "{perp}: the mark is in the denomination");
+    }
+    // The documented USDC-denominated exception.
+    assert_eq!(
+        edges("hyperliquid:HYPE", "DENOMINATED_IN"),
+        vec![usdc.clone()]
+    );
+    assert_eq!(unit("HYPE"), usdc);
+    // V1's BTC perpetual carries its own edges (data/demo/universe.json); its
+    // feed is V1's, in USDT.
+    assert!(edges("hyperliquid:BTC", "DENOMINATED_IN").is_empty());
+    let btc_feed = v1
+        .quote_feeds
+        .iter()
+        .find(|f| f.source == "hyperliquid" && f.symbol == "BTC")
+        .unwrap();
+    assert_eq!(btc_feed.unit, "usdt");
+    // The multiplier is unchanged by any of this.
+    let kpepe = b
+        .snapshot
+        .instruments
+        .iter()
+        .find(|i| i.key == "hyperliquid:kPEPE")
+        .unwrap();
+    assert_eq!(kpepe.contract_multiplier.as_deref(), Some("1000"));
+}
+
+/// Without the documented collateral token, no margin or settlement asset
+/// is asserted; the price unit (from the specification) still is.
+#[test]
+fn perps_without_the_documented_collateral_get_no_margin_edges() {
+    let mut files = files();
+    files.insert(
+        paths::HYPERLIQUID_META.to_owned(),
+        br#"[{"universe":[{"name":"EXC"}],"collateralToken":7},[{"markPx":"1"}]]"#.to_vec(),
+    );
+    let manifest = manifest(&files);
+    let v1 = v1();
+    let inputs = Inputs {
+        manifest: &manifest,
+        files: &files,
+        v1: &v1,
+        ids: IdMap::default(),
+    };
+    let b = build(&inputs, &mut counter()).unwrap();
+    let kinds: Vec<&str> = b
+        .snapshot
+        .relationships
+        .iter()
+        .filter(|(a, _, _)| a == "hyperliquid:EXC")
+        .map(|(_, k, _)| k.as_str())
+        .collect();
+    assert!(kinds.contains(&"DENOMINATED_IN"));
+    assert!(!kinds.contains(&"MARGINED_IN"));
+    assert!(!kinds.contains(&"SETTLES_IN"));
+    assert!(b.report.contains("collateralToken is Some(7)"));
 }

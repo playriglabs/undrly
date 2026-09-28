@@ -133,12 +133,14 @@ async fn curated_universe_is_idempotent_and_traceable() {
     let facts = facts_from_source_record(&mut conn, record).await.unwrap();
     assert_eq!(
         facts.nodes.len(),
-        2 + 1 + 5 + 6 + 1,
-        "currencies, entity, venues, instruments (incl. the EUR/USD FX market), listing"
+        2 + 1 + 5 + 7 + 1,
+        "currencies, entity, venues, instruments (incl. the EUR/USD FX market and Tether), listing"
     );
-    assert_eq!(facts.relationships.len(), 8);
+    assert_eq!(facts.relationships.len(), 10);
 
-    // BTC perpetual → DERIVES_FROM Bitcoin, SETTLES_IN USDC, TRADES_ON Hyperliquid.
+    // BTC perpetual (Hyperliquid's contract specification): derives from
+    // Bitcoin, is priced in USDT, pays its cash flows in and is margined in
+    // USDC, trades on Hyperliquid. USD, USDT and USDC are three nodes.
     let edges: Vec<(String, CanonicalId)> =
         graph::relationships_from(&mut conn, curated("btc-perp"), None)
             .await
@@ -155,10 +157,21 @@ async fn curated_universe_is_idempotent_and_traceable() {
         edges,
         vec![
             ("DERIVES_FROM".to_owned(), curated("btc")),
+            ("DENOMINATED_IN".to_owned(), curated("usdt")),
             ("SETTLES_IN".to_owned(), curated("usdc")),
+            ("MARGINED_IN".to_owned(), curated("usdc")),
             ("TRADES_ON".to_owned(), curated("hyperliquid")),
         ]
     );
+    let stablecoins = [curated("usd"), curated("usdt"), curated("usdc")];
+    assert_eq!(
+        stablecoins
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        3
+    );
+    assert_eq!(curated("usd").category(), undrly_core::Category::Currency);
     drop(conn);
     db.teardown().await;
 }
@@ -345,10 +358,21 @@ async fn all_five_markets_have_canonical_quotes() {
         .await
         .unwrap();
 
-    // BTC perpetual: mark price in USDC (an asset), at Hyperliquid.
-    let perp = canonical(&mut conn, "btc-perp", "usdc").await;
+    // BTC perpetual: mark price in its USDT denomination (an asset, not USD
+    // and not its USDC margin asset), at Hyperliquid.
+    let perp = canonical(&mut conn, "btc-perp", "usdt").await;
     assert_eq!(perp.price_type(), PriceType::Mark);
-    assert!(matches!(perp.unit(), PriceUnit::Asset(_)));
+    assert_eq!(
+        perp.unit(),
+        PriceUnit::Asset(curated("usdt").try_into().unwrap())
+    );
+    assert!(
+        get_canonical_quote(&mut conn, subject("btc-perp"), unit("usdc"))
+            .await
+            .unwrap()
+            .is_none(),
+        "no BTC-PERP quote in USDC"
+    );
     assert_eq!(
         perp.basis(),
         ObservationBasis::Venue(curated("hyperliquid").try_into().unwrap())

@@ -83,6 +83,14 @@
       "figi": null
     },
     {
+      "key": "usdt",
+      "id": "undrly:instrument:01m3c732qnehv8ex0vnrmngb7v",
+      "class": "crypto_asset",
+      "name": "Tether",
+      "isin": null,
+      "figi": null
+    },
+    {
       "key": "gold",
       "id": "undrly:instrument:01m3bbjhnjewwb8qvvkn6rf2c1",
       "class": "commodity",
@@ -148,7 +156,17 @@
     ],
     [
       "btc-perp",
+      "DENOMINATED_IN",
+      "usdt"
+    ],
+    [
+      "btc-perp",
       "SETTLES_IN",
+      "usdc"
+    ],
+    [
+      "btc-perp",
+      "MARGINED_IN",
       "usdc"
     ],
     [
@@ -201,6 +219,16 @@
     {
       "node": "usdc",
       "alias": "USD Coin",
+      "kind": "name"
+    },
+    {
+      "node": "usdt",
+      "alias": "USDT",
+      "kind": "symbol"
+    },
+    {
+      "node": "usdt",
+      "alias": "Tether",
       "kind": "name"
     },
     {
@@ -307,7 +335,7 @@
       "source": "hyperliquid",
       "symbol": "BTC",
       "subject": "btc-perp",
-      "unit": "usdc",
+      "unit": "usdt",
       "basis": "venue",
       "venue": "hyperliquid",
       "priceType": "mark"

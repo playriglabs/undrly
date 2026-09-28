@@ -3,6 +3,13 @@
 //! The response is `[meta, contexts]`: `meta.universe[i]` names the market
 //! whose context is `contexts[i]`. Every listed perpetual is returned; feeds
 //! select what Undrly uses. No timestamp is stated.
+//!
+//! Units (Hyperliquid's contract specification): prices (`markPx`,
+//! `oraclePx`, `midPx`, `prevDayPx`, impact prices) are in the contract's
+//! denomination: USDT for most perpetuals, USDC for the documented
+//! exceptions. Margin, profit and loss and funding are paid in the dex's
+//! collateral token (`collateralToken`; spot token 0, USDC, for the first
+//! perp dex) without USDC/USDT conversion ("quanto").
 
 use serde::Deserialize;
 use undrly_core::SourceId;
@@ -16,6 +23,10 @@ pub const META_AND_ASSET_CTXS: &str = r#"{"type":"metaAndAssetCtxs"}"#;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Meta {
     pub universe: Vec<Asset>,
+    /// The perp dex's collateral: an index into the spot token list
+    /// (`spotMeta`), absent in older responses.
+    #[serde(default, rename = "collateralToken")]
+    pub collateral_token: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -39,7 +50,8 @@ pub struct AssetContext {
     pub open_interest: Option<String>,
     /// The price 24 hours ago.
     pub prev_day_px: Option<String>,
-    /// Trailing 24-hour notional volume (in the settlement unit, USDC).
+    /// Trailing 24-hour notional volume: contracts × price, in the
+    /// contract's price denomination (not converted to the collateral).
     pub day_ntl_vlm: Option<String>,
     /// Trailing 24-hour volume in base units (contracts).
     pub day_base_vlm: Option<String>,
@@ -50,6 +62,8 @@ pub struct AssetContext {
 pub struct MetaAndAssetCtxs {
     pub universe: Vec<Asset>,
     pub contexts: Vec<AssetContext>,
+    /// See [`Meta::collateral_token`].
+    pub collateral_token: Option<u32>,
 }
 
 impl MetaAndAssetCtxs {
@@ -103,6 +117,7 @@ impl QuoteProvider for HyperliquidProvider {
         Ok(MetaAndAssetCtxs {
             universe: meta.universe,
             contexts,
+            collateral_token: meta.collateral_token,
         })
     }
 }
