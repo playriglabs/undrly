@@ -84,6 +84,26 @@ await check(
   },
 );
 
+await check(
+  "Hyperliquid",
+  "perpetual quotes: the mark with the venue book's bid/ask and its time",
+  async () => {
+    const lines = [];
+    for (const q of ["BTC-PERP", "ETH-PERP", "kPEPE-PERP"]) {
+      const quote = v1.QuoteV1.parse((await get(`/v1/quote/${q}`)).body);
+      expect(quote.basis === "venue" && quote.priceType === "mark", `${q} is a venue mark`);
+      expect(quote.aggregation.method === "mark-with-venue-book-v1", `${q} method`);
+      expect(quote.bid !== null && quote.bidAskAsOf !== undefined, `${q} has its book`);
+      const lagMs = Date.parse(quote.asOf) - Date.parse(quote.bidAskAsOf);
+      expect(Math.abs(lagMs) <= 60_000, `${q} book within 60 s of the mark`);
+      lines.push(
+        `${q} ${quote.price} [${quote.bid}/${quote.ask}] book ${Math.round(lagMs / 1000)} s before mark`,
+      );
+    }
+    return lines.join("; ");
+  },
+);
+
 await check("Hyperliquid", "PURR and HYPE stay USDC-denominated", async () => {
   const units = [];
   for (const q of ["HYPE-PERP", "PURR-PERP"]) {
@@ -134,7 +154,9 @@ await check("Solana", "USD Coin → its Solana deployment (graph)", async () => 
   const d = g.deployments?.find((x) => x.caip19 === SOLANA_USDC);
   expect(d !== undefined, `a deployment ${SOLANA_USDC}`);
   expect(d.chain.kind === "chain" && d.chain.name === "Solana", "on the Solana chain");
-  const edge = g.edges.find((x) => x.relationshipType === "REPRESENTS" && String(x.subject.id) === String(d.id));
+  const edge = g.edges.find(
+    (x) => x.relationshipType === "REPRESENTS" && String(x.subject.id) === String(d.id),
+  );
   expect(edge?.object.id === usdc.id, "the deployment REPRESENTS USD Coin");
   expect(edge.provenance.sourceId === "circle", "asserted by Circle's record");
   deploymentId = d.id;
