@@ -47,6 +47,8 @@ export const RELATIONSHIP_RULES: readonly (readonly [RelationshipType, Category,
   ["MARGINED_IN", "instrument", "instrument"],
   ["DERIVES_FROM", "instrument", "instrument"],
   ["TOKENIZES", "instrument", "instrument"],
+  ["TRACKS", "instrument", "instrument"],
+  ["TRACKS", "instrument", "currency"],
   ["REPRESENTS", "deployment", "instrument"],
 ];
 

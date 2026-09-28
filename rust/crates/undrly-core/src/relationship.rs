@@ -33,7 +33,13 @@ pub enum RelationshipType {
     DerivesFrom,
     /// fund → instrument it holds.
     Holds,
-    /// fund → index or instrument it tracks.
+    /// instrument → the instrument or currency whose value it is designed
+    /// to follow, without a legal or beneficial claim on it and without
+    /// being it: a tracker certificate → its underlying (by its terms); a
+    /// stablecoin → the currency it declares as its reference asset (e.g. a
+    /// TIP-20 `currency()`). Asserts no parity, redemption or backing. Not
+    /// `TOKENIZES` (a claim on the object), not `DERIVES_FROM` (a derivative
+    /// contract), not `DENOMINATED_IN` (a unit of account).
     Tracks,
     /// instrument → index it is a member of.
     MemberOf,
@@ -111,8 +117,9 @@ impl RelationshipType {
             RelationshipType::Tokenizes => &[(Instrument, Instrument)],
             // A chain deployment → the instrument it is on that chain.
             RelationshipType::Represents => &[(Deployment, Instrument)],
+            // A tracker → the instrument or currency whose value it follows.
+            RelationshipType::Tracks => &[(Instrument, Instrument), (Instrument, Currency)],
             RelationshipType::Holds
-            | RelationshipType::Tracks
             | RelationshipType::MemberOf
             | RelationshipType::PricedBy
             | RelationshipType::AvailableOn
@@ -293,6 +300,23 @@ mod tests {
         assert!(
             Relationship::new(perp, RelationshipType::MarginedIn, venue, provenance()).is_err()
         );
+    }
+
+    #[test]
+    fn a_tracker_tracks_an_instrument_only() {
+        let token: CanonicalId = InstrumentId::generate().into();
+        let stock: CanonicalId = InstrumentId::generate().into();
+        assert!(Relationship::new(token, RelationshipType::Tracks, stock, provenance()).is_ok());
+        let issuer: CanonicalId = EntityId::generate().into();
+        assert!(Relationship::new(token, RelationshipType::Tracks, issuer, provenance()).is_err());
+        // A stablecoin tracks the currency it references (V1.7); the
+        // currency never tracks anything.
+        let usd: CanonicalId = CurrencyId::generate().into();
+        assert!(Relationship::new(token, RelationshipType::Tracks, usd, provenance()).is_ok());
+        assert!(Relationship::new(usd, RelationshipType::Tracks, token, provenance()).is_err());
+        // Tracking is not tokenizing and not deriving: three distinct facts.
+        assert_ne!(RelationshipType::Tracks, RelationshipType::Tokenizes);
+        assert_ne!(RelationshipType::Tracks, RelationshipType::DerivesFrom);
     }
 
     #[test]

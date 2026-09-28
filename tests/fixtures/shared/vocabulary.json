@@ -90,6 +90,16 @@
       "MARGINED_IN",
       "instrument",
       "instrument"
+    ],
+    [
+      "TRACKS",
+      "instrument",
+      "instrument"
+    ],
+    [
+      "TRACKS",
+      "instrument",
+      "currency"
     ]
   ],
   "observationBases": [
