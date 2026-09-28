@@ -137,6 +137,24 @@ impl HttpClient {
         Ok(fetched)
     }
 
+    /// POST a JSON `body` to `url`, identified as `record_key` (for a body too
+    /// long to be its own key, e.g. a batched JSON-RPC request that a short
+    /// key determines exactly).
+    pub async fn post_json_keyed(
+        &self,
+        url: &str,
+        body: &str,
+        record_key: &str,
+    ) -> Result<FetchedRecord, FetchError> {
+        let request = self
+            .http
+            .post(url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_owned());
+        fetch(request, url, record_key.to_owned()).await
+    }
+
     /// POST a JSON `body` to `url`.
     pub async fn post_json(&self, url: &str, body: &str) -> Result<FetchedRecord, FetchError> {
         let request = self
