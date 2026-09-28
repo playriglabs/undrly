@@ -182,6 +182,77 @@ pub async fn fetch_meta_and_asset_ctxs(
     client.post_json(INFO_URL, META_AND_ASSET_CTXS).await
 }
 
+/// One price level of an `l2Book` side: price, size (contracts), order count.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookLevel {
+    pub px: String,
+    pub sz: String,
+    pub n: u64,
+}
+
+/// `POST /info {"type":"l2Book","coin":…}`: one market's order book, best
+/// levels first (`levels[0]` bids, `levels[1]` asks), with the venue's time
+/// in milliseconds. Prices are in the contract's denomination.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct L2Book {
+    pub coin: String,
+    pub time: i64,
+    pub levels: (Vec<BookLevel>, Vec<BookLevel>),
+}
+
+/// `l2Book` request body for `coin` (the record key names it).
+pub fn l2_book_body(coin: &str) -> String {
+    format!(r#"{{"type":"l2Book","coin":"{coin}"}}"#)
+}
+
+/// Hyperliquid order books: same source as [`HyperliquidProvider`], a
+/// different request (`l2Book`, one market per request; weight 2).
+pub struct HyperliquidBookProvider {
+    source_id: SourceId,
+}
+
+impl HyperliquidBookProvider {
+    pub fn new() -> Self {
+        Self {
+            source_id: SourceId::parse(SOURCE_ID).expect("valid source id"),
+        }
+    }
+}
+
+impl Default for HyperliquidBookProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Provider for HyperliquidBookProvider {
+    fn source_id(&self) -> &SourceId {
+        &self.source_id
+    }
+}
+
+impl QuoteProvider for HyperliquidBookProvider {
+    type Quote = L2Book;
+
+    fn decode_quote(&self, payload: &[u8]) -> Result<L2Book, DecodeError> {
+        serde_json::from_slice(payload).map_err(|e| DecodeError {
+            source_id: self.source_id.clone(),
+            reason: e.to_string(),
+        })
+    }
+}
+
+/// Fetches one market's order book (feature `http`).
+#[cfg(feature = "http")]
+pub async fn fetch_l2_book(
+    client: &crate::http::HttpClient,
+    coin: &str,
+) -> Result<crate::http::FetchedRecord, crate::http::FetchError> {
+    client.post_json(INFO_URL, &l2_book_body(coin)).await
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -239,5 +310,24 @@ mod tests {
         ] {
             assert!(HyperliquidProvider::new().decode_quote(payload).is_err());
         }
+    }
+
+    #[test]
+    fn decodes_an_order_book_with_its_time() {
+        let payload = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../tests/fixtures/sources/hyperliquid/l2Book-BTC.json"),
+        )
+        .unwrap();
+        let b = HyperliquidBookProvider::new()
+            .decode_quote(&payload)
+            .unwrap();
+        assert_eq!(b.coin, "BTC");
+        assert_eq!(b.time, 1_790_602_306_444);
+        assert_eq!(
+            (b.levels.0[0].px.as_str(), b.levels.1[0].px.as_str()),
+            ("83520.0", "83521.0")
+        );
+        assert_eq!(l2_book_body("kPEPE"), r#"{"type":"l2Book","coin":"kPEPE"}"#);
     }
 }

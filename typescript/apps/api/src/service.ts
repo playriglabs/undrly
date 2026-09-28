@@ -903,6 +903,47 @@ export async function canonicalQuote(
     return { kind: "quote", quote: v1.QuoteV1.parse(quote) };
   }
 
+  if (row.method === "mark-with-venue-book-v1") {
+    // The mark is the price; the book (if used) only gave bid and ask.
+    const markRow = inputRows.find((r) => r.price_type === "mark");
+    if (markRow === undefined) return { kind: "none" };
+    const bookRow = inputRows.find((r) => r.price_type === "mid");
+    const bookTime =
+      row.bid === null || bookRow === undefined
+        ? {}
+        : { bidAskAsOf: canonicalTimestamp(bookRow.observed_at ?? bookRow.received_at) };
+    const mark = await observationFields(sql, markRow);
+    const asOf = canonicalTimestamp(row.as_of);
+    const window = await windowOf(sql, row.method, markRow, staleAfterSeconds);
+    const q = { price: row.price, bid: row.bid, ask: row.ask };
+    const derived = priced(q, asOf, window);
+    const latestReceipt = inputRows
+      .map((r) => canonicalTimestamp(r.received_at))
+      .sort((a, b) => Date.parse(a) - Date.parse(b))
+      .at(-1);
+    return {
+      kind: "quote",
+      quote: v1.QuoteV1.parse({
+        schemaVersion: 1,
+        subject: mark.subject,
+        unit: mark.unit,
+        priceType: row.price_type,
+        ...q,
+        spread: derived.spread,
+        spreadBps: derived.spreadBps,
+        basis: "venue",
+        venue: mark.venue,
+        observedAt: mark.observedAt,
+        ...bookTime,
+        receivedAt: latestReceipt,
+        asOf,
+        ageMs: derived.ageMs,
+        freshness: derived.freshness,
+        aggregation,
+      }),
+    };
+  }
+
   const asOf = canonicalTimestamp(row.as_of);
   if (freshness(asOf, now, CONTINUOUS_30S) === "stale") {
     return { kind: "stale", asOf };

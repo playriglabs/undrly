@@ -13,6 +13,9 @@
 //!   time. The canonical quote *is* that observation (its basis and venue).
 //! - `mean-venue-mid-v1` averages the mids of fresh venue quotes. The result
 //!   is `basis = aggregated`, attributed to no single venue.
+//! - `mark-with-venue-book-v1` is a derivative's venue mark price, with the
+//!   same venue's best bid and ask when its order book is close enough in
+//!   time.
 //!
 //! No method ranks providers, weights prices, detects outliers, or scores
 //! confidence.
@@ -151,28 +154,48 @@ pub enum AggregationMethod {
     /// `basis = aggregated`, price type `mid`, as of the oldest input's
     /// effective time.
     MeanVenueMidV1,
+    /// A venue's mark price with that venue's book (derivatives):
+    ///
+    /// 1. the price is the latest **venue** observation of type `mark`
+    ///    (effective time); none → no canonical quote;
+    /// 2. its bid and ask are the latest `mid` observation **of the same
+    ///    venue** that has both, if its effective time is within
+    ///    [`MARK_BOOK_MAX_SKEW_SECONDS`] of the mark's; otherwise none;
+    /// 3. the result is the mark: `basis = venue`, price type `mark`, as of
+    ///    the mark's effective time. The inputs are the mark (its price) and,
+    ///    when used, the book (its mid).
+    ///
+    /// The bid and ask are the venue's best book levels, not a spread around
+    /// the mark: a mark may lie outside them.
+    MarkWithVenueBookV1,
 }
 
 /// Freshness window of [`AggregationMethod::MeanVenueMidV1`], in seconds.
 pub const MEAN_VENUE_MID_MAX_AGE_SECONDS: i64 = 30;
 
+/// Largest time difference between a mark and the book whose bid and ask
+/// [`AggregationMethod::MarkWithVenueBookV1`] attaches to it, in seconds.
+pub const MARK_BOOK_MAX_SKEW_SECONDS: i64 = 60;
+
 impl AggregationMethod {
-    pub const ALL: [AggregationMethod; 2] = [
+    pub const ALL: [AggregationMethod; 3] = [
         AggregationMethod::LatestObservationV1,
         AggregationMethod::MeanVenueMidV1,
+        AggregationMethod::MarkWithVenueBookV1,
     ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             AggregationMethod::LatestObservationV1 => "latest-observation-v1",
             AggregationMethod::MeanVenueMidV1 => "mean-venue-mid-v1",
+            AggregationMethod::MarkWithVenueBookV1 => "mark-with-venue-book-v1",
         }
     }
 
     /// The freshness window observations must satisfy, if the method has one.
     pub const fn max_age_seconds(self) -> Option<i64> {
         match self {
-            AggregationMethod::LatestObservationV1 => None,
+            AggregationMethod::LatestObservationV1 | AggregationMethod::MarkWithVenueBookV1 => None,
             AggregationMethod::MeanVenueMidV1 => Some(MEAN_VENUE_MID_MAX_AGE_SECONDS),
         }
     }
@@ -260,6 +283,45 @@ pub fn aggregate<K: Ord + Clone>(
                 bid_ask: Some(bid_ask),
                 as_of: inputs.iter().map(|i| i.at).min()?,
                 inputs: inputs.into_iter().map(|i| (i.key, i.mid)).collect(),
+            })
+        }
+        AggregationMethod::MarkWithVenueBookV1 => {
+            let marks: Vec<(K, MarketObservation)> = candidates
+                .iter()
+                .filter(|(_, o)| {
+                    o.price_type() == PriceType::Mark
+                        && matches!(o.basis(), ObservationBasis::Venue(_))
+                })
+                .cloned()
+                .collect();
+            let (mark_key, mark) = select_latest(&marks)?;
+            let skew = TimeDelta::seconds(MARK_BOOK_MAX_SKEW_SECONDS);
+            let books: Vec<(K, MarketObservation)> = candidates
+                .iter()
+                .filter(|(_, o)| {
+                    o.price_type() == PriceType::Mid
+                        && o.basis() == mark.basis()
+                        && o.bid_ask().is_some()
+                        && (o.effective_at().as_datetime() - mark.effective_at().as_datetime())
+                            .abs()
+                            <= skew
+                })
+                .cloned()
+                .collect();
+            let book = select_latest(&books);
+            let mut inputs = vec![(mark_key.clone(), mark.price())];
+            if let Some((k, b)) = book {
+                inputs.push((k.clone(), b.price()));
+            }
+            inputs.sort_by(|a, b| a.0.cmp(&b.0));
+            Some(Aggregate {
+                method,
+                price: mark.price(),
+                price_type: PriceType::Mark,
+                basis: mark.basis(),
+                bid_ask: book.and_then(|(_, b)| b.bid_ask()),
+                as_of: mark.effective_at(),
+                inputs,
             })
         }
     }
@@ -598,5 +660,124 @@ mod tests {
         ] {
             assert_eq!(select_latest(&order).unwrap().0, 2);
         }
+    }
+
+    /// A venue observation of one pair for the mark-with-book tests.
+    #[allow(clippy::too_many_arguments)]
+    fn pair_obs(
+        subject: PriceSubject,
+        unit: PriceUnit,
+        venue: crate::id::VenueId,
+        price_type: PriceType,
+        price: &str,
+        bid_ask: Option<(&str, &str)>,
+        observed_at: Option<&str>,
+        received_at: &str,
+    ) -> MarketObservation {
+        MarketObservation::new(
+            subject,
+            ObservationBasis::Venue(venue),
+            price_type,
+            parse_canonical(price).unwrap(),
+            bid_ask.map(|(b, a)| BidAsk {
+                bid: parse_canonical(b).unwrap(),
+                ask: parse_canonical(a).unwrap(),
+            }),
+            unit,
+            SourceId::parse("example-source").unwrap(),
+            observed_at.map(|t| Timestamp::parse(t).unwrap()),
+            Timestamp::parse(received_at).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn mark_with_venue_book_keeps_the_mark_and_adds_a_close_book() {
+        let subject = PriceSubject::Instrument(InstrumentId::generate());
+        let unit = PriceUnit::Asset(InstrumentId::generate());
+        let venue = crate::id::VenueId::generate();
+        let other = crate::id::VenueId::generate();
+        let t = |s: &str| Timestamp::parse(s).unwrap();
+        let mark = pair_obs(
+            subject,
+            unit,
+            venue,
+            PriceType::Mark,
+            "83383.0",
+            None,
+            None,
+            "2026-09-28T13:00:30Z",
+        );
+        let book = pair_obs(
+            subject,
+            unit,
+            venue,
+            PriceType::Mid,
+            "83520.50",
+            Some(("83520.0", "83521.0")),
+            Some("2026-09-28T13:00:00Z"),
+            "2026-09-28T13:00:01Z",
+        );
+        let at = t("2026-09-28T13:00:31Z");
+        let m = AggregationMethod::MarkWithVenueBookV1;
+
+        // The price is the mark (even outside the book); bid/ask are the book's.
+        let a = aggregate(m, &[(1, mark.clone()), (2, book.clone())], at).unwrap();
+        assert_eq!(a.price.to_string(), "83383.0");
+        assert_eq!(a.price_type, PriceType::Mark);
+        assert_eq!(a.basis, ObservationBasis::Venue(venue));
+        let ba = a.bid_ask.unwrap();
+        assert_eq!(
+            (ba.bid.to_string(), ba.ask.to_string()),
+            ("83520.0".into(), "83521.0".into())
+        );
+        assert_eq!(a.as_of, t("2026-09-28T13:00:30Z"), "as of the mark");
+        assert_eq!(a.inputs.len(), 2);
+
+        // A book more than 60 s from the mark is not used.
+        let old_book = pair_obs(
+            subject,
+            unit,
+            venue,
+            PriceType::Mid,
+            "83520.50",
+            Some(("83520.0", "83521.0")),
+            Some("2026-09-28T12:59:29Z"),
+            "2026-09-28T12:59:30Z",
+        );
+        let a = aggregate(m, &[(1, mark.clone()), (2, old_book)], at).unwrap();
+        assert_eq!((a.bid_ask, a.inputs.len()), (None, 1));
+
+        // Another venue's book is never attached.
+        let foreign = pair_obs(
+            subject,
+            unit,
+            other,
+            PriceType::Mid,
+            "83520.50",
+            Some(("83520.0", "83521.0")),
+            Some("2026-09-28T13:00:00Z"),
+            "2026-09-28T13:00:01Z",
+        );
+        let a = aggregate(m, &[(1, mark.clone()), (2, foreign)], at).unwrap();
+        assert_eq!(a.bid_ask, None);
+
+        // Without a mark there is no quote, even with a book.
+        assert!(aggregate(m, &[(2, book)], at).is_none());
+        // Deterministic: order does not matter.
+        let late = pair_obs(
+            subject,
+            unit,
+            venue,
+            PriceType::Mark,
+            "83390.0",
+            None,
+            None,
+            "2026-09-28T13:00:31Z",
+        );
+        let x = aggregate(m, &[(1, mark.clone()), (3, late.clone())], at).unwrap();
+        let y = aggregate(m, &[(3, late), (1, mark)], at).unwrap();
+        assert_eq!(x, y);
+        assert_eq!(x.price.to_string(), "83390.0");
     }
 }

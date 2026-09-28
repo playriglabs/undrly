@@ -193,6 +193,50 @@ describe.skipIf(url === undefined)("V1.4 cross-ecosystem identity", () => {
     await deployment("tokenSol", "solana", "solana", "token", TOKEN_MINT);
     await edge("tokenSol", "deployment", "REPRESENTS", "token", "instrument");
 
+    // The BTC perpetual's canonical quote (mark-with-venue-book-v1): the
+    // mark as price, the same venue's book for bid and ask.
+    const obs = async (
+      type: string,
+      price: string,
+      bid: string | null,
+      ask: string | null,
+      observed: string | null,
+      received: string,
+    ) => {
+      const record = (
+        await sql<{ id: string }[]>`
+          INSERT INTO source_records (source_id, record_key, payload, received_at)
+          VALUES ('hyperliquid', ${`${type}@${received}`}, '\\x7b7d', ${received}) RETURNING id::text`
+      )[0]?.id;
+      return (
+        (
+          await sql<{ id: string }[]>`
+            INSERT INTO market_observations (subject_id, subject_category, basis, venue_id, price_type,
+              price, bid, ask, unit_id, unit_category, source_id, observed_at, received_at, source_record_id)
+            VALUES (${u("perp")}, 'instrument', 'venue', ${u("hyperliquid")}, ${type}, ${price}::numeric,
+              ${bid}::numeric, ${ask}::numeric, ${u("usdt")}, 'instrument', 'hyperliquid',
+              ${observed}::text::timestamptz, ${received}, ${record ?? ""})
+            RETURNING id::text`
+        )[0]?.id ?? ""
+      );
+    };
+    const markId = await obs("mark", "83383.0", null, null, null, "2026-09-28T13:32:10Z");
+    const bookId = await obs(
+      "mid",
+      "83520.50",
+      "83520.0",
+      "83521.0",
+      "2026-09-28T13:31:46.444Z",
+      "2026-09-28T13:31:47Z",
+    );
+    await sql`INSERT INTO canonical_quotes (subject_id, subject_category, unit_id, unit_category, method,
+        price, price_type, basis, venue_id, bid, ask, as_of, eligible_count, computed_at)
+      VALUES (${u("perp")}, 'instrument', ${u("usdt")}, 'instrument', 'mark-with-venue-book-v1',
+        83383.0, 'mark', 'venue', ${u("hyperliquid")}, 83520.0, 83521.0, '2026-09-28T13:32:10Z', 2,
+        '2026-09-28T13:32:11Z')`;
+    await sql`INSERT INTO canonical_quote_inputs (subject_id, unit_id, observation_id, input_price) VALUES
+      (${u("perp")}, ${u("usdt")}, ${markId}, 83383.0), (${u("perp")}, ${u("usdt")}, ${bookId}, 83520.50)`;
+
     globalThis.fetch = (() => {
       fetchCalls++;
       return Promise.reject(new Error("the API must not call upstream"));
@@ -536,5 +580,31 @@ describe.skipIf(url === undefined)("V1.4 cross-ecosystem identity", () => {
     walk(await explainOf("BTC-PERP"), "explain");
     walk(await explainOf("HYPERLIQUID:kPEPE"), "explain");
     expect(numbers).toStrictEqual([]);
+  });
+
+  it("a perpetual quote is its mark, with the venue book's bid and ask", async () => {
+    const r = await app().request("/v1/quote/BTC-PERP", undefined, undefined);
+    expect(r.status).toBe(200);
+    const q = v1.QuoteV1.parse(await r.json());
+    if (q.basis !== "venue") throw new Error("expected a venue quote");
+    expect(q).toMatchObject({
+      priceType: "mark",
+      price: "83383.0",
+      bid: "83520.0",
+      ask: "83521.0",
+      spread: "1.0",
+      venue: { name: "Hyperliquid" },
+      observedAt: null,
+      bidAskAsOf: "2026-09-28T13:31:46.444Z",
+      asOf: "2026-09-28T13:32:10Z",
+      aggregation: { method: "mark-with-venue-book-v1", eligibleObservations: 2 },
+    });
+    expect(q.unit.code).toBe("USDT");
+    // /v1/quotes shows both feeds, each with its own provenance.
+    const feeds = v1.ObservationsV1.parse((await get("/v1/quotes/BTC-PERP")).body);
+    expect(feeds.observations.map((o) => [o.priceType, o.bid]).sort()).toStrictEqual([
+      ["mark", null],
+      ["mid", "83520.0"],
+    ]);
   });
 });

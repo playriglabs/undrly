@@ -51,8 +51,8 @@ pub use onchain::{
 };
 pub use quote::{
     Aggregate, AggregationMethod, DEFAULT_STALE_AFTER_SECONDS, FreshnessClock,
-    MEAN_VENUE_MID_MAX_AGE_SECONDS, QuoteAggregation, QuoteFeed, aggregate, invert_quote,
-    invert_rate, select_latest,
+    MARK_BOOK_MAX_SKEW_SECONDS, MEAN_VENUE_MID_MAX_AGE_SECONDS, QuoteAggregation, QuoteFeed,
+    aggregate, invert_quote, invert_rate, select_latest,
 };
 pub use reference::{
     Alias, AliasKind, Currency, DisplayName, Entity, EntityKind, FxPair, FxPairError, Instrument,

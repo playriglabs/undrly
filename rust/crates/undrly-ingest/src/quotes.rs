@@ -14,8 +14,8 @@
 
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
-    AggregationMethod, MarketObservation, ObservationError, PriceSubject, PriceUnit, Timestamp,
-    VenueSymbol, aggregate, invert_quote,
+    AggregationMethod, MarketObservation, ObservationError, PriceSubject, PriceType, PriceUnit,
+    Timestamp, VenueSymbol, aggregate, invert_quote,
 };
 use undrly_normalize::{HistoryNormalizer, NormalizeError, NormalizedQuote, QuoteNormalizer};
 use undrly_provider::QuoteProvider;
@@ -73,8 +73,27 @@ where
     P: QuoteProvider,
     N: QuoteNormalizer<Quote = P::Quote>,
 {
+    ingest_quotes_of_types(conn, provider, normalizer, raw, requested, None).await
+}
+
+/// [`ingest_quotes_for`] for a record that carries only some of a source's
+/// price types for the same symbols (Hyperliquid: marks in one response,
+/// each order book in another): feeds of other price types are neither
+/// matched nor reported missing. `None` means every price type.
+pub async fn ingest_quotes_of_types<P, N>(
+    conn: &mut PgConnection,
+    provider: &P,
+    normalizer: &N,
+    raw: &RawRecord,
+    requested: Option<&[VenueSymbol]>,
+    price_types: Option<&[PriceType]>,
+) -> Result<QuoteIngestReport, IngestError>
+where
+    P: QuoteProvider,
+    N: QuoteNormalizer<Quote = P::Quote>,
+{
     let decoded = provider.decode_quote(&raw.payload)?;
-    ingest_decoded(conn, provider, raw, requested, |symbols| {
+    ingest_decoded(conn, provider, raw, requested, price_types, |symbols| {
         normalizer.normalize_quotes(&decoded, symbols)
     })
     .await
@@ -96,7 +115,7 @@ where
     N: HistoryNormalizer<Quote = P::Quote>,
 {
     let decoded = provider.decode_quote(&raw.payload)?;
-    ingest_decoded(conn, provider, raw, requested, |symbols| {
+    ingest_decoded(conn, provider, raw, requested, None, |symbols| {
         normalizer.normalize_history(&decoded, symbols)
     })
     .await
@@ -107,6 +126,7 @@ async fn ingest_decoded<P: QuoteProvider>(
     provider: &P,
     raw: &RawRecord,
     requested: Option<&[VenueSymbol]>,
+    price_types: Option<&[PriceType]>,
     normalize: impl FnOnce(&[VenueSymbol]) -> Result<Vec<NormalizedQuote>, NormalizeError>,
 ) -> Result<QuoteIngestReport, IngestError> {
     let mut tx = conn.begin().await?;
@@ -114,6 +134,9 @@ async fn ingest_decoded<P: QuoteProvider>(
     let mut feeds = quote_feeds_of_source(&mut tx, provider.source_id()).await?;
     if let Some(requested) = requested {
         feeds.retain(|f| requested.contains(&f.feed.symbol));
+    }
+    if let Some(types) = price_types {
+        feeds.retain(|f| types.contains(&f.feed.price_type));
     }
     let mut symbols: Vec<VenueSymbol> = Vec::new();
     for f in &feeds {

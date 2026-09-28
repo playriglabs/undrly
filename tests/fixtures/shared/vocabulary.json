@@ -127,7 +127,8 @@
   ],
   "aggregationMethods": [
     "latest-observation-v1",
-    "mean-venue-mid-v1"
+    "mean-venue-mid-v1",
+    "mark-with-venue-book-v1"
   ],
   "unitsOfMeasure": [
     "troy_ounce",

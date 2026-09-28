@@ -226,8 +226,8 @@ mod tests {
             .unwrap();
         assert_eq!(u.dataset, "undrly-demo-universe");
         assert_eq!(u.instruments.len(), 7, "incl. Tether (V1.4.1)");
-        assert_eq!(u.quote_feeds.len(), 7);
-        assert_eq!(u.quote_aggregations.len(), 1);
+        assert_eq!(u.quote_feeds.len(), 8, "incl. the BTC perpetual's book");
+        assert_eq!(u.quote_aggregations.len(), 2);
     }
 
     #[test]

@@ -341,6 +341,15 @@
       "priceType": "mark"
     },
     {
+      "source": "hyperliquid",
+      "symbol": "BTC",
+      "subject": "btc-perp",
+      "unit": "usdt",
+      "basis": "venue",
+      "venue": "hyperliquid",
+      "priceType": "mid"
+    },
+    {
       "source": "gold-api",
       "symbol": "XAU",
       "subject": "gold",
@@ -382,6 +391,11 @@
       "subject": "btc",
       "unit": "usd",
       "method": "mean-venue-mid-v1"
+    },
+    {
+      "subject": "btc-perp",
+      "unit": "usdt",
+      "method": "mark-with-venue-book-v1"
     }
   ]
 }

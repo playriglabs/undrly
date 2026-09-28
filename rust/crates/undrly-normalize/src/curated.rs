@@ -678,7 +678,12 @@ mod tests {
             Err(NormalizeError::Unsupported { .. })
         ));
         let mut u = universe();
-        u.quote_feeds[3].venue = Some("kraken".into());
+        let aggregated = u
+            .quote_feeds
+            .iter()
+            .position(|f| f.basis == "aggregated")
+            .unwrap();
+        u.quote_feeds[aggregated].venue = Some("kraken".into());
         assert!(
             normalize_universe(&u).is_err(),
             "aggregated feed names no venue"

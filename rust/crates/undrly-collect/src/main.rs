@@ -33,9 +33,13 @@ use std::time::{Duration, Instant};
 
 use sqlx::PgConnection;
 use sqlx::postgres::PgPoolOptions;
-use undrly_core::{DisplayName, Redistribution, Source, SourceId, Timestamp, VenueSymbol};
+use undrly_core::{
+    DisplayName, PriceType, Redistribution, Source, SourceId, Timestamp, VenueSymbol,
+};
 use undrly_ingest::market_data::ingest_perp_contexts;
-use undrly_ingest::quotes::{QuoteIngestReport, ingest_quotes_for, refresh_canonical_quotes};
+use undrly_ingest::quotes::{
+    QuoteIngestReport, ingest_quotes_for, ingest_quotes_of_types, refresh_canonical_quotes,
+};
 use undrly_ingest::{IngestError, RawRecord, store_raw_record};
 use undrly_normalize::alpaca::AlpacaNormalizer;
 use undrly_normalize::coinbase::CoinbaseNormalizer;
@@ -45,7 +49,7 @@ use undrly_normalize::fx::{
     CbmNormalizer, EcbNormalizer, FedH10Normalizer,
 };
 use undrly_normalize::gold_api::GoldApiNormalizer;
-use undrly_normalize::hyperliquid::HyperliquidNormalizer;
+use undrly_normalize::hyperliquid::{HyperliquidBookNormalizer, HyperliquidNormalizer};
 use undrly_normalize::kraken::KrakenNormalizer;
 use undrly_normalize::worldbank::WorldBankNormalizer;
 use undrly_provider::alpaca::{self, AlpacaProvider, Credentials};
@@ -61,7 +65,7 @@ use undrly_provider::eia::{self, EiaProvider};
 use undrly_provider::fed_h10::{self, FedH10Provider};
 use undrly_provider::gold_api::{self, GoldApiProvider};
 use undrly_provider::http::{FetchError, FetchedRecord, HttpClient};
-use undrly_provider::hyperliquid::{self, HyperliquidProvider};
+use undrly_provider::hyperliquid::{self, HyperliquidBookProvider, HyperliquidProvider};
 use undrly_provider::kraken::{self, KrakenProvider};
 use undrly_provider::sec::http::{SecClient, SecUserAgent};
 use undrly_provider::worldbank::{self, WorldBankProvider};
@@ -129,7 +133,10 @@ const SOURCES: [(&str, &str); 24] = [
 enum Feed {
     Kraken,
     Coinbase,
+    /// Hyperliquid marks (`metaAndAssetCtxs`, one request for every perp).
     Hyperliquid,
+    /// Hyperliquid order books (`l2Book`, one perp per request).
+    HyperliquidBook,
     GoldApi,
     Alpaca,
     Eia,
@@ -144,10 +151,11 @@ enum Feed {
 }
 
 impl Feed {
-    const ALL: [Feed; 14] = [
+    const ALL: [Feed; 15] = [
         Feed::Kraken,
         Feed::Coinbase,
         Feed::Hyperliquid,
+        Feed::HyperliquidBook,
         Feed::GoldApi,
         Feed::Alpaca,
         Feed::Eia,
@@ -165,7 +173,7 @@ impl Feed {
         match self {
             Feed::Kraken => kraken::SOURCE_ID,
             Feed::Coinbase => coinbase::SOURCE_ID,
-            Feed::Hyperliquid => hyperliquid::SOURCE_ID,
+            Feed::Hyperliquid | Feed::HyperliquidBook => hyperliquid::SOURCE_ID,
             Feed::GoldApi => gold_api::SOURCE_ID,
             Feed::Alpaca => alpaca::SOURCE_ID,
             Feed::Eia => eia::SOURCE_ID,
@@ -186,6 +194,9 @@ impl Feed {
             Feed::Kraken => 10,
             Feed::Coinbase => 10,
             Feed::Hyperliquid => 15,
+            // A sweep of every perpetual's book, restarted once a minute:
+            // 178 requests of weight 2 against Hyperliquid's 1,200 per minute.
+            Feed::HyperliquidBook => 60,
             Feed::GoldApi => 60,
             Feed::Alpaca => 30,
             Feed::Eia => 6 * 3600,
@@ -210,9 +221,11 @@ impl Feed {
             | Feed::Bnm
             | Feed::Cbm => vec![symbols.to_vec()],
             // One product / metal / market / series per request.
-            Feed::Coinbase | Feed::GoldApi | Feed::Bitstamp | Feed::BankIndonesia => {
-                symbols.iter().map(|s| vec![s.clone()]).collect()
-            }
+            Feed::Coinbase
+            | Feed::HyperliquidBook
+            | Feed::GoldApi
+            | Feed::Bitstamp
+            | Feed::BankIndonesia => symbols.iter().map(|s| vec![s.clone()]).collect(),
             Feed::BankOfCanada => {
                 pack(symbols, |b| BankOfCanadaProvider::observations_url(b).len())
             }
@@ -237,9 +250,24 @@ impl Feed {
     fn spacing(self) -> Duration {
         match self {
             Feed::Coinbase => Duration::from_millis(150),
+            // Keeps a sweep of every book under a minute, so each book stays
+            // close to the latest mark (MARK_BOOK_MAX_SKEW_SECONDS).
+            Feed::HyperliquidBook => Duration::from_millis(50),
             // Kraken's public API allows about one request per second.
             Feed::Kraken => Duration::from_secs(1),
             _ => Duration::from_millis(50),
+        }
+    }
+}
+
+impl Feed {
+    /// The price types this feed's responses carry, when a source has
+    /// several requests for the same symbols (Hyperliquid: marks and books).
+    fn price_types(self) -> Option<&'static [PriceType]> {
+        match self {
+            Feed::Hyperliquid => Some(&[PriceType::Mark]),
+            Feed::HyperliquidBook => Some(&[PriceType::Mid]),
+            _ => None,
         }
     }
 }
@@ -789,7 +817,7 @@ async fn once_pass(
     keys: &Keys<'_>,
     feeds: &[Feed],
 ) -> Result<ExitCode, Error> {
-    const ORDER: [Feed; 14] = [
+    const ORDER: [Feed; 15] = [
         Feed::WorldBank,
         Feed::Eia,
         Feed::FedH10,
@@ -800,6 +828,8 @@ async fn once_pass(
         Feed::Cbm,
         Feed::GoldApi,
         Feed::Alpaca,
+        // Books first, then the marks they are attached to (within 60 s).
+        Feed::HyperliquidBook,
         Feed::Hyperliquid,
         Feed::Coinbase,
         Feed::Bitstamp,
@@ -891,6 +921,12 @@ async fn symbols_of(conn: &mut PgConnection, feed: Feed) -> Result<Vec<String>, 
     let source = SourceId::parse(feed.source()).expect("valid source id");
     let mut symbols: Vec<String> = Vec::new();
     for f in quote_feeds_of_source(conn, &source).await? {
+        if feed
+            .price_types()
+            .is_some_and(|types| !types.contains(&f.feed.price_type))
+        {
+            continue;
+        }
         let s = f.feed.symbol.as_str().to_owned();
         if !symbols.contains(&s) {
             symbols.push(s);
@@ -931,6 +967,7 @@ async fn poll_batch(
         // One product per request: the book names no product.
         Feed::Coinbase => coinbase::fetch_book(client, refs[0]).await?,
         Feed::Hyperliquid => hyperliquid::fetch_meta_and_asset_ctxs(client).await?,
+        Feed::HyperliquidBook => hyperliquid::fetch_l2_book(client, refs[0]).await?,
         Feed::GoldApi => gold_api::fetch_price(client, refs[0]).await?,
         Feed::Alpaca => {
             let credentials = keys.alpaca.expect("alpaca enabled only with credentials");
@@ -998,12 +1035,24 @@ async fn poll_batch(
             .await?
         }
         Feed::Hyperliquid => {
-            ingest_quotes_for(
+            ingest_quotes_of_types(
                 conn,
                 &HyperliquidProvider::new(),
                 &HyperliquidNormalizer,
                 &raw,
                 requested,
+                feed.price_types(),
+            )
+            .await?
+        }
+        Feed::HyperliquidBook => {
+            ingest_quotes_of_types(
+                conn,
+                &HyperliquidBookProvider::new(),
+                &HyperliquidBookNormalizer,
+                &raw,
+                requested,
+                feed.price_types(),
             )
             .await?
         }

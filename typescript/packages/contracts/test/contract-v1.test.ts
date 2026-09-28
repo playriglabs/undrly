@@ -49,6 +49,7 @@ describe("API v1 valid documents", () => {
     ["api/v1/quote.xau-reference.json", v1.QuoteV1],
     ["api/v1/quote.fx-pair-aggregated.json", v1.QuoteV1],
     ["api/v1/quote.fx-reference.json", v1.QuoteV1],
+    ["api/v1/quote.perpetual-mark-with-book.json", v1.QuoteV1],
     ["api/v1/graph.deployments-markets.json", v1.GraphV1],
     ["api/v1/explain.perpetual.json", v1.ExplainV1],
     ["api/v1/explain.deployment.json", v1.ExplainV1],

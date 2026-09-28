@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "subject": {
+    "id": "undrly:instrument:01m3bbjhnmexhrq6f38m4rwy8x",
+    "kind": "instrument",
+    "class": "perpetual_future",
+    "name": "BTC Perpetual (Hyperliquid)"
+  },
+  "unit": {
+    "id": "undrly:instrument:01m3c732qnehv8ex0vnrmngb7v",
+    "kind": "asset",
+    "code": "USDT"
+  },
+  "priceType": "mid",
+  "price": "83383.0",
+  "bid": "83520.0",
+  "ask": "83521.0",
+  "spread": "1.0",
+  "spreadBps": "0.1199",
+  "basis": "venue",
+  "venue": {
+    "id": "undrly:venue:01m3bbjhn7fnja52h9vgg8cb3f",
+    "name": "Hyperliquid"
+  },
+  "observedAt": null,
+  "bidAskAsOf": "2026-09-28T13:31:46.444Z",
+  "receivedAt": "2026-09-28T13:32:10Z",
+  "asOf": "2026-09-28T13:32:10Z",
+  "ageMs": 1000,
+  "freshness": "fresh",
+  "aggregation": {
+    "method": "mark-with-venue-book-v1",
+    "eligibleObservations": 2,
+    "computedAt": "2026-09-28T13:32:11Z"
+  }
+}

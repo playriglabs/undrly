@@ -36,7 +36,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 19);
+    assert_eq!(applied.len(), 20);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();

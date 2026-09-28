@@ -27,7 +27,11 @@ export const PRICE_TYPES = ["last", "mid", "mark", "reference", "average"] as co
 export type PriceType = (typeof PRICE_TYPES)[number];
 
 /** Mirrors `undrly_core::AggregationMethod`. */
-export const AGGREGATION_METHODS = ["latest-observation-v1", "mean-venue-mid-v1"] as const;
+export const AGGREGATION_METHODS = [
+  "latest-observation-v1",
+  "mean-venue-mid-v1",
+  "mark-with-venue-book-v1",
+] as const;
 
 /** Mirrors `undrly_core::UnitOfMeasure`. */
 export const UNITS_OF_MEASURE = [
@@ -187,6 +191,12 @@ export const VenueQuoteV1 = z.strictObject({
   venue: VenueRefV1,
   /** The source's time for the price; `null` when the source states none. */
   observedAt: TimestampString.nullable(),
+  /**
+   * `mark-with-venue-book-v1` only, and only with a bid and ask: the time of
+   * the order book they come from (the venue's own time), which may be older
+   * than the mark (`asOf`) by up to 60 s. Omitted otherwise (V1.5).
+   */
+  bidAskAsOf: TimestampString.optional(),
   ...timingFields,
 });
 
@@ -241,6 +251,7 @@ function quoteIssues(q: {
   spread: string | null;
   spreadBps: string | null;
   asOf: string;
+  bidAskAsOf?: string | undefined;
   aggregation: { method: string; eligibleObservations: number };
 }): Issue[] {
   const issues: Issue[] = fxIssues(q);
@@ -274,6 +285,20 @@ function quoteIssues(q: {
   ) {
     issues.push({ message: "latest-observation-v1 is its single input" });
   }
+  const bookTime = "bidAskAsOf" in q ? q.bidAskAsOf : undefined;
+  const withBook = q.aggregation.method === "mark-with-venue-book-v1" && q.bid !== null;
+  if ((bookTime !== undefined) !== withBook) {
+    issues.push({ message: "bidAskAsOf is stated exactly for a mark with its venue book" });
+  }
+  if (q.aggregation.method === "mark-with-venue-book-v1") {
+    if (!(q.basis === "venue" && q.priceType === "mark")) {
+      issues.push({ message: "mark-with-venue-book-v1 is a venue mark" });
+    }
+    // The mark alone, or the mark and the book that gave its bid and ask.
+    if (q.aggregation.eligibleObservations !== (q.bid === null ? 1 : 2)) {
+      issues.push({ message: "mark-with-venue-book-v1 counts the mark and, with a bid, its book" });
+    }
+  }
   return issues;
 }
 
@@ -284,7 +309,10 @@ function quoteIssues(q: {
  *
  * - `venue`: one venue's market; names `venue`, with the source's
  *   `observedAt` (`null` when it states none). Its method is
- *   `latest-observation-v1`: the quote is that one observation.
+ *   `latest-observation-v1` (the quote is that one observation) or
+ *   `mark-with-venue-book-v1` (a derivative's mark; `bid`/`ask` are the same
+ *   venue's best book levels when that book is within 60 s of the mark,
+ *   else `null`; a mark may lie outside them; `observedAt` is the mark's).
  * - `aggregated` / `derived`: no `venue` or `observedAt` keys.
  *
  * No quote names its data provider (`source`); `/v1/quotes` does.

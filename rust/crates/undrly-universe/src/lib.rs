@@ -698,6 +698,7 @@ fn perps(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
     for name in live {
         let key = format!("hyperliquid:{name}");
         let id = ctx.id(&key, Category::Instrument)?;
+        let from_v1 = ctx.is_v1(&id);
         let node = ctx.node_ref(&key);
         let multiplier = contract_multiplier(name);
         if multiplier.is_some() {
@@ -804,6 +805,31 @@ fn perps(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
             freshness_clock: None,
             inverted: false,
         });
+        // The same market's order book (`l2Book`): its best bid and ask are
+        // attached to the mark by `mark-with-venue-book-v1`. V1's BTC
+        // perpetual declares its own in data/demo/universe.json.
+        if !from_v1 {
+            ctx.feed(QuoteFeedRecord {
+                source: "hyperliquid".into(),
+                symbol: name.to_owned(),
+                subject: node.clone(),
+                unit: denomination.clone(),
+                basis: "venue".into(),
+                venue: Some(venue.clone()),
+                price_type: "mid".into(),
+                stale_after_seconds: Some(MARKET_STALE_AFTER),
+                freshness_clock: None,
+                inverted: false,
+            });
+            ctx.out.aggregations.insert(
+                (node.clone(), denomination.clone()),
+                QuoteAggregationRecord {
+                    subject: node.clone(),
+                    unit: denomination.clone(),
+                    method: "mark-with-venue-book-v1".into(),
+                },
+            );
+        }
         members.push(UniverseMemberRecord {
             node,
             rank: None,

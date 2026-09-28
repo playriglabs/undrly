@@ -262,10 +262,30 @@ fn crypto_maps_through_the_crosswalk_only() {
     assert_eq!(b.snapshot.universes[0].members[0].node, btc);
     assert_eq!(b.snapshot.universes[0].as_of, "2026-09-25T09:13:00.000Z");
     // Two venues → mean-venue-mid-v1; BTC's declaration stays V1's.
-    assert_eq!(b.snapshot.quote_aggregations.len(), 1);
+    let means: Vec<&str> = b
+        .snapshot
+        .quote_aggregations
+        .iter()
+        .filter(|a| a.method == "mean-venue-mid-v1")
+        .map(|a| a.subject.as_str())
+        .collect();
+    assert_eq!(means, vec!["coingecko:examplecoin"]);
+    // Every non-V1 perpetual: its mark with its venue book.
+    let perps: Vec<&str> = b
+        .snapshot
+        .quote_aggregations
+        .iter()
+        .filter(|a| a.method == "mark-with-venue-book-v1")
+        .map(|a| a.subject.as_str())
+        .collect();
     assert_eq!(
-        b.snapshot.quote_aggregations[0].subject,
-        "coingecko:examplecoin"
+        perps,
+        vec![
+            "hyperliquid:EXC",
+            "hyperliquid:HYPE",
+            "hyperliquid:NOPE",
+            "hyperliquid:kPEPE"
+        ]
     );
     assert!(b.report.contains("GONE/USD"));
     assert!(

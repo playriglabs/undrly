@@ -360,7 +360,16 @@ async fn all_five_markets_have_canonical_quotes() {
 
     // BTC perpetual: mark price in its USDT denomination (an asset, not USD
     // and not its USDC margin asset), at Hyperliquid.
-    let perp = canonical(&mut conn, "btc-perp", "usdt").await;
+    // Its method is mark-with-venue-book-v1; the fixture pass has no book,
+    // so the mark is the only input and there is no bid/ask.
+    let perp = canonical_by(
+        &mut conn,
+        "btc-perp",
+        "usdt",
+        AggregationMethod::MarkWithVenueBookV1,
+    )
+    .await;
+    assert_eq!(perp.bid_ask(), None);
     assert_eq!(perp.price_type(), PriceType::Mark);
     assert_eq!(
         perp.unit(),
@@ -554,17 +563,27 @@ async fn bad_quote_payloads_write_nothing() {
     db.teardown().await;
 }
 
-async fn canonical(
+/// The canonical quote's first input, after checking the pair's method.
+async fn canonical_by(
     conn: &mut sqlx::PgConnection,
     s: &str,
     u: &str,
+    method: AggregationMethod,
 ) -> undrly_core::MarketObservation {
     let q = get_canonical_quote(conn, subject(s), unit(u))
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(q.method, AggregationMethod::LatestObservationV1);
+    assert_eq!(q.method, method);
     get_observation(conn, q.inputs[0].0).await.unwrap().unwrap()
+}
+
+async fn canonical(
+    conn: &mut sqlx::PgConnection,
+    s: &str,
+    u: &str,
+) -> undrly_core::MarketObservation {
+    canonical_by(conn, s, u, AggregationMethod::LatestObservationV1).await
 }
 
 async fn count(conn: &mut sqlx::PgConnection) -> i64 {
@@ -875,6 +894,117 @@ async fn a_failed_provider_leaves_the_other_venue_intact() {
         .unwrap()
         .unwrap();
     assert_eq!(o.source_id().as_str(), "kraken");
+    drop(conn);
+    db.teardown().await;
+}
+
+/// Hyperliquid's mark and order book (`l2Book`) for the BTC perpetual:
+/// the canonical quote stays the mark, with the book's best bid and ask
+/// only when the book is within 60 s of the mark.
+#[tokio::test]
+async fn perpetual_quote_is_the_mark_with_the_venue_book() {
+    use undrly_core::{MARK_BOOK_MAX_SKEW_SECONDS, PriceType};
+    use undrly_ingest::quotes::ingest_quotes_of_types;
+    use undrly_normalize::hyperliquid::{HyperliquidBookNormalizer, HyperliquidNormalizer};
+    use undrly_provider::hyperliquid::{HyperliquidBookProvider, HyperliquidProvider};
+
+    let Some((db, mut conn)) = seeded().await else {
+        return;
+    };
+    assert_eq!(MARK_BOOK_MAX_SKEW_SECONDS, 60);
+    // The book states its own time: 2026-09-28T13:31:46.444Z.
+    let book = ingest_quotes_of_types(
+        &mut conn,
+        &HyperliquidBookProvider::new(),
+        &HyperliquidBookNormalizer,
+        &raw(
+            "POST https://api.hyperliquid.xyz/info {\"type\":\"l2Book\",\"coin\":\"BTC\"}",
+            repo("tests/fixtures/sources/hyperliquid/l2Book-BTC.json"),
+            "2026-09-28T13:31:47Z",
+        ),
+        None,
+        Some(&[PriceType::Mid]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(book.observations.len(), 1);
+    assert!(
+        book.missing.is_empty(),
+        "the mark feed is not this record's"
+    );
+    // A distinct record key per poll: identical bytes under one key are one
+    // record (a replay keeps its original receipt time).
+    let mark_at = |t: &str| {
+        raw(
+            &format!("hyperliquid@{t}"),
+            repo("tests/fixtures/sources/hyperliquid/metaAndAssetCtxs.json"),
+            t,
+        )
+    };
+    let mark = ingest_quotes_of_types(
+        &mut conn,
+        &HyperliquidProvider::new(),
+        &HyperliquidNormalizer,
+        &mark_at("2026-09-28T13:32:10Z"),
+        None,
+        Some(&[PriceType::Mark]),
+    )
+    .await
+    .unwrap();
+    assert!(
+        mark.missing.is_empty(),
+        "the book feed is not this record's"
+    );
+    refresh_canonical_quotes(
+        &mut conn,
+        &mark.pairs,
+        Timestamp::parse("2026-09-28T13:32:11Z").unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let q = get_canonical_quote(&mut conn, subject("btc-perp"), unit("usdt"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(q.method, AggregationMethod::MarkWithVenueBookV1);
+    assert_eq!(q.price_type, PriceType::Mark);
+    let mark_obs = get_observation(&mut conn, mark.observations[0].1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(q.price, mark_obs.price(), "the price is the mark");
+    let ba = q.bid_ask.unwrap();
+    assert_eq!(
+        (ba.bid.to_string(), ba.ask.to_string()),
+        ("83520.0".into(), "83521.0".into())
+    );
+    assert_eq!(q.inputs.len(), 2, "mark and book are both recorded");
+    assert_eq!(q.as_of, Timestamp::parse("2026-09-28T13:32:10Z").unwrap());
+
+    // A mark more than 60 s after the book: no bid/ask, never a stale book.
+    let later = ingest_quotes_of_types(
+        &mut conn,
+        &HyperliquidProvider::new(),
+        &HyperliquidNormalizer,
+        &mark_at("2026-09-28T13:33:00Z"),
+        None,
+        Some(&[PriceType::Mark]),
+    )
+    .await
+    .unwrap();
+    refresh_canonical_quotes(
+        &mut conn,
+        &later.pairs,
+        Timestamp::parse("2026-09-28T13:33:01Z").unwrap(),
+    )
+    .await
+    .unwrap();
+    let q = get_canonical_quote(&mut conn, subject("btc-perp"), unit("usdt"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((q.bid_ask, q.inputs.len()), (None, 1));
     drop(conn);
     db.teardown().await;
 }
