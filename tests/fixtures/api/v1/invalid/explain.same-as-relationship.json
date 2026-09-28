@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "query": "caip19:eip155:1/erc20:0x6b175474e89094c44da98b954eedeac495271d0f",
+  "parsedAs": "identifier",
+  "status": "resolved",
+  "method": "identifier",
+  "quotedPairsOnly": false,
+  "candidates": [
+    {
+      "resolution": {
+        "kind": "node",
+        "node": {
+          "id": "undrly:deployment:01jagv5gymfsfrmtvwhpf0y6g7",
+          "kind": "deployment",
+          "name": "Ethereum erc20:0x6b175474e89094c44da98b954eedeac495271d0f",
+          "class": null
+        }
+      },
+      "matches": [
+        {
+          "rule": "identifier",
+          "side": null,
+          "namespace": "caip19",
+          "value": "eip155:1/erc20:0x6b175474e89094c44da98b954eedeac495271d0f",
+          "venue": null,
+          "source": null
+        }
+      ],
+      "identifiers": [
+        {
+          "namespace": "caip19",
+          "value": "eip155:1/erc20:0x6b175474e89094c44da98b954eedeac495271d0f"
+        }
+      ],
+      "relationships": [
+        {
+          "relationshipType": "REPRESENTS",
+          "object": {
+            "id": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2",
+            "kind": "instrument",
+            "name": "USD Coin",
+            "class": "crypto_asset"
+          },
+          "projected": false,
+          "provenance": {
+            "sourceId": "example-source",
+            "receivedAt": "2026-09-24T12:00:00Z"
+          }
+        },
+        {
+          "relationshipType": "SAME_AS",
+          "object": {
+            "id": "undrly:chain:01jagv5gymfsfrmtvwhpf0y6g6",
+            "kind": "chain",
+            "name": "Ethereum",
+            "class": null
+          },
+          "projected": true,
+          "provenance": {
+            "sourceId": "example-source",
+            "receivedAt": "2026-09-24T12:00:00Z"
+          }
+        }
+      ],
+      "quoted": null
+    }
+  ]
+}

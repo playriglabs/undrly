@@ -10,7 +10,15 @@
 import { z } from "zod";
 
 /** Mirrors `undrly_core::Category`. */
-export const CATEGORIES = ["entity", "instrument", "listing", "venue", "currency"] as const;
+export const CATEGORIES = [
+  "entity",
+  "instrument",
+  "listing",
+  "venue",
+  "currency",
+  "chain",
+  "deployment",
+] as const;
 export type Category = (typeof CATEGORIES)[number];
 
 const ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -89,6 +97,10 @@ export const VenueId = idOfCategory("venue", "VenueId");
 export type VenueId = z.infer<typeof VenueId>;
 export const CurrencyId = idOfCategory("currency", "CurrencyId");
 export type CurrencyId = z.infer<typeof CurrencyId>;
+export const ChainId = idOfCategory("chain", "ChainId");
+export type ChainId = z.infer<typeof ChainId>;
+export const DeploymentId = idOfCategory("deployment", "DeploymentId");
+export type DeploymentId = z.infer<typeof DeploymentId>;
 
 const DECIMAL = /^-?(0|[1-9][0-9]*)(?:\.([0-9]+))?$/;
 const MAX_DECIMAL_SCALE = 28;

@@ -49,6 +49,9 @@ describe("API v1 valid documents", () => {
     ["api/v1/quote.xau-reference.json", v1.QuoteV1],
     ["api/v1/quote.fx-pair-aggregated.json", v1.QuoteV1],
     ["api/v1/quote.fx-reference.json", v1.QuoteV1],
+    ["api/v1/graph.deployments-markets.json", v1.GraphV1],
+    ["api/v1/explain.perpetual.json", v1.ExplainV1],
+    ["api/v1/explain.deployment.json", v1.ExplainV1],
   ] as const;
 
   for (const [path, schema] of cases) {
@@ -96,7 +99,11 @@ describe("API v1 invalid documents", () => {
           ? v1.RelationshipV1
           : name.startsWith("quote.")
             ? v1.QuoteV1
-            : undefined;
+            : name.startsWith("graph.")
+              ? v1.GraphV1
+              : name.startsWith("explain.")
+                ? v1.ExplainV1
+                : undefined;
       expect(schema, `unrecognized fixture ${name}`).toBeDefined();
       expect(schema?.safeParse(readJson(`api/v1/invalid/${name}`)).success).toBe(false);
     });

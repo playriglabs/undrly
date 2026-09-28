@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "root": {
+    "id": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2",
+    "kind": "instrument",
+    "name": "USD Coin",
+    "class": "crypto_asset"
+  },
+  "edges": [
+    {
+      "subject": {
+        "id": "undrly:deployment:01jagv5gymfsfrmtvwhpf0y6g7",
+        "kind": "deployment",
+        "name": "Ethereum erc20:0x6b175474e89094c44da98b954eedeac495271d0f",
+        "class": null
+      },
+      "relationshipType": "REPRESENTS",
+      "object": {
+        "id": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2",
+        "kind": "instrument",
+        "name": "USD Coin",
+        "class": "crypto_asset"
+      },
+      "provenance": {
+        "sourceId": "example-source",
+        "receivedAt": "2026-09-24T12:00:00Z"
+      }
+    }
+  ],
+  "listings": [],
+  "deployments": [
+    {
+      "id": "undrly:deployment:01jagv5gymfsfrmtvwhpf0y6g7",
+      "chain": {
+        "id": "undrly:chain:01jagv5gymfsfrmtvwhpf0y6g6",
+        "kind": "chain",
+        "name": "Ethereum",
+        "class": null
+      },
+      "caip19": "eip155:1/erc20:0x6b175474e89094c44da98b954eedeac495271d0f"
+    }
+  ],
+  "markets": null
+}

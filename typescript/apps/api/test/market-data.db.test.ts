@@ -314,6 +314,12 @@ describe.skipIf(url === undefined)("market data with a database", () => {
         volume_24h_notional, price_24h_ago, received_at, source_record_id)
       VALUES (${id.perp}, ${id.usdc}, 'instrument', 'hyperliquid', ${id.hl}, 83990.0, 84005.0, 83992.5,
         0.0000125, 1, 39202.60446, 45831.55481, 3851413609.4609913826, 83894.0, '2026-09-26T02:29:55Z', ${ctx})`;
+    // A newer context normalized under another unit (as V1.4.1 left behind
+    // for Hyperliquid): never served as the market's current unit.
+    const other = await record("hyperliquid", "ctx-other-unit", "2026-09-26T02:29:58Z");
+    await sql`INSERT INTO perp_contexts (subject_id, unit_id, unit_category, source_id, venue_id, mark_price,
+        received_at, source_record_id)
+      VALUES (${id.perp}, ${id.usd}, 'currency', 'hyperliquid', ${id.hl}, 1.0, '2026-09-26T02:29:58Z', ${other})`;
 
     globalThis.fetch = (async () => {
       fetchCalls++;
@@ -611,6 +617,8 @@ describe.skipIf(url === undefined)("market data with a database", () => {
       (await get("/v1/derivatives/BTC-PERP", "2026-09-26T03:10:00Z")).body,
     );
     expect(later).toMatchObject({ freshness: "stale", ageMs: 2_405_000 });
+    // The newer context in another unit is not served (markPrice is not 1.0).
+    expect(later.markPrice).toBe("83990.0");
     for (const q of ["BTC/USD", "NVDA"]) {
       const r = await get(`/v1/derivatives/${q}`);
       expect(errorCode(r.body), q).toBe("no_data");

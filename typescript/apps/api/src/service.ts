@@ -7,6 +7,8 @@ import { v1 } from "@undrly/contracts";
 import type postgres from "postgres";
 import { ageMs, type FreshnessClock, policyElapsedMs } from "./market.ts";
 import {
+  type Caip2,
+  type Caip19,
   canonicalTimestamp,
   classShareSymbol,
   type IdentifierScheme,
@@ -27,6 +29,8 @@ const KIND_ORDER: Record<string, number> = {
   entity: 2,
   venue: 3,
   listing: 4,
+  chain: 5,
+  deployment: 6,
 };
 
 // Every node with its display name, in one relation.
@@ -37,6 +41,9 @@ const NAMES = `(
   UNION ALL SELECT id, 'currency', name, NULL FROM currencies
   UNION ALL SELECT l.id, 'listing', i.name || ' on ' || v.name, NULL
     FROM listings l JOIN instruments i ON i.id = l.instrument_id JOIN venues v ON v.id = l.venue_id
+  UNION ALL SELECT id, 'chain', name, NULL FROM chains
+  UNION ALL SELECT d.id, 'deployment', c.name || ' ' || d.asset_namespace || ':' || d.asset_reference, NULL
+    FROM deployments d JOIN chains c ON c.id = d.chain_id
 )`;
 
 export const tsText = (column: string) =>
@@ -156,13 +163,51 @@ export type Resolved = {
   pairs: ({ subject: string; unit: string; unitCategory: string } | null)[];
 };
 
-type Match = { uuid: string } | { subject: string; unit: string; unitCategory: string };
+type Evidence = v1.MatchV1;
+type Match = ({ uuid: string } | { subject: string; unit: string; unitCategory: string }) & {
+  /** Why it matched; filled only when explaining (`explain = true`). */
+  evidence: Evidence[];
+};
+
+const evidence = (
+  rule: Evidence["rule"],
+  value: string,
+  extra: Partial<Omit<Evidence, "rule" | "value">> = {},
+): Evidence => ({
+  rule,
+  side: extra.side ?? null,
+  namespace: extra.namespace ?? null,
+  value,
+  venue: extra.venue ?? null,
+  source: extra.source ?? null,
+});
 
 async function nodesByAlias(sql: Sql, text: string, symbolsOnly: boolean): Promise<string[]> {
   const rows = await sql<{ id: string }[]>`
     SELECT DISTINCT node_id::text AS id FROM aliases
     WHERE alias_key = lower(${text}) AND (${!symbolsOnly} OR kind = 'symbol')`;
   return rows.map((r) => r.id);
+}
+
+/** The alias rows that made `nodesByAlias` return `uuid`. */
+async function aliasEvidence(
+  sql: Sql,
+  uuid: string,
+  text: string,
+  symbolsOnly: boolean,
+  side: Evidence["side"],
+): Promise<Evidence[]> {
+  const rows = await sql<{ alias: string; kind: string; source_id: string }[]>`
+    SELECT alias::text, kind, source_id FROM aliases
+    WHERE node_id = ${uuid} AND alias_key = lower(${text}) AND (${!symbolsOnly} OR kind = 'symbol')
+    ORDER BY id`;
+  return rows.map((r) =>
+    evidence("alias", r.alias, {
+      side,
+      namespace: r.kind,
+      source: { id: r.source_id as v1.SourceId },
+    }),
+  );
 }
 
 /** Equity instruments listed under the class-share spelling of `token`. */
@@ -187,6 +232,22 @@ async function nodesByIdentifier(
   return rows.map((r) => r.id);
 }
 
+/** The identifier rows that made `nodesByIdentifier` return `uuid`. */
+async function identifierEvidence(
+  sql: Sql,
+  uuid: string,
+  scheme: IdentifierScheme | null,
+  value: string,
+  side: Evidence["side"] = null,
+): Promise<Evidence[]> {
+  const rows = await sql<{ scheme: string; value: string }[]>`
+    SELECT scheme, value FROM identifiers
+    WHERE node_id = ${uuid} AND (${scheme}::text IS NULL OR scheme = ${scheme}) AND value = ${value}
+      AND valid_during @> now()
+    ORDER BY scheme, id`;
+  return rows.map((r) => evidence("identifier", r.value, { side, namespace: r.scheme }));
+}
+
 async function categoryOf(sql: Sql, uuid: string): Promise<string | null> {
   const rows = await sql<{ category: string }[]>`SELECT category FROM nodes WHERE id = ${uuid}`;
   return rows[0]?.category ?? null;
@@ -207,38 +268,163 @@ async function pairSide(sql: Sql, token: string): Promise<string[]> {
   return out;
 }
 
-async function matches(sql: Sql, q: ParsedQuery): Promise<Match[]> {
+/** Why `uuid` is a candidate for one side of a pair (the rules of `pairSide`). */
+async function sideEvidence(
+  sql: Sql,
+  uuid: string,
+  token: string,
+  side: "base" | "quote",
+): Promise<Evidence[]> {
+  const shares = (await equitiesByClassShare(sql, token)).includes(uuid)
+    ? [
+        evidence("class_share_symbol", classShareSymbol(token) ?? token, {
+          side,
+          namespace: "symbol",
+        }),
+      ]
+    : [];
+  return [
+    ...(await aliasEvidence(sql, uuid, token, true, side)),
+    ...shares,
+    ...(await identifierEvidence(sql, uuid, "iso4217", token.toUpperCase(), side)),
+  ];
+}
+
+/** A chain by its CAIP-2 id (exact, case-sensitive). */
+async function chainsByCaip2(sql: Sql, caip2: Caip2): Promise<string[]> {
+  const rows = await sql<{ id: string }[]>`
+    SELECT id::text FROM chains
+    WHERE caip2_namespace = ${caip2.namespace} AND caip2_reference = ${caip2.reference}`;
+  return rows.map((r) => r.id);
+}
+
+/** A deployment by its chain's CAIP-2 id and its asset (never by address alone). */
+async function deploymentsByCaip19(sql: Sql, caip19: Caip19): Promise<string[]> {
+  const rows = await sql<{ id: string }[]>`
+    SELECT d.id::text FROM deployments d JOIN chains c ON c.id = d.chain_id
+    WHERE c.caip2_namespace = ${caip19.chain.namespace}
+      AND c.caip2_reference = ${caip19.chain.reference}
+      AND d.asset_namespace = ${caip19.assetNamespace}
+      AND d.asset_reference = ${caip19.assetReference}`;
+  return rows.map((r) => r.id);
+}
+
+type Matched = { found: Match[]; quotedPairsOnly: boolean };
+
+/**
+ * The resolver's rules. `explain` only adds the evidence of each match (with
+ * the same predicates, restricted to the matched node); it never changes
+ * which nodes match or their order.
+ */
+async function matches(sql: Sql, q: ParsedQuery, explain: boolean): Promise<Matched> {
+  const plain = (found: Match[]): Matched => ({ found, quotedPairsOnly: false });
   switch (q.kind) {
     case "canonical_id":
-      return (await categoryOf(sql, q.uuid)) === q.category ? [{ uuid: q.uuid }] : [];
-    case "identifier":
-      return (await nodesByIdentifier(sql, q.scheme, q.value)).map((uuid) => ({ uuid }));
+      return plain(
+        (await categoryOf(sql, q.uuid)) === q.category
+          ? [
+              {
+                uuid: q.uuid,
+                evidence: explain
+                  ? [evidence("canonical_id", v1.formatCanonicalId(q.category, q.uuid))]
+                  : [],
+              },
+            ]
+          : [],
+      );
+    case "identifier": {
+      const out: Match[] = [];
+      for (const uuid of await nodesByIdentifier(sql, q.scheme, q.value)) {
+        out.push({
+          uuid,
+          evidence: explain ? await identifierEvidence(sql, uuid, q.scheme, q.value) : [],
+        });
+      }
+      return plain(out);
+    }
+    case "chain": {
+      const text = `${q.caip2.namespace}:${q.caip2.reference}`;
+      return plain(
+        (await chainsByCaip2(sql, q.caip2)).map((uuid) => ({
+          uuid,
+          evidence: explain ? [evidence("identifier", text, { namespace: "caip2" })] : [],
+        })),
+      );
+    }
+    case "deployment": {
+      const { chain, assetNamespace, assetReference } = q.caip19;
+      const text = `${chain.namespace}:${chain.reference}/${assetNamespace}:${assetReference}`;
+      return plain(
+        (await deploymentsByCaip19(sql, q.caip19)).map((uuid) => ({
+          uuid,
+          evidence: explain ? [evidence("identifier", text, { namespace: "caip19" })] : [],
+        })),
+      );
+    }
     case "alias": {
-      const ids = new Set([
-        ...(await nodesByAlias(sql, q.text, false)),
-        ...(await equitiesByClassShare(sql, q.text)),
-        ...(await nodesByIdentifier(sql, null, q.text.toUpperCase())),
-        ...(await nodesByIdentifier(sql, "cik", normalizeIdentifier("cik", q.text))),
-      ]);
-      return [...ids].map((uuid) => ({ uuid }));
+      const [byAlias, byShare, byIdentifier, byCik] = [
+        await nodesByAlias(sql, q.text, false),
+        await equitiesByClassShare(sql, q.text),
+        await nodesByIdentifier(sql, null, q.text.toUpperCase()),
+        await nodesByIdentifier(sql, "cik", normalizeIdentifier("cik", q.text)),
+      ];
+      const ids = new Set([...byAlias, ...byShare, ...byIdentifier, ...byCik]);
+      const out: Match[] = [];
+      for (const uuid of ids) {
+        const found: Evidence[] = [];
+        if (explain) {
+          if (byAlias.includes(uuid))
+            found.push(...(await aliasEvidence(sql, uuid, q.text, false, null)));
+          if (byShare.includes(uuid)) {
+            found.push(
+              evidence("class_share_symbol", classShareSymbol(q.text) ?? q.text, {
+                namespace: "symbol",
+              }),
+            );
+          }
+          if (byIdentifier.includes(uuid)) {
+            found.push(...(await identifierEvidence(sql, uuid, null, q.text.toUpperCase())));
+          }
+          if (byCik.includes(uuid) && !byIdentifier.includes(uuid)) {
+            found.push(
+              ...(await identifierEvidence(sql, uuid, "cik", normalizeIdentifier("cik", q.text))),
+            );
+          }
+        }
+        out.push({ uuid, evidence: found });
+      }
+      return plain(out);
     }
     case "pair": {
       const [base, quote] = [await pairSide(sql, q.base), await pairSide(sql, q.quote)];
-      const out: { subject: string; unit: string; unitCategory: string }[] = [];
+      const out: Match[] = [];
       for (const subject of base) {
         for (const unit of quote) {
           if (subject === unit) continue;
           const unitCategory = (await categoryOf(sql, unit)) ?? "";
+          const sides = explain
+            ? [
+                ...(await sideEvidence(sql, subject, q.base, "base")),
+                ...(await sideEvidence(sql, unit, q.quote, "quote")),
+              ]
+            : [];
           // Two currencies name an FX market (`EUR/USD`: base EUR, quote
           // USD), in exactly that orientation, never its inverse.
           if (unitCategory === "currency" && (await categoryOf(sql, subject)) === "currency") {
-            const fx = await sql<{ id: string }[]>`
-              SELECT id::text FROM instruments
+            const fx = await sql<{ id: string; name: string }[]>`
+              SELECT id::text, name::text FROM instruments
               WHERE base_currency_id = ${subject} AND quote_currency_id = ${unit}`;
-            for (const m of fx) out.push({ subject: m.id, unit, unitCategory });
+            for (const m of fx) {
+              out.push({
+                subject: m.id,
+                unit,
+                unitCategory,
+                evidence: explain ? [...sides, evidence("fx_pair", m.name)] : [],
+              });
+            }
             continue;
           }
-          out.push({ subject, unit, unitCategory });
+          out.push({ subject, unit, unitCategory, evidence: sides });
         }
       }
       // A symbol shared across asset classes (a crypto asset and a stock):
@@ -246,13 +432,14 @@ async function matches(sql: Sql, q: ParsedQuery): Promise<Match[]> {
       if (out.length > 1) {
         const quoted: typeof out = [];
         for (const m of out) {
+          if (!("subject" in m)) continue;
           const rows = await sql`
             SELECT 1 FROM quote_feeds WHERE subject_id = ${m.subject} AND unit_id = ${m.unit} LIMIT 1`;
           if (rows.length > 0) quoted.push(m);
         }
-        return quoted;
+        return { found: quoted, quotedPairsOnly: true };
       }
-      return out;
+      return plain(out);
     }
     case "venue_symbol": {
       // Venues named by symbol alias or MIC; feed sources named by source id.
@@ -263,25 +450,61 @@ async function matches(sql: Sql, q: ParsedQuery): Promise<Match[]> {
           OR n.id IN (SELECT node_id FROM identifiers WHERE scheme = 'mic'
                       AND value = ${q.venue.toUpperCase()} AND valid_during @> now()))`;
       const venues = venueRows.map((r) => r.id);
+      const symbols = [q.symbol, classShareSymbol(q.symbol) ?? q.symbol];
       const listingRows = await sql<{ id: string }[]>`
         SELECT DISTINCT l.instrument_id::text AS id
         FROM listing_symbols s JOIN listings l ON l.id = s.listing_id
         WHERE s.venue_id = ANY(${venues}::uuid[])
-          AND s.symbol = ANY(${[q.symbol, classShareSymbol(q.symbol) ?? q.symbol]}::text[])
+          AND s.symbol = ANY(${symbols}::text[])
           AND s.valid_during @> now()`;
       const feedRows = await sql<{ subject: string; unit: string; unit_category: string }[]>`
         SELECT DISTINCT subject_id::text AS subject, unit_id::text AS unit, unit_category
         FROM quote_feeds
         WHERE symbol = ${q.symbol}
           AND (venue_id = ANY(${venues}::uuid[]) OR feed_source_id = ${q.venue.toLowerCase()})`;
-      return [
-        ...listingRows.map((r) => ({ uuid: r.id })),
-        ...feedRows.map((r) => ({
+      const out: Match[] = [];
+      for (const r of listingRows) {
+        const found: Evidence[] = [];
+        if (explain) {
+          const rows = await sql<{ symbol: string; venue: string }[]>`
+            SELECT s.symbol, s.venue_id::text AS venue
+            FROM listing_symbols s JOIN listings l ON l.id = s.listing_id
+            WHERE l.instrument_id = ${r.id} AND s.venue_id = ANY(${venues}::uuid[])
+              AND s.symbol = ANY(${symbols}::text[]) AND s.valid_during @> now()
+            ORDER BY s.id`;
+          for (const row of rows) {
+            found.push(
+              evidence("listing_symbol", row.symbol, { venue: await nodeRefOf(sql, row.venue) }),
+            );
+          }
+        }
+        out.push({ uuid: r.id, evidence: found });
+      }
+      for (const r of feedRows) {
+        const found: Evidence[] = [];
+        if (explain) {
+          const rows = await sql<{ symbol: string; venue: string | null; source: string }[]>`
+            SELECT symbol, venue_id::text AS venue, feed_source_id AS source FROM quote_feeds
+            WHERE subject_id = ${r.subject} AND unit_id = ${r.unit} AND symbol = ${q.symbol}
+              AND (venue_id = ANY(${venues}::uuid[]) OR feed_source_id = ${q.venue.toLowerCase()})
+            ORDER BY id`;
+          for (const row of rows) {
+            found.push(
+              evidence("feed_symbol", row.symbol, {
+                venue: row.venue === null ? null : await nodeRefOf(sql, row.venue),
+                source: { id: row.source as v1.SourceId },
+              }),
+            );
+          }
+        }
+        out.push({
           subject: r.subject,
           unit: r.unit,
           unitCategory: r.unit_category,
-        })),
-      ];
+          evidence: found,
+        });
+      }
+      return plain(out);
     }
   }
 }
@@ -289,17 +512,20 @@ async function matches(sql: Sql, q: ParsedQuery): Promise<Match[]> {
 const METHOD: Record<ParsedQuery["kind"], Method> = {
   canonical_id: "canonical_id",
   identifier: "identifier",
+  chain: "identifier",
+  deployment: "identifier",
   venue_symbol: "venue_symbol",
   pair: "pair",
   alias: "alias",
 };
 
-export async function resolveQuery(sql: Sql, raw: string): Promise<Resolved | null> {
-  const q = parseQuery(raw);
-  if (q === null) return null;
-  const found = await matches(sql, q);
+type Assembled = Resolved & { evidence: Evidence[][]; quotedPairsOnly: boolean };
+
+async function assemble(sql: Sql, q: ParsedQuery, explain: boolean): Promise<Assembled> {
+  const { found, quotedPairsOnly } = await matches(sql, q, explain);
   const resolutions: Resolution[] = [];
   const pairs: Resolved["pairs"] = [];
+  const evidenceOf: Evidence[][] = [];
   let method = METHOD[q.kind];
   for (const m of found) {
     if ("uuid" in m) {
@@ -314,12 +540,27 @@ export async function resolveQuery(sql: Sql, raw: string): Promise<Resolved | nu
         subject: await subjectOf(sql, m.subject),
         unit: await unitOf(sql, m.unit, m.unitCategory),
       });
-      pairs.push(m);
+      pairs.push({ subject: m.subject, unit: m.unit, unitCategory: m.unitCategory });
     }
+    evidenceOf.push(m.evidence);
   }
   const status =
     resolutions.length === 0 ? "not_found" : resolutions.length === 1 ? "resolved" : "ambiguous";
-  return { status, method: status === "not_found" ? null : method, resolutions, pairs };
+  return {
+    status,
+    method: status === "not_found" ? null : method,
+    resolutions,
+    pairs,
+    evidence: evidenceOf,
+    quotedPairsOnly,
+  };
+}
+
+export async function resolveQuery(sql: Sql, raw: string): Promise<Resolved | null> {
+  const q = parseQuery(raw);
+  if (q === null) return null;
+  const { status, method, resolutions, pairs } = await assemble(sql, q, false);
+  return { status, method, resolutions, pairs };
 }
 
 export function resolveResult(query: string, r: Resolved): v1.ResolveResultV1 {
@@ -330,6 +571,107 @@ export function resolveResult(query: string, r: Resolved): v1.ResolveResultV1 {
     method: r.method,
     match: r.status === "resolved" ? (r.resolutions[0] ?? null) : null,
     candidates: r.status === "ambiguous" ? r.resolutions : [],
+  });
+}
+
+// --- explain ------------------------------------------------------------------
+
+/** A node's current external identifiers, including chain and asset ids. */
+async function identifiersOf(sql: Sql, uuid: string) {
+  const rows = await sql<{ namespace: string; value: string }[]>`
+    SELECT scheme AS namespace, value FROM identifiers
+    WHERE node_id = ${uuid} AND valid_during @> now()
+    UNION ALL
+    SELECT 'caip2', caip2_namespace || ':' || caip2_reference FROM chains WHERE id = ${uuid}
+    UNION ALL
+    SELECT 'caip19', c.caip2_namespace || ':' || c.caip2_reference || '/'
+                     || d.asset_namespace || ':' || d.asset_reference
+    FROM deployments d JOIN chains c ON c.id = d.chain_id WHERE d.id = ${uuid}
+    ORDER BY namespace, value`;
+  return rows.map((r) => ({ namespace: r.namespace, value: r.value }));
+}
+
+/**
+ * A node's outgoing edges (canonical direction, with provenance), then the
+ * projections: `LISTED_ON` for an instrument's listings, `DEPLOYED_ON` for a
+ * deployment's chain.
+ */
+async function relationshipsOf(sql: Sql, uuid: string) {
+  const rows = await sql.unsafe<
+    { type: string; object: string; projected: boolean; source_id: string; received_at: string }[]
+  >(
+    `SELECT type, object, projected, source_id, ${tsText("received_at")} AS received_at FROM (
+       SELECT 0 AS part, id AS ord, relationship_type AS type, object_id::text AS object,
+              false AS projected, source_id, received_at
+       FROM graph_edges WHERE subject_id = $1
+       UNION ALL
+       SELECT 1, row_number() OVER (ORDER BY id), 'LISTED_ON', venue_id::text, true,
+              source_id, received_at
+       FROM listings WHERE instrument_id = $1
+       UNION ALL
+       SELECT 2, 0, 'DEPLOYED_ON', d.chain_id::text, true, r.source_id, r.received_at
+       FROM deployments d JOIN source_records r ON r.id = d.source_record_id WHERE d.id = $1
+     ) x ORDER BY part, ord`,
+    [uuid],
+  );
+  const refs = await nodeRefs(
+    sql,
+    rows.map((r) => r.object),
+  );
+  return rows.map((r) => {
+    const object = refs.get(r.object);
+    if (object === undefined) throw new Error(`unknown node ${r.object}`);
+    return {
+      relationshipType: r.type,
+      object,
+      projected: r.projected,
+      provenance: { sourceId: r.source_id, receivedAt: canonicalTimestamp(r.received_at) },
+    };
+  });
+}
+
+/**
+ * `/v1/explain`: the resolver's own result for `raw`, with the evidence of
+ * every candidate and a compact description of what each candidate is.
+ * `null` for an invalid query (as `/v1/resolve`).
+ */
+export async function explain(sql: Sql, raw: string): Promise<v1.ExplainV1 | null> {
+  const q = parseQuery(raw);
+  if (q === null) return null;
+  const a = await assemble(sql, q, true);
+  const candidates = [];
+  for (const [i, resolution] of a.resolutions.entries()) {
+    const pair = a.pairs[i] ?? null;
+    const node =
+      pair === null && resolution.kind === "node"
+        ? v1.canonicalIdUuid(resolution.node.id)
+        : (pair?.subject ?? null);
+    if (node === null) throw new Error("candidate without a node");
+    const quoted =
+      pair === null
+        ? null
+        : (
+            await sql`
+            SELECT 1 FROM quote_feeds WHERE subject_id = ${pair.subject} AND unit_id = ${pair.unit}
+            LIMIT 1`
+          ).length > 0;
+    candidates.push({
+      resolution,
+      matches: a.evidence[i] ?? [],
+      identifiers: await identifiersOf(sql, node),
+      relationships: await relationshipsOf(sql, node),
+      quoted,
+    });
+  }
+  const parsedAs = q.kind === "chain" || q.kind === "deployment" ? ("identifier" as const) : q.kind;
+  return v1.ExplainV1.parse({
+    schemaVersion: 1,
+    query: raw,
+    parsedAs,
+    status: a.status,
+    method: a.method,
+    quotedPairsOnly: a.quotedPairsOnly,
+    candidates,
   });
 }
 
@@ -696,15 +1038,41 @@ export async function graph(sql: Sql, uuid: string): Promise<v1.GraphV1 | null> 
     FROM listings l LEFT JOIN listing_symbols s
       ON s.listing_id = l.id AND s.valid_during @> now()
     WHERE l.instrument_id = ${uuid} GROUP BY l.id ORDER BY l.id`;
+  // V1.4: deployments that represent the root, with chain and CAIP-19 id.
+  const deployments = await sql<{ id: string; chain: string; caip19: string }[]>`
+    SELECT DISTINCT d.id::text, d.chain_id::text AS chain,
+           c.caip2_namespace || ':' || c.caip2_reference || '/'
+             || d.asset_namespace || ':' || d.asset_reference AS caip19
+    FROM graph_edges e
+    JOIN deployments d ON d.id = e.subject_id
+    JOIN chains c ON c.id = d.chain_id
+    WHERE e.object_id = ${uuid} AND e.relationship_type = 'REPRESENTS'
+    ORDER BY d.id::text`;
+  // V1.4: the units the root is priced in by a declared feed, with the venues.
+  const markets = await sql<{ unit: string; unit_category: string; venues: string[] }[]>`
+    SELECT unit_id::text AS unit, unit_category,
+           COALESCE(array_agg(DISTINCT venue_id::text) FILTER (WHERE venue_id IS NOT NULL), '{}')
+             AS venues
+    FROM quote_feeds WHERE subject_id = ${uuid}
+    GROUP BY unit_id, unit_category ORDER BY unit_id`;
   const refs = await nodeRefs(sql, [
     ...edges.flatMap((e) => [e.subject, e.object]),
     ...listings.flatMap((l) => [l.id, l.venue]),
+    ...deployments.map((d) => d.chain),
+    ...markets.flatMap((m) => m.venues),
   ]);
   const ref = (id: string) => {
     const r = refs.get(id);
     if (r === undefined) throw new Error(`unknown node ${id}`);
     return r;
   };
+  const marketList = [];
+  for (const m of markets) {
+    marketList.push({
+      unit: await unitOf(sql, m.unit, m.unit_category),
+      venues: [...m.venues].sort().map(ref),
+    });
+  }
   return v1.GraphV1.parse({
     schemaVersion: 1,
     root,
@@ -715,6 +1083,17 @@ export async function graph(sql: Sql, uuid: string): Promise<v1.GraphV1 | null> 
       provenance: { sourceId: e.source_id, receivedAt: canonicalTimestamp(e.received_at) },
     })),
     listings: listings.map((l) => ({ id: ref(l.id).id, venue: ref(l.venue), symbols: l.symbols })),
+    // Additive keys are omitted when empty, so earlier documents are unchanged.
+    ...(deployments.length === 0
+      ? {}
+      : {
+          deployments: deployments.map((d) => ({
+            id: v1.formatCanonicalId("deployment", d.id),
+            chain: ref(d.chain),
+            caip19: d.caip19,
+          })),
+        }),
+    ...(marketList.length === 0 ? {} : { markets: marketList }),
   });
 }
 

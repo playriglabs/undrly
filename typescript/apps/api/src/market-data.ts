@@ -341,8 +341,9 @@ export async function derivatives(
             open_interest::text AS oi, volume_24h_base::text AS vol,
             volume_24h_notional::text AS ntl, price_24h_ago::text AS prev,
             ${tsText("received_at")} AS received_at
-     FROM perp_contexts WHERE subject_id = $1 ORDER BY received_at DESC, id DESC LIMIT 1`,
-    [pair.subject],
+     FROM perp_contexts WHERE subject_id = $1 AND unit_id = $2
+     ORDER BY received_at DESC, id DESC LIMIT 1`,
+    [pair.subject, pair.unit],
   );
   const c = rows[0];
   if (c === undefined) return { kind: "no_data", message: "no perpetual context collected" };

@@ -10,14 +10,16 @@ import {
 /**
  * Mirrors `undrly_core::RelationshipType`: the stored vocabulary, in canonical
  * direction (`subject → object`). Inverse labels such as `UNDERLYING_OF` and
- * the listings projection `LISTED_ON` are derived by the API at query time and
- * are not part of this contract.
+ * the projections `LISTED_ON` (from listings) and `DEPLOYED_ON` (from a
+ * deployment's chain) are derived by the API at query time and are not part
+ * of this contract.
  */
 export const RELATIONSHIP_TYPES = [
   "ISSUED_BY",
   "TRADES_ON",
   "DENOMINATED_IN",
   "SETTLES_IN",
+  "MARGINED_IN",
   "DERIVES_FROM",
   "HOLDS",
   "TRACKS",
@@ -41,7 +43,11 @@ export const RELATIONSHIP_RULES: readonly (readonly [RelationshipType, Category,
   ["DENOMINATED_IN", "instrument", "instrument"],
   ["SETTLES_IN", "instrument", "currency"],
   ["SETTLES_IN", "instrument", "instrument"],
+  ["MARGINED_IN", "instrument", "currency"],
+  ["MARGINED_IN", "instrument", "instrument"],
   ["DERIVES_FROM", "instrument", "instrument"],
+  ["TOKENIZES", "instrument", "instrument"],
+  ["REPRESENTS", "deployment", "instrument"],
 ];
 
 export const ProvenanceV1 = z.strictObject({

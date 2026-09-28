@@ -206,14 +206,22 @@ export type MarketV1 = z.infer<typeof MarketV1>;
 
 /**
  * `GET /v1/derivatives/{query}`: a perpetual's context as its venue reports
- * it. Prices are in `unit` (the settlement asset, e.g. USDC).
+ * it. `unit` is the contract's **price denomination** (its `DENOMINATED_IN`;
+ * for most Hyperliquid perpetuals Tether USD, for PURR and HYPE USD Coin).
+ * It is not the margin asset (`MARGINED_IN`) or the asset cash flows are paid
+ * in (`SETTLES_IN`); see the graph. Hyperliquid pays profit and loss and
+ * funding in USDC without converting from the USDT denomination (a quanto
+ * contract).
+ * - `markPrice`, `indexPrice`, `midPrice`, `price24hAgo`: in `unit`.
  * - `indexPrice`: the venue's oracle price (Hyperliquid: a weighted median of
  *   CEX spot prices).
  * - `fundingRate`: a fraction per `fundingIntervalHours` (not annualized).
+ *   A payment is `contracts × indexPrice × fundingRate`, paid in the
+ *   settlement asset.
  * - `openInterest`, `volume24h`: in contracts (units of the subject; see
- *   `subject.contractMultiplier`). `volume24hNotional`: in `unit`. Both
- *   volumes are the venue's trailing 24 hours.
- * - `price24hAgo`: as the venue states it.
+ *   `subject.contractMultiplier`). `volume24hNotional`: contracts × price, in
+ *   `unit`. Both volumes are the venue's trailing 24 hours.
+ * Only contexts normalized under the market's current unit are served.
  * The venue states no time: `asOf` is when Undrly received the context.
  */
 export const DerivativesV1 = z

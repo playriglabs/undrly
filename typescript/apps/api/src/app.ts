@@ -6,7 +6,8 @@
  * GET /v1/resolve?q=             resolved | ambiguous | not_found
  * GET /v1/quote/:query  (?q=)    one canonical QuoteV1
  * GET /v1/quotes/:query (?q=)    the per-feed observations behind it
- * GET /v1/instruments/:id/graph  one hop of edges + listings
+ * GET /v1/explain?q=             why resolve concluded what it did (V1.4)
+ * GET /v1/instruments/:id/graph  one hop of edges + listings (+ deployments, markets)
  * GET /v1/universes              universes with a snapshot (V1.1)
  * GET /v1/universes/:key         one universe's latest membership
  * GET /v1/candles/:query         venue candles (?interval=1h|4h|1d&limit=&start=&end=) (V1.3)
@@ -33,6 +34,7 @@ import {
 } from "./market-data.ts";
 import {
   canonicalQuote,
+  explain,
   feedObservations,
   graph,
   pricedPairs,
@@ -63,6 +65,7 @@ const SERVICE_INDEX = v1.ServiceIndexV1.parse({
     { path: "/v1/quotes/{query}", returns: "the per-source observations behind it" },
     { path: "/v1/search?q=", returns: "matching instruments, currencies and venues" },
     { path: "/v1/resolve?q=", returns: "what a query refers to" },
+    { path: "/v1/explain?q=", returns: "why a query resolves the way it does" },
     { path: "/v1/instruments/{id}/graph", returns: "an instrument's direct relationships" },
     {
       path: "/v1/universes",
@@ -97,6 +100,7 @@ const SERVICE_INDEX = v1.ServiceIndexV1.parse({
     "/v1/quote/BTC-PERP",
     "/v1/quotes/BTC/USD",
     "/v1/search?q=gold",
+    "/v1/explain?q=BTC-PERP",
     "/v1/universes/sp500",
     "/v1/universes/fx-southeast-asia",
     "/v1/candles/BTC/USD?interval=1h&limit=5",
@@ -143,6 +147,14 @@ export function createApp(sql: Sql, options: AppOptions) {
   };
   app.get("/v1/resolve", (c) => resolveRoute((c.req.query("q") ?? "").trim()));
   app.get("/v1/resolve/:query{.+}", (c) => resolveRoute(queryOf(c.req.param("query"), undefined)));
+
+  const explainRoute = async (query: string) => {
+    if (query === "") return fail("bad_request", "missing query parameter q");
+    const body = await explain(sql, query);
+    return body === null ? fail("bad_request", "invalid query") : Response.json(body);
+  };
+  app.get("/v1/explain", (c) => explainRoute((c.req.query("q") ?? "").trim()));
+  app.get("/v1/explain/:query{.+}", (c) => explainRoute(queryOf(c.req.param("query"), undefined)));
 
   /** Resolution → exactly one priced pair, or an error response. */
   const onePair = async (query: string) => {

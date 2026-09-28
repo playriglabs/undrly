@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "query": "BTC-PERP",
+  "parsedAs": "alias",
+  "status": "resolved",
+  "method": "alias",
+  "quotedPairsOnly": false,
+  "candidates": [
+    {
+      "resolution": {
+        "kind": "node",
+        "node": {
+          "id": "undrly:instrument:0000000000e008000000000000",
+          "kind": "instrument",
+          "name": "BTC Perpetual (Hyperliquid)",
+          "class": "perpetual_future"
+        }
+      },
+      "matches": [
+        {
+          "rule": "alias",
+          "side": null,
+          "namespace": "symbol",
+          "value": "BTC-PERP",
+          "venue": null,
+          "source": {
+            "id": "example-source"
+          }
+        }
+      ],
+      "identifiers": [],
+      "relationships": [
+        {
+          "relationshipType": "DERIVES_FROM",
+          "object": {
+            "id": "undrly:instrument:7zzzzzzzzzfzzvzzzzzzzzzzzz",
+            "kind": "instrument",
+            "name": "Bitcoin",
+            "class": "crypto_asset"
+          },
+          "projected": false,
+          "provenance": {
+            "sourceId": "example-source",
+            "receivedAt": "2026-09-24T12:00:00Z"
+          }
+        },
+        {
+          "relationshipType": "SETTLES_IN",
+          "object": {
+            "id": "undrly:instrument:01jagv5gymfsfrmtvwhpf0y6g2",
+            "kind": "instrument",
+            "name": "USD Coin",
+            "class": "crypto_asset"
+          },
+          "projected": false,
+          "provenance": {
+            "sourceId": "example-source",
+            "receivedAt": "2026-09-24T12:00:00Z"
+          }
+        },
+        {
+          "relationshipType": "TRADES_ON",
+          "object": {
+            "id": "undrly:venue:01jagv5gymfsfsmtvwhpf0y6g4",
+            "kind": "venue",
+            "name": "Hyperliquid",
+            "class": null
+          },
+          "projected": false,
+          "provenance": {
+            "sourceId": "example-source",
+            "receivedAt": "2026-09-24T12:00:00Z"
+          }
+        }
+      ],
+      "quoted": null
+    }
+  ]
+}

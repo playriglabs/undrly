@@ -18,6 +18,7 @@ export const INSTRUMENT_CLASSES = [
   "commodity",
   "perpetual_future",
   "fx",
+  "tokenized_security",
 ] as const;
 export type InstrumentClass = (typeof INSTRUMENT_CLASSES)[number];
 
