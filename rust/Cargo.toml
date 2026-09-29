@@ -40,3 +40,10 @@ unsafe_code = "forbid"
 float_arithmetic = "deny"
 float_cmp = "deny"
 lossy_float_literal = "deny"
+
+# Keep target/ small: line tables for our crates, no debuginfo for deps.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
