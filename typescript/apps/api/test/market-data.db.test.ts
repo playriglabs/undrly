@@ -476,9 +476,79 @@ describe.skipIf(url === undefined)("market data with a database", () => {
     expect(await status("2026-11-15T15:00:00Z")).toBe("unknown");
   });
 
-  it("market: a reference rate is not a traded market", async () => {
+  it("market: a reference rate is not traded; its change is since the previous publication", async () => {
     const m = v1.MarketV1.parse((await get("/v1/market/USD/IDR")).body);
-    expect(m).toMatchObject({ marketStatus: null, statistics: null, priceType: "reference" });
+    expect(m).toMatchObject({ marketStatus: null, priceType: "reference" });
+    // JISDOR 17898.00 (24 Sep) → 17917.00 (25 Sep), as published, nothing traded.
+    expect(m.statistics).toMatchObject({
+      window: "previous_publication",
+      from: "2026-09-23T17:00:00Z",
+      to: "2026-09-24T17:00:00Z",
+      previousClose: "17898.00",
+      close: "17917.00",
+      change: "19.00",
+      changePercent: "0.1062",
+      volume: null,
+    });
+  });
+
+  it("markets: every quoted market, paged, each exactly as /v1/market serves it", async () => {
+    const all = v1.MarketsV1.parse((await get("/v1/markets?limit=100")).body);
+    expect(all.classes).toEqual([]);
+    expect(all.query).toBeNull();
+    expect(all.total).toBe(all.counts.reduce((n, c) => n + c.count, 0));
+    expect(all.markets).toHaveLength(all.total);
+
+    const btc = all.markets.find(
+      (m) => m.subject.kind === "instrument" && m.market?.price === "84010",
+    );
+    expect(btc?.market).toEqual(v1.MarketV1.parse((await get("/v1/market/BTC/USD")).body));
+    const hourly = v1.CandlesV1.parse((await get("/v1/candles/BTC/USD?interval=1h&limit=24")).body);
+    expect(btc?.sparkline).toEqual(hourly.candles.map((c) => c.close));
+    // A daily reference series: its last publications, oldest first (V1.9).
+    const idr = all.markets.find((m) => m.market?.priceType === "reference");
+    expect(idr?.sparkline).toEqual(["17800.00", "17803.00", "17898.00", "17917.00"]);
+
+    const page = v1.MarketsV1.parse((await get("/v1/markets?limit=2&offset=1")).body);
+    expect(page.markets).toEqual(all.markets.slice(1, 3));
+    const past = v1.MarketsV1.parse((await get(`/v1/markets?offset=${all.total}`)).body);
+    expect(past.markets).toEqual([]);
+  });
+
+  it("markets: class filters instrument subjects; counts ignore the filter", async () => {
+    const all = v1.MarketsV1.parse((await get("/v1/markets?limit=100")).body);
+    const crypto = v1.MarketsV1.parse((await get("/v1/markets?class=crypto_asset")).body);
+    expect(crypto.counts).toEqual(all.counts);
+    expect(crypto.classes).toEqual(["crypto_asset"]);
+    expect(crypto.total).toBe(all.counts.find((c) => c.class === "crypto_asset")?.count);
+    for (const m of crypto.markets) {
+      expect(m.subject).toMatchObject({ kind: "instrument", class: "crypto_asset" });
+    }
+    const two = v1.MarketsV1.parse((await get("/v1/markets?class=crypto_asset,equity")).body);
+    const count = (cls: string) => all.counts.find((c) => c.class === cls)?.count ?? 0;
+    expect(two.total).toBe(count("crypto_asset") + count("equity"));
+    for (const bad of ["class=stock", "class=fx,stock", "limit=0", "limit=101", "offset=-1"]) {
+      const res = await get(`/v1/markets?${bad}`);
+      expect([res.status, errorCode(res.body)]).toEqual([400, "bad_request"]);
+    }
+  });
+
+  it("markets: q matches names and aliases, case-insensitively, wildcards literal", async () => {
+    const all = v1.MarketsV1.parse((await get("/v1/markets?limit=100")).body);
+    const btc = all.markets.find((m) => m.market?.price === "84010");
+    const name = btc?.subject.name ?? "";
+    const byName = v1.MarketsV1.parse(
+      (await get(`/v1/markets?q=${encodeURIComponent(name.slice(1, 4).toUpperCase())}`)).body,
+    );
+    expect(byName.query).toBe(name.slice(1, 4).toUpperCase());
+    expect(byName.markets.map((m) => m.subject.id)).toContain(btc?.subject.id);
+    expect(byName.total).toBe(byName.markets.length);
+    for (const wildcard of ["%", "_"]) {
+      const none = v1.MarketsV1.parse(
+        (await get(`/v1/markets?q=${encodeURIComponent(wildcard)}`)).body,
+      );
+      expect(none.total).toBe(0);
+    }
   });
 
   it("calendar: sessions, early closes and closed weekdays of a session market", async () => {

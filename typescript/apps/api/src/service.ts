@@ -846,6 +846,9 @@ export async function canonicalQuote(
   );
   const row = rows[0];
   if (row === undefined) return { kind: "none" };
+  if (row.method === "cross-via-stablecoin-v1") {
+    return crossQuote(sql, pair, row, now, staleAfterSeconds);
+  }
   const inputRows = await sql.unsafe<ObservationRow[]>(
     `SELECT ${OBSERVATION_COLUMNS}
      FROM canonical_quote_inputs i
@@ -975,6 +978,67 @@ export async function canonicalQuote(
       ageMs: derived.ageMs,
       freshness: derived.freshness,
       aggregation,
+    }),
+  };
+}
+
+/**
+ * A derived cross (V1.9, `cross-via-stablecoin-v1`): the ratio of two
+ * pairs' canonical quotes, computed by the collector. Its inputs are the
+ * legs' observations (`canonical_quote_legs`); `receivedAt` is the latest of
+ * their receipts. Fresh while `asOf` (the older leg) is within the API's
+ * default window, on the continuous clock: both legs are live venue books.
+ */
+async function crossQuote(
+  sql: Sql,
+  pair: Pair,
+  row: {
+    method: v1.QuoteV1["aggregation"]["method"];
+    price: string;
+    bid: string | null;
+    ask: string | null;
+    price_type: v1.PriceType;
+    eligible: number;
+    as_of: string;
+    computed_at: string;
+  },
+  now: Date,
+  staleAfterSeconds: number,
+): Promise<CanonicalResult> {
+  const receipts = await sql.unsafe<{ received_at: string }[]>(
+    `SELECT ${tsText("o.received_at")} AS received_at
+     FROM canonical_quote_legs l JOIN market_observations o ON o.id = l.observation_id
+     WHERE l.subject_id = $1 AND l.unit_id = $2`,
+    [pair.subject, pair.unit],
+  );
+  const latestReceipt = receipts
+    .map((r) => canonicalTimestamp(r.received_at))
+    .sort((a, b) => Date.parse(a) - Date.parse(b))
+    .at(-1);
+  if (latestReceipt === undefined) return { kind: "none" };
+  const asOf = canonicalTimestamp(row.as_of);
+  const window: Window = { seconds: staleAfterSeconds, clock: "continuous" };
+  return {
+    kind: "quote",
+    quote: v1.QuoteV1.parse({
+      schemaVersion: 1,
+      subject: await subjectOf(sql, pair.subject),
+      unit: await unitOf(sql, pair.unit, pair.unitCategory),
+      priceType: row.price_type,
+      price: row.price,
+      bid: row.bid,
+      ask: row.ask,
+      ...v1.spreadOf(row.price, row.bid, row.ask),
+      basis: "derived",
+      receivedAt: latestReceipt,
+      asOf,
+      ageMs: ageMs(asOf, now),
+      freshness: freshness(asOf, now, window),
+      aggregation: {
+        method: row.method,
+        eligibleObservations: row.eligible,
+        computedAt: canonicalTimestamp(row.computed_at),
+      },
     }),
   };
 }
@@ -1172,6 +1236,11 @@ const UNIVERSE_TEXT: Record<v1.UniverseKey, { name: string; description: string 
     name: "Southeast Asian FX",
     description:
       "Undrly-curated Southeast Asian FX pairs that have a trustworthy direct source: official reference rates (Bank Indonesia, Bank Negara Malaysia, Central Bank of Myanmar, Federal Reserve H.10, ECB), not executable market quotes.",
+  },
+  "fx-global": {
+    name: "Global FX",
+    description:
+      "Undrly-curated FX pairs outside the G10 and Southeast Asia (USD/HKD, USD/AED, USD/BRL, USD/MXN), priced as derived cross rates through stablecoin venue books.",
   },
 };
 

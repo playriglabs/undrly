@@ -18,6 +18,15 @@ use undrly_provider::curated::Universe;
 
 use crate::{NormalizeError, invalid};
 
+/// A declared cross: `subject` in `unit` = `numerator` / `denominator`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Derivation {
+    pub subject: PriceSubject,
+    pub unit: PriceUnit,
+    pub numerator: (PriceSubject, PriceUnit),
+    pub denominator: (PriceSubject, PriceUnit),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedUniverse {
     pub currencies: Vec<(Currency, CurrencyCode)>,
@@ -29,6 +38,8 @@ pub struct NormalizedUniverse {
     pub aliases: Vec<(CanonicalId, DisplayName, AliasKind)>,
     pub quote_feeds: Vec<NormalizedFeed>,
     pub quote_aggregations: Vec<(PriceSubject, PriceUnit, AggregationMethod)>,
+    /// `(subject, unit, numerator, denominator)` of each declared cross (V1.9).
+    pub quote_derivations: Vec<Derivation>,
     pub universes: Vec<NormalizedUniverseSnapshot>,
 }
 
@@ -445,6 +456,57 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         })
         .collect::<Result<Vec<_>, NormalizeError>>()?;
 
+    let subject_of = |field: &'static str, key: &str| -> Result<PriceSubject, NormalizeError> {
+        match lookup(field, key)? {
+            id if id.category() == Category::Instrument => Ok(PriceSubject::Instrument(
+                id.try_into().expect("checked category"),
+            )),
+            id if id.category() == Category::Currency => Ok(PriceSubject::Currency(
+                id.try_into().expect("checked category"),
+            )),
+            _ => Err(invalid(field, "not priceable")),
+        }
+    };
+    let unit_of = |field: &'static str, key: &str| -> Result<PriceUnit, NormalizeError> {
+        match lookup(field, key)? {
+            id if id.category() == Category::Instrument => {
+                Ok(PriceUnit::Asset(id.try_into().expect("checked category")))
+            }
+            id if id.category() == Category::Currency => Ok(PriceUnit::Currency(
+                id.try_into().expect("checked category"),
+            )),
+            _ => Err(invalid(field, "not a unit")),
+        }
+    };
+    let quote_derivations = u
+        .quote_derivations
+        .iter()
+        .map(|d| {
+            if d.method != AggregationMethod::CrossViaStablecoinV1.as_str() {
+                return Err(unsupported("quoteDerivations.method", &d.method));
+            }
+            let subject = subject_of("quoteDerivations.subject", &d.subject)?;
+            let unit = unit_of("quoteDerivations.unit", &d.unit)?;
+            let via = subject_of("quoteDerivations.via", &d.via)?;
+            let base = unit_of("quoteDerivations.base", &d.base)?;
+            if !matches!(via, PriceSubject::Instrument(_)) {
+                return Err(invalid(
+                    "quoteDerivations.via",
+                    "a cross goes through an instrument",
+                ));
+            }
+            if base == unit {
+                return Err(invalid("quoteDerivations.base", "differs from the unit"));
+            }
+            Ok(Derivation {
+                subject,
+                unit,
+                numerator: (via, unit),
+                denominator: (via, base),
+            })
+        })
+        .collect::<Result<Vec<_>, NormalizeError>>()?;
+
     let universes = u
         .universes
         .iter()
@@ -482,6 +544,7 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         aliases,
         quote_feeds,
         quote_aggregations,
+        quote_derivations,
         universes,
     })
 }

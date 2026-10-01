@@ -26,8 +26,9 @@ use undrly_provider::hyperliquid::HyperliquidProvider;
 use undrly_provider::{BarsProvider, Provider, QuoteProvider};
 use undrly_store::market::quote_feeds_of_source;
 use undrly_store::market_data::{
-    BarWrite, insert_perp_context, store_economic_release_dates, store_trading_calendar,
-    upsert_bar, upsert_corporate_action, upsert_earnings,
+    BarWrite, ReferenceWindow, insert_perp_context, insert_reference_window,
+    store_economic_release_dates, store_trading_calendar, upsert_bar, upsert_corporate_action,
+    upsert_earnings,
 };
 use undrly_store::sources::RecordProvenance;
 use undrly_store::{StoreError, Write};
@@ -175,6 +176,46 @@ pub async fn ingest_perp_contexts(
     }
     tx.commit().await?;
     Ok(written)
+}
+
+/// Ingests gold-api's open/high/low/close of `symbol` over its window
+/// (V1.9): the raw record first, then the window for the pair the source's
+/// feed for `symbol` prices (none declared → nothing stored, never guessed).
+pub async fn ingest_reference_window(
+    conn: &mut PgConnection,
+    raw: &RawRecord,
+    symbol: &VenueSymbol,
+) -> Result<Write, IngestError> {
+    let provider = undrly_provider::gold_api::GoldApiProvider::new();
+    let decoded = provider.decode_ohlc(&raw.payload)?;
+    let w = undrly_normalize::gold_api::normalize_window(&decoded)?;
+    let mut tx = conn.begin().await?;
+    let (record, _) = store_raw_record(&mut tx, provider.source_id(), raw).await?;
+    let feed = quote_feeds_of_source(&mut tx, provider.source_id())
+        .await?
+        .into_iter()
+        .find(|f| f.feed.symbol == *symbol);
+    let Some(feed) = feed else {
+        tx.commit().await?;
+        return Ok(Write::Unchanged);
+    };
+    let write = insert_reference_window(
+        &mut tx,
+        &ReferenceWindow {
+            subject: feed.feed.subject,
+            unit: feed.feed.unit,
+            start: w.start,
+            end: w.end,
+            open: w.open,
+            high: w.high,
+            low: w.low,
+            close: w.close,
+        },
+        &record,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(write)
 }
 
 /// Ingests Alpaca's US equity calendar for `venue`, covering

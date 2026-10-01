@@ -1,0 +1,480 @@
+{
+  "dataset": "undrly-stablecoin-fx-spec",
+  "version": 1,
+  "asOf": "2026-10-01T00:00:00Z",
+  "description": "Undrly-authored stablecoin/fiat markets and derived FX crosses (docs/v1.9-live-fx.md). Each market is a stablecoin priced in a fiat currency on venue order books; each derived pair is USD/X = (S/X) / (S/USD) through stablecoin S. Venues were probed on 2026-10-01; books wider than 10 bps at research time are excluded (see `excluded`). `undrly-collect fx build` turns this file into data/reference/stablecoin-fx.json.",
+  "sources": {
+    "kraken": {
+      "venue": "kraken",
+      "priceType": "last",
+      "staleAfterSeconds": 300
+    },
+    "coinbase": {
+      "venue": "coinbase",
+      "priceType": "mid",
+      "staleAfterSeconds": 300
+    },
+    "binance": {
+      "venue": "binance",
+      "priceType": "mid",
+      "staleAfterSeconds": 300
+    },
+    "okx": {
+      "venue": "okx",
+      "priceType": "mid",
+      "staleAfterSeconds": 300
+    },
+    "indodax": {
+      "venue": "indodax",
+      "priceType": "mid",
+      "staleAfterSeconds": 300
+    },
+    "bitkub": {
+      "venue": "bitkub",
+      "priceType": "mid",
+      "staleAfterSeconds": 300
+    },
+    "coins-ph": {
+      "venue": "coins-ph",
+      "priceType": "mid",
+      "staleAfterSeconds": 300
+    },
+    "hashkey": {
+      "venue": "hashkey",
+      "priceType": "mid",
+      "staleAfterSeconds": 300
+    }
+  },
+  "venues": [
+    {
+      "key": "binance",
+      "name": "Binance"
+    },
+    {
+      "key": "okx",
+      "name": "OKX"
+    },
+    {
+      "key": "indodax",
+      "name": "Indodax"
+    },
+    {
+      "key": "bitkub",
+      "name": "Bitkub"
+    },
+    {
+      "key": "coins-ph",
+      "name": "Coins.ph"
+    },
+    {
+      "key": "hashkey",
+      "name": "HashKey Exchange"
+    }
+  ],
+  "assets": [
+    {
+      "code": "USDT",
+      "instrument": "usdt"
+    },
+    {
+      "code": "USDC",
+      "instrument": "usdc"
+    },
+    {
+      "code": "EURC",
+      "name": "EURC"
+    }
+  ],
+  "markets": [
+    {
+      "asset": "USDT",
+      "unit": "USD",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDTZUSD"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDT-USD"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "USD",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDCUSD"
+        }
+      ]
+    },
+    {
+      "asset": "EURC",
+      "unit": "USD",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "EURCUSD"
+        }
+      ]
+    },
+    {
+      "asset": "EURC",
+      "unit": "EUR",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "EURCEUR"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "EUR",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDTEUR"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDT-EUR"
+        },
+        {
+          "source": "okx",
+          "symbol": "USDT-EUR"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "EUR",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDCEUR"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDC-EUR"
+        },
+        {
+          "source": "okx",
+          "symbol": "USDC-EUR"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "GBP",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDTGBP"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDT-GBP"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "GBP",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDCGBP"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDC-GBP"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "AUD",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDTAUD"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "AUD",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDCAUD"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDC-AUD"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "CAD",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDTCAD"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "CAD",
+      "feeds": [
+        {
+          "source": "kraken",
+          "symbol": "USDCCAD"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDC-CAD"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "IDR",
+      "feeds": [
+        {
+          "source": "binance",
+          "symbol": "USDTIDR"
+        },
+        {
+          "source": "indodax",
+          "symbol": "usdtidr"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "IDR",
+      "feeds": [
+        {
+          "source": "binance",
+          "symbol": "USDCIDR"
+        },
+        {
+          "source": "indodax",
+          "symbol": "usdcidr"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "THB",
+      "feeds": [
+        {
+          "source": "bitkub",
+          "symbol": "USDT_THB"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "THB",
+      "feeds": [
+        {
+          "source": "bitkub",
+          "symbol": "USDC_THB"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "PHP",
+      "feeds": [
+        {
+          "source": "coins-ph",
+          "symbol": "USDTPHP"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "PHP",
+      "feeds": [
+        {
+          "source": "coins-ph",
+          "symbol": "USDCPHP"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "SGD",
+      "feeds": [
+        {
+          "source": "okx",
+          "symbol": "USDT-SGD"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "SGD",
+      "feeds": [
+        {
+          "source": "okx",
+          "symbol": "USDC-SGD"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDC-SGD"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "HKD",
+      "feeds": [
+        {
+          "source": "hashkey",
+          "symbol": "USDTHKD"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "AED",
+      "feeds": [
+        {
+          "source": "binance",
+          "symbol": "USDTAED"
+        },
+        {
+          "source": "okx",
+          "symbol": "USDT-AED"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "BRL",
+      "feeds": [
+        {
+          "source": "binance",
+          "symbol": "USDTBRL"
+        },
+        {
+          "source": "okx",
+          "symbol": "USDT-BRL"
+        }
+      ]
+    },
+    {
+      "asset": "USDC",
+      "unit": "BRL",
+      "feeds": [
+        {
+          "source": "binance",
+          "symbol": "USDCBRL"
+        },
+        {
+          "source": "okx",
+          "symbol": "USDC-BRL"
+        },
+        {
+          "source": "coinbase",
+          "symbol": "USDC-BRL"
+        }
+      ]
+    },
+    {
+      "asset": "USDT",
+      "unit": "MXN",
+      "feeds": [
+        {
+          "source": "binance",
+          "symbol": "USDTMXN"
+        }
+      ]
+    }
+  ],
+  "derived": [
+    {
+      "pair": "USD/IDR",
+      "via": "USDT"
+    },
+    {
+      "pair": "USD/THB",
+      "via": "USDT"
+    },
+    {
+      "pair": "USD/PHP",
+      "via": "USDT"
+    },
+    {
+      "pair": "USD/SGD",
+      "via": "USDT"
+    },
+    {
+      "pair": "USD/HKD",
+      "via": "USDT"
+    },
+    {
+      "pair": "USD/AED",
+      "via": "USDT"
+    },
+    {
+      "pair": "USD/BRL",
+      "via": "USDT"
+    },
+    {
+      "pair": "USD/MXN",
+      "via": "USDT"
+    }
+  ],
+  "excluded": [
+    {
+      "source": "kraken",
+      "symbol": "USDTJPY",
+      "reason": "spread 134 bps at research (2026-10-01); USD/JPY stays a Federal Reserve H.10 reference rate"
+    },
+    {
+      "source": "binance",
+      "symbol": "USDCMXN",
+      "reason": "spread 15 bps at research (2026-10-01)"
+    },
+    {
+      "source": "okx",
+      "symbol": "USDG-SGD",
+      "reason": "spread 20 bps at research (2026-10-01), 24h volume under 40k SGD"
+    },
+    {
+      "source": "okx",
+      "symbol": "USDG-BRL",
+      "reason": "spread 16 bps at research (2026-10-01)"
+    },
+    {
+      "source": "okx",
+      "symbol": "USDG-EUR",
+      "reason": "spread 27 bps at research (2026-10-01)"
+    },
+    {
+      "source": "okx",
+      "symbol": "USDT-AUD",
+      "reason": "spread 34 bps at research (2026-10-01)"
+    },
+    {
+      "source": "okx",
+      "symbol": "USDC-AUD",
+      "reason": "spread 100 bps at research (2026-10-01)"
+    },
+    {
+      "source": "coins-ph",
+      "symbol": "PYUSDPHP",
+      "reason": "listed but not served by the book ticker (`Not supported symbols`, 2026-10-01)"
+    }
+  ]
+}

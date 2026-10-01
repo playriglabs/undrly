@@ -24,6 +24,7 @@ pub mod kraken;
 pub mod market_data;
 pub mod onchain;
 pub mod sec;
+pub mod venues;
 pub mod worldbank;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

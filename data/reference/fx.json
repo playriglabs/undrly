@@ -98,6 +98,42 @@
       "id": "undrly:currency:01m3dwmvs4enjbmdf3q7dn32g5",
       "name": "Myanmar Kyat",
       "iso4217": "MMK"
+    },
+    {
+      "key": "iso4217:HKD",
+      "id": "undrly:currency:01m3v1p9cred6t929yk7a8v8vr",
+      "name": "Hong Kong Dollar",
+      "iso4217": "HKD"
+    },
+    {
+      "key": "iso4217:AED",
+      "id": "undrly:currency:01m3v1p9csevt8ky607k1wh585",
+      "name": "UAE Dirham",
+      "iso4217": "AED"
+    },
+    {
+      "key": "iso4217:BRL",
+      "id": "undrly:currency:01m3v1p9csevt8ky607qpthakc",
+      "name": "Brazilian Real",
+      "iso4217": "BRL"
+    },
+    {
+      "key": "iso4217:MXN",
+      "id": "undrly:currency:01m3v1p9csevt8ky607r5s1emr",
+      "name": "Mexican Peso",
+      "iso4217": "MXN"
+    },
+    {
+      "key": "iso4217:CNY",
+      "id": "undrly:currency:01m3v1p9csevt8ky607z4wb7jg",
+      "name": "Chinese Yuan Renminbi",
+      "iso4217": "CNY"
+    },
+    {
+      "key": "iso4217:SAR",
+      "id": "undrly:currency:01m3v1p9csevt8ky6080p3gx82",
+      "name": "Saudi Riyal",
+      "iso4217": "SAR"
     }
   ],
   "entities": [],
@@ -396,6 +432,46 @@
       "name": "EUR/SGD",
       "base": "undrly:currency:01m3bbjhmvew7s0k69t2htpdf2",
       "quote": "iso4217:SGD"
+    },
+    {
+      "key": "fx:USD/PHP",
+      "id": "undrly:instrument:01m3v1p9csevt8ky6085zk25zq",
+      "class": "fx",
+      "name": "USD/PHP",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:PHP"
+    },
+    {
+      "key": "fx:USD/HKD",
+      "id": "undrly:instrument:01m3v1p9csevt8ky608bw0djmp",
+      "class": "fx",
+      "name": "USD/HKD",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:HKD"
+    },
+    {
+      "key": "fx:USD/AED",
+      "id": "undrly:instrument:01m3v1p9csevt8ky608dvq8843",
+      "class": "fx",
+      "name": "USD/AED",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:AED"
+    },
+    {
+      "key": "fx:USD/BRL",
+      "id": "undrly:instrument:01m3v1p9csevt8ky608j3pcxkn",
+      "class": "fx",
+      "name": "USD/BRL",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:BRL"
+    },
+    {
+      "key": "fx:USD/MXN",
+      "id": "undrly:instrument:01m3v1p9csevt8ky608m8r2289",
+      "class": "fx",
+      "name": "USD/MXN",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:MXN"
     }
   ],
   "listings": [],
@@ -542,6 +618,16 @@
       "kind": "symbol"
     },
     {
+      "node": "fx:USD/AED",
+      "alias": "USDAED",
+      "kind": "symbol"
+    },
+    {
+      "node": "fx:USD/BRL",
+      "alias": "USDBRL",
+      "kind": "symbol"
+    },
+    {
       "node": "fx:USD/CAD",
       "alias": "USDCAD",
       "kind": "symbol"
@@ -549,6 +635,11 @@
     {
       "node": "fx:USD/CHF",
       "alias": "USDCHF",
+      "kind": "symbol"
+    },
+    {
+      "node": "fx:USD/HKD",
+      "alias": "USDHKD",
       "kind": "symbol"
     },
     {
@@ -567,8 +658,18 @@
       "kind": "symbol"
     },
     {
+      "node": "fx:USD/MXN",
+      "alias": "USDMXN",
+      "kind": "symbol"
+    },
+    {
       "node": "fx:USD/MYR",
       "alias": "USDMYR",
+      "kind": "symbol"
+    },
+    {
+      "node": "fx:USD/PHP",
+      "alias": "USDPHP",
       "kind": "symbol"
     },
     {
@@ -582,6 +683,11 @@
       "kind": "symbol"
     },
     {
+      "node": "iso4217:AED",
+      "alias": "UAE Dirham",
+      "kind": "name"
+    },
+    {
       "node": "iso4217:AUD",
       "alias": "Australian Dollar",
       "kind": "name"
@@ -589,6 +695,11 @@
     {
       "node": "iso4217:BND",
       "alias": "Brunei Dollar",
+      "kind": "name"
+    },
+    {
+      "node": "iso4217:BRL",
+      "alias": "Brazilian Real",
       "kind": "name"
     },
     {
@@ -602,8 +713,18 @@
       "kind": "name"
     },
     {
+      "node": "iso4217:CNY",
+      "alias": "Chinese Yuan Renminbi",
+      "kind": "name"
+    },
+    {
       "node": "iso4217:GBP",
       "alias": "Pound Sterling",
+      "kind": "name"
+    },
+    {
+      "node": "iso4217:HKD",
+      "alias": "Hong Kong Dollar",
       "kind": "name"
     },
     {
@@ -632,6 +753,11 @@
       "kind": "name"
     },
     {
+      "node": "iso4217:MXN",
+      "alias": "Mexican Peso",
+      "kind": "name"
+    },
+    {
       "node": "iso4217:MYR",
       "alias": "Malaysian Ringgit",
       "kind": "name"
@@ -644,6 +770,11 @@
     {
       "node": "iso4217:PHP",
       "alias": "Philippine Peso",
+      "kind": "name"
+    },
+    {
+      "node": "iso4217:SAR",
+      "alias": "Saudi Riyal",
       "kind": "name"
     },
     {
@@ -988,8 +1119,8 @@
       "key": "fx-major",
       "source": "undrly-curated",
       "recordKey": "data/reference/fx-spec.json",
-      "sha256": "6d51310cb858af1573bd32092a7dc826d5f8b8b04fe0fc2fbdf34db7fadeab10",
-      "asOf": "2026-09-26T00:00:00Z",
+      "sha256": "d4b72fe701bf07ce1b9a22c42a7cb13eff26819bfed4b0aa3193391779195cc2",
+      "asOf": "2026-10-01T00:00:00Z",
       "members": [
         {
           "node": "undrly:instrument:01m3dwesswf9ftnteyjtfkfm84",
@@ -1113,8 +1244,8 @@
       "key": "fx-southeast-asia",
       "source": "undrly-curated",
       "recordKey": "data/reference/fx-spec.json",
-      "sha256": "6d51310cb858af1573bd32092a7dc826d5f8b8b04fe0fc2fbdf34db7fadeab10",
-      "asOf": "2026-09-26T00:00:00Z",
+      "sha256": "d4b72fe701bf07ce1b9a22c42a7cb13eff26819bfed4b0aa3193391779195cc2",
+      "asOf": "2026-10-01T00:00:00Z",
       "members": [
         {
           "node": "fx:USD/SGD",
@@ -1151,6 +1282,35 @@
         {
           "node": "fx:EUR/SGD",
           "sourceSymbol": "EUR/SGD"
+        },
+        {
+          "node": "fx:USD/PHP",
+          "sourceSymbol": "USD/PHP"
+        }
+      ]
+    },
+    {
+      "key": "fx-global",
+      "source": "undrly-curated",
+      "recordKey": "data/reference/fx-spec.json",
+      "sha256": "d4b72fe701bf07ce1b9a22c42a7cb13eff26819bfed4b0aa3193391779195cc2",
+      "asOf": "2026-10-01T00:00:00Z",
+      "members": [
+        {
+          "node": "fx:USD/HKD",
+          "sourceSymbol": "USD/HKD"
+        },
+        {
+          "node": "fx:USD/AED",
+          "sourceSymbol": "USD/AED"
+        },
+        {
+          "node": "fx:USD/BRL",
+          "sourceSymbol": "USD/BRL"
+        },
+        {
+          "node": "fx:USD/MXN",
+          "sourceSymbol": "USD/MXN"
         }
       ]
     }

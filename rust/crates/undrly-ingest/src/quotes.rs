@@ -14,16 +14,17 @@
 
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
-    AggregationMethod, MarketObservation, ObservationError, PriceSubject, PriceType, PriceUnit,
-    Timestamp, VenueSymbol, aggregate, invert_quote,
+    AggregationMethod, CrossLeg, MarketObservation, ObservationError, PriceSubject, PriceType,
+    PriceUnit, Timestamp, VenueSymbol, aggregate, cross_quote, invert_quote,
 };
 use undrly_normalize::{HistoryNormalizer, NormalizeError, NormalizedQuote, QuoteNormalizer};
 use undrly_provider::QuoteProvider;
 use undrly_store::Write;
 use undrly_store::market::{
     ObservationId, QuoteFeedId, StoredCanonicalQuote, aggregation_method_of,
-    delete_canonical_quote, insert_observation_with, latest_observations, quote_feeds_of_source,
-    upsert_canonical_quote,
+    delete_canonical_quote, derivation_of, derivations_with_leg, get_canonical_quote,
+    insert_observation_with, latest_observations, quote_feeds_of_source, upsert_canonical_quote,
+    upsert_cross_quote,
 };
 use undrly_store::sources::SourceRecordId;
 
@@ -221,7 +222,16 @@ pub async fn refresh_canonical_quotes(
     computed_at: Timestamp,
 ) -> Result<Vec<CanonicalRefresh>, IngestError> {
     let mut out = Vec::new();
+    // A pair declared as a cross is priced by its legs, never by its own
+    // observations (a reference rate it also has stays stored, unused).
+    let mut crosses: Vec<(PriceSubject, PriceUnit)> = Vec::new();
     for &(subject, unit) in pairs {
+        if derivation_of(conn, subject, unit).await?.is_some() {
+            if !crosses.contains(&(subject, unit)) {
+                crosses.push((subject, unit));
+            }
+            continue;
+        }
         let mut tx = conn.begin().await?;
         let method = aggregation_method_of(&mut tx, subject, unit).await?;
         let candidates = latest_observations(&mut tx, subject, unit).await?;
@@ -255,6 +265,87 @@ pub async fn refresh_canonical_quotes(
             subject,
             unit,
             method,
+            inputs,
+            write,
+        });
+    }
+    // Crosses with a refreshed pair as a leg (V1.9), each once.
+    for &(subject, unit) in pairs {
+        for d in derivations_with_leg(conn, subject, unit).await? {
+            if !crosses.contains(&(d.subject, d.unit)) {
+                crosses.push((d.subject, d.unit));
+            }
+        }
+    }
+    out.extend(refresh_cross_quotes(conn, &crosses, computed_at).await?);
+    Ok(out)
+}
+
+/// Recomputes each declared cross from its legs' current canonical quotes
+/// ([`cross_quote`]), or removes it when a leg has none or is not
+/// venue-based. Each cross is its own transaction.
+pub async fn refresh_cross_quotes(
+    conn: &mut PgConnection,
+    pairs: &[(PriceSubject, PriceUnit)],
+    computed_at: Timestamp,
+) -> Result<Vec<CanonicalRefresh>, IngestError> {
+    let mut out = Vec::new();
+    for &(subject, unit) in pairs {
+        let mut tx = conn.begin().await?;
+        let Some(d) = derivation_of(&mut tx, subject, unit).await? else {
+            tx.commit().await?;
+            continue;
+        };
+        let leg = |q: StoredCanonicalQuote| CrossLeg {
+            price: q.price,
+            bid_ask: q.bid_ask,
+            basis: q.basis,
+            as_of: q.as_of,
+            inputs: q.inputs,
+        };
+        let numerator = get_canonical_quote(&mut tx, d.numerator.0, d.numerator.1).await?;
+        let denominator = get_canonical_quote(&mut tx, d.denominator.0, d.denominator.1).await?;
+        // Each input's leg pair, for `canonical_quote_legs`.
+        let mut legs: Vec<(ObservationId, PriceSubject, PriceUnit)> = Vec::new();
+        for (q, (s, u)) in [(&numerator, d.numerator), (&denominator, d.denominator)] {
+            if let Some(q) = q {
+                legs.extend(q.inputs.iter().map(|(o, _)| (*o, s, u)));
+            }
+        }
+        let cross = match (numerator, denominator) {
+            (Some(n), Some(den)) => cross_quote(&leg(n), &leg(den)),
+            _ => None,
+        };
+        let (inputs, write) = match cross {
+            Some(a) => {
+                let quote = StoredCanonicalQuote {
+                    subject,
+                    unit,
+                    method: a.method,
+                    price: a.price,
+                    price_type: a.price_type,
+                    basis: a.basis,
+                    bid_ask: a.bid_ask,
+                    as_of: a.as_of,
+                    computed_at,
+                    inputs: a.inputs,
+                };
+                let write = upsert_cross_quote(&mut tx, &quote, &legs).await?;
+                (
+                    quote.inputs.iter().map(|(id, _)| *id).collect(),
+                    Some(write),
+                )
+            }
+            None => {
+                delete_canonical_quote(&mut tx, subject, unit).await?;
+                (Vec::new(), None)
+            }
+        };
+        tx.commit().await?;
+        out.push(CanonicalRefresh {
+            subject,
+            unit,
+            method: AggregationMethod::CrossViaStablecoinV1,
             inputs,
             write,
         });

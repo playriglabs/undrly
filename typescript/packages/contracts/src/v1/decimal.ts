@@ -121,3 +121,34 @@ export function changeOf(
   if (percent === null) return null;
   return { absolute: formatDecimal(absolute), percent: formatDecimal(percent) };
 }
+
+/** Significant digits as stated, trailing zeros included (`2100.00` → 6). */
+function significantDigits(d: Decimal): number {
+  const m = d.mantissa < 0n ? -d.mantissa : d.mantissa;
+  return m === 0n ? 1 : m.toString().length;
+}
+
+/**
+ * `numerator / denominator`, rounded half to even to the fewer significant
+ * digits of the two, from the exact rational (one rounding): a ratio cannot
+ * be more precise than its inputs. Mirrors `undrly_core::quote::cross_rate`
+ * (V1.9 derived FX). `null` unless both are positive decimals.
+ */
+export function crossRate(numerator: string, denominator: string): string | null {
+  const [n, d] = [parseDecimal(numerator), parseDecimal(denominator)];
+  if (n === null || d === null || n.mantissa <= 0n || d.mantissa <= 0n) return null;
+  const digits = Math.min(significantDigits(n), significantDigits(d));
+  // Integer digits of the quotient: the largest e with 10^(e-1) <= n/d.
+  const num = n.mantissa * 10n ** BigInt(d.scale);
+  const den = d.mantissa * 10n ** BigInt(n.scale);
+  let e = 0;
+  while (num >= den * 10n ** BigInt(e)) e++;
+  if (e === 0) {
+    // Below 1: count the leading zeros after the point.
+    let z = 0;
+    while (num * 10n ** BigInt(z + 1) < den) z++;
+    e = -z;
+  }
+  const q = divide(n, d, Math.max(0, digits - e));
+  return q === null ? null : formatDecimal(q);
+}

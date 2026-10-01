@@ -5,8 +5,8 @@ use sqlx::types::Uuid;
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
     AggregationMethod, BidAsk, Decimal, FreshnessClock, MarketObservation, ObservationBasis,
-    PriceSubject, PriceType, PriceUnit, QuoteAggregation, QuoteFeed, SourceId, Timestamp,
-    VenueSymbol,
+    PriceSubject, PriceType, PriceUnit, QuoteAggregation, QuoteDerivation, QuoteFeed, SourceId,
+    Timestamp, VenueSymbol,
 };
 
 use crate::Write;
@@ -609,8 +609,13 @@ pub async fn get_canonical_quote(
         return Ok(None);
     };
     let inputs: Vec<(i64, String)> = sqlx::query_as(
+        // A cross's inputs are its legs' observations (V1.9).
         "SELECT observation_id, input_price::text FROM canonical_quote_inputs
-         WHERE subject_id = $1 AND unit_id = $2 ORDER BY observation_id",
+         WHERE subject_id = $1 AND unit_id = $2
+         UNION ALL
+         SELECT observation_id, input_price::text FROM canonical_quote_legs
+         WHERE subject_id = $1 AND unit_id = $2
+         ORDER BY 1",
     )
     .bind(subject.canonical().uuid())
     .bind(unit.canonical().uuid())
@@ -638,4 +643,219 @@ pub async fn get_canonical_quote(
             .map(|(id, p)| Ok((ObservationId(id), decimal_from_sql(&p)?)))
             .collect::<Result<_, StoreError>>()?,
     }))
+}
+
+// --- derived quotes (V1.9) -------------------------------------------------------
+
+/// Declares a pair as a cross of two other pairs, asserted by
+/// `source_record`. The same declaration again is [`Write::Unchanged`]; a
+/// different one for the pair is an error (never overwritten).
+pub async fn insert_quote_derivation(
+    conn: &mut PgConnection,
+    d: &QuoteDerivation,
+    source_record: SourceRecordId,
+) -> Result<Write, StoreError> {
+    let (subject, subject_category) = subject_sql(d.subject);
+    let (unit, unit_category) = unit_sql(d.unit);
+    let (ns, ns_c) = subject_sql(d.numerator.0);
+    let (nu, nu_c) = unit_sql(d.numerator.1);
+    let (ds, ds_c) = subject_sql(d.denominator.0);
+    let (du, du_c) = unit_sql(d.denominator.1);
+    let inserted = sqlx::query(
+        "INSERT INTO quote_derivations
+           (subject_id, subject_category, unit_id, unit_category, method,
+            numerator_subject_id, numerator_subject_category, numerator_unit_id,
+            numerator_unit_category, denominator_subject_id, denominator_subject_category,
+            denominator_unit_id, denominator_unit_category, source_id, received_at,
+            source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         ON CONFLICT (subject_id, unit_id) DO NOTHING",
+    )
+    .bind(subject)
+    .bind(subject_category)
+    .bind(unit)
+    .bind(unit_category)
+    .bind(AggregationMethod::CrossViaStablecoinV1.as_str())
+    .bind(ns)
+    .bind(ns_c)
+    .bind(nu)
+    .bind(nu_c)
+    .bind(ds)
+    .bind(ds_c)
+    .bind(du)
+    .bind(du_c)
+    .bind(d.provenance.source_id.as_str())
+    .bind(d.provenance.received_at.as_datetime())
+    .bind(source_record.0)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected()
+        == 1;
+    if inserted {
+        return Ok(Write::Inserted);
+    }
+    let same = derivation_of(conn, d.subject, d.unit)
+        .await?
+        .is_some_and(|x| x.numerator == d.numerator && x.denominator == d.denominator);
+    if same {
+        Ok(Write::Unchanged)
+    } else {
+        Err(StoreError::ExistingRecordDiffers {
+            what: "quote derivation",
+            key: format!("{} in {}", d.subject.canonical(), d.unit.canonical()),
+        })
+    }
+}
+
+/// A declared cross, without provenance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredDerivation {
+    pub subject: PriceSubject,
+    pub unit: PriceUnit,
+    pub numerator: (PriceSubject, PriceUnit),
+    pub denominator: (PriceSubject, PriceUnit),
+}
+
+type DerivationRow = (
+    Uuid,
+    String,
+    Uuid,
+    String,
+    Uuid,
+    String,
+    Uuid,
+    String,
+    Uuid,
+    String,
+    Uuid,
+    String,
+);
+
+const DERIVATION_SELECT: &str = "SELECT subject_id, subject_category, unit_id, unit_category,
+    numerator_subject_id, numerator_subject_category, numerator_unit_id, numerator_unit_category,
+    denominator_subject_id, denominator_subject_category, denominator_unit_id,
+    denominator_unit_category FROM quote_derivations";
+
+fn derivation_from_row(r: DerivationRow) -> Result<StoredDerivation, StoreError> {
+    Ok(StoredDerivation {
+        subject: price_subject_from_sql(r.0, &r.1)?,
+        unit: price_unit_from_sql(r.2, &r.3)?,
+        numerator: (
+            price_subject_from_sql(r.4, &r.5)?,
+            price_unit_from_sql(r.6, &r.7)?,
+        ),
+        denominator: (
+            price_subject_from_sql(r.8, &r.9)?,
+            price_unit_from_sql(r.10, &r.11)?,
+        ),
+    })
+}
+
+/// The cross declared for a pair, if any.
+pub async fn derivation_of(
+    conn: &mut PgConnection,
+    subject: PriceSubject,
+    unit: PriceUnit,
+) -> Result<Option<StoredDerivation>, StoreError> {
+    let row: Option<DerivationRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{DERIVATION_SELECT} WHERE subject_id = $1 AND unit_id = $2"
+    )))
+    .bind(subject.canonical().uuid())
+    .bind(unit.canonical().uuid())
+    .fetch_optional(conn)
+    .await?;
+    row.map(derivation_from_row).transpose()
+}
+
+/// The crosses with `subject` in `unit` as a leg, in key order.
+pub async fn derivations_with_leg(
+    conn: &mut PgConnection,
+    subject: PriceSubject,
+    unit: PriceUnit,
+) -> Result<Vec<StoredDerivation>, StoreError> {
+    let rows: Vec<DerivationRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{DERIVATION_SELECT}
+         WHERE (numerator_subject_id = $1 AND numerator_unit_id = $2)
+            OR (denominator_subject_id = $1 AND denominator_unit_id = $2)
+         ORDER BY subject_id, unit_id"
+    )))
+    .bind(subject.canonical().uuid())
+    .bind(unit.canonical().uuid())
+    .fetch_all(conn)
+    .await?;
+    rows.into_iter().map(derivation_from_row).collect()
+}
+
+/// Writes a cross's canonical quote and its legs' observations
+/// (`canonical_quote_legs`), in one transaction. `legs` gives, for each
+/// input, the leg pair whose observation it is. Recomputing the same result
+/// is [`Write::Unchanged`].
+pub async fn upsert_cross_quote(
+    conn: &mut PgConnection,
+    quote: &StoredCanonicalQuote,
+    legs: &[(ObservationId, PriceSubject, PriceUnit)],
+) -> Result<Write, StoreError> {
+    if quote.method != AggregationMethod::CrossViaStablecoinV1 {
+        return Err(corrupt("cross quote", quote.method.as_str()));
+    }
+    if quote.inputs.is_empty() {
+        return Err(corrupt("cross quote", "a cross needs its legs' inputs"));
+    }
+    let mut tx = conn.begin().await?;
+    if let Some(existing) = get_canonical_quote(&mut tx, quote.subject, quote.unit).await?
+        && existing.same_result(quote)
+    {
+        tx.commit().await?;
+        return Ok(Write::Unchanged);
+    }
+    let (subject, subject_category) = subject_sql(quote.subject);
+    let (unit, unit_category) = unit_sql(quote.unit);
+    sqlx::query("DELETE FROM canonical_quotes WHERE subject_id = $1 AND unit_id = $2")
+        .bind(subject)
+        .bind(unit)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO canonical_quotes
+           (subject_id, subject_category, unit_id, unit_category, method, price, price_type,
+            basis, venue_id, as_of, eligible_count, computed_at, bid, ask)
+         VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8, NULL, $9, $10, $11,
+                 $12::numeric, $13::numeric)",
+    )
+    .bind(subject)
+    .bind(subject_category)
+    .bind(unit)
+    .bind(unit_category)
+    .bind(quote.method.as_str())
+    .bind(decimal_to_sql(quote.price))
+    .bind(quote.price_type.as_str())
+    .bind(quote.basis.as_str())
+    .bind(quote.as_of.as_datetime())
+    .bind(i32::try_from(quote.inputs.len()).unwrap_or(i32::MAX))
+    .bind(quote.computed_at.as_datetime())
+    .bind(quote.bid_ask.map(|ba| decimal_to_sql(ba.bid)))
+    .bind(quote.bid_ask.map(|ba| decimal_to_sql(ba.ask)))
+    .execute(&mut *tx)
+    .await?;
+    for (observation, input_price) in &quote.inputs {
+        let (_, leg_subject, leg_unit) = legs
+            .iter()
+            .find(|(o, _, _)| o == observation)
+            .ok_or_else(|| corrupt("cross quote", "an input without its leg"))?;
+        sqlx::query(
+            "INSERT INTO canonical_quote_legs
+               (subject_id, unit_id, observation_id, leg_subject_id, leg_unit_id, input_price)
+             VALUES ($1, $2, $3, $4, $5, $6::numeric)",
+        )
+        .bind(subject)
+        .bind(unit)
+        .bind(observation.0)
+        .bind(leg_subject.canonical().uuid())
+        .bind(leg_unit.canonical().uuid())
+        .bind(decimal_to_sql(*input_price))
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Write::Inserted)
 }

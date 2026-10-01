@@ -36,7 +36,7 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         .map(|m| (m.version, true))
         .collect();
     assert_eq!(applied, expected);
-    assert_eq!(applied.len(), 22);
+    assert_eq!(applied.len(), 25);
 
     // Re-running is a no-op.
     undrly_store::MIGRATOR.run(&db.pool).await.unwrap();
@@ -83,6 +83,9 @@ async fn migrations_apply_to_empty_database_and_are_idempotent() {
         "earnings_events",
         "chains",
         "deployments",
+        "quote_derivations",
+        "canonical_quote_legs",
+        "reference_windows",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -319,9 +322,17 @@ async fn check_constraint_vocabularies_equal_core() {
         (
             "quote_aggregations",
             "quote_aggregations_method_check",
+            // A cross is declared with its legs in `quote_derivations`, never here.
             AggregationMethod::ALL
+                .into_iter()
+                .filter(|m| *m != AggregationMethod::CrossViaStablecoinV1)
                 .map(AggregationMethod::as_str)
-                .to_vec(),
+                .collect(),
+        ),
+        (
+            "quote_derivations",
+            "quote_derivations_method_check",
+            vec![AggregationMethod::CrossViaStablecoinV1.as_str()],
         ),
     ] {
         let def: String = sqlx::query_scalar(

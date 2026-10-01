@@ -8,6 +8,7 @@ import { ageMs, policyElapsedMs } from "./market.ts";
 import { canonicalTimestamp } from "./query.ts";
 import {
   type CanonicalResult,
+  canonicalQuote,
   type Pair,
   type Sql,
   subjectOf,
@@ -69,6 +70,77 @@ async function bars(
     [pair.subject, pair.unit, interval, from.source, from.venue, start, end, limit],
   );
   return rows.reverse();
+}
+
+/** The legs of a derived cross (V1.9), or `null` for any other pair. */
+export async function crossLegs(
+  sql: Sql,
+  pair: Pair,
+): Promise<{ numerator: Pair; denominator: Pair } | null> {
+  const rows = await sql<
+    { ns: string; nu: string; nuc: string; ds: string; du: string; duc: string }[]
+  >`
+    SELECT numerator_subject_id::text AS ns, numerator_unit_id::text AS nu,
+           numerator_unit_category AS nuc, denominator_subject_id::text AS ds,
+           denominator_unit_id::text AS du, denominator_unit_category AS duc
+    FROM quote_derivations WHERE subject_id = ${pair.subject} AND unit_id = ${pair.unit}`;
+  const r = rows[0];
+  if (r === undefined) return null;
+  return {
+    numerator: { subject: r.ns, unit: r.nu, unitCategory: r.nuc },
+    denominator: { subject: r.ds, unit: r.du, unitCategory: r.duc },
+  };
+}
+
+/** One bar time of a cross: the ratio of its legs' closes. */
+export type CrossClose = {
+  openTime: string;
+  closeTime: string;
+  close: string;
+  complete: boolean;
+  receivedAt: string;
+};
+
+/**
+ * A derived cross's closes at the bar times both legs have (newest `limit`
+ * of each leg, within bounds), oldest first: `crossRate(numerator close,
+ * denominator close)`. Empty when a leg has no bars; `null` for a pair that
+ * is not a cross.
+ */
+export async function crossCloses(
+  sql: Sql,
+  pair: Pair,
+  interval: "1h" | "1d",
+  b: Bounds,
+): Promise<CrossClose[] | null> {
+  const legs = await crossLegs(sql, pair);
+  if (legs === null) return null;
+  const [nFrom, dFrom] = await Promise.all([
+    barSource(sql, legs.numerator, interval),
+    barSource(sql, legs.denominator, interval),
+  ]);
+  if (nFrom === null || dFrom === null) return [];
+  const [nBars, dBars] = await Promise.all([
+    bars(sql, legs.numerator, interval, nFrom, b.limit, b.start, b.end),
+    bars(sql, legs.denominator, interval, dFrom, b.limit, b.start, b.end),
+  ]);
+  const byOpen = new Map(dBars.map((d) => [ms(d.open_time), d]));
+  const out: CrossClose[] = [];
+  for (const n of nBars) {
+    const d = byOpen.get(ms(n.open_time));
+    const close = d === undefined ? null : v1.crossRate(n.close, d.close);
+    if (d === undefined || close === null) continue;
+    out.push({
+      openTime: canonicalTimestamp(n.open_time),
+      closeTime: canonicalTimestamp(n.close_time),
+      close,
+      complete: n.complete && d.complete,
+      receivedAt: canonicalTimestamp(
+        ms(n.received_at) >= ms(d.received_at) ? n.received_at : d.received_at,
+      ),
+    });
+  }
+  return out;
 }
 
 const dec = (s: string) => v1.parseDecimal(s) as v1.Decimal;
@@ -162,11 +234,43 @@ export async function candles(
  * `HistoryV1`: the published values of the feed behind the pair's current
  * canonical quote, when that quote is a reference or average series.
  */
-export async function history(sql: Sql, pair: Pair, b: Bounds): Promise<v1.HistoryV1 | NoData> {
+export async function history(
+  sql: Sql,
+  pair: Pair,
+  b: Bounds,
+  opts: { series: "default" | "reference"; interval: "1h" | "1d" } = {
+    series: "default",
+    interval: "1d",
+  },
+): Promise<v1.HistoryV1 | NoData> {
+  // A derived cross: its legs' bar closes, unless the reference feed is asked for.
+  if (opts.series === "default") {
+    const closes = await crossCloses(sql, pair, opts.interval, b);
+    if (closes !== null) {
+      if (closes.length === 0) {
+        return { kind: "no_data", message: "a cross leg has no bars stored" };
+      }
+      return v1.HistoryV1.parse({
+        schemaVersion: 1,
+        subject: await subjectOf(sql, pair.subject),
+        unit: await unitOf(sql, pair.unit, pair.unitCategory),
+        priceType: "mid",
+        basis: "derived",
+        observations: closes.map((c) => ({ asOf: c.closeTime, price: c.close })),
+      });
+    }
+  }
+  // The published series: the feed behind the canonical quote, or for a
+  // cross (`series=reference`) the pair's own reference feed, if any.
   const feed = await sql<{ source: string; price_type: "reference" | "average" | string }[]>`
-    SELECT o.source_id AS source, o.price_type FROM canonical_quote_inputs i
-    JOIN market_observations o ON o.id = i.observation_id
-    WHERE i.subject_id = ${pair.subject} AND i.unit_id = ${pair.unit} ORDER BY o.id LIMIT 1`;
+    (SELECT o.source_id AS source, o.price_type FROM canonical_quote_inputs i
+     JOIN market_observations o ON o.id = i.observation_id
+     WHERE i.subject_id = ${pair.subject} AND i.unit_id = ${pair.unit} ORDER BY o.id LIMIT 1)
+    UNION ALL
+    (SELECT feed_source_id AS source, price_type FROM quote_feeds
+     WHERE subject_id = ${pair.subject} AND unit_id = ${pair.unit}
+       AND price_type IN ('reference', 'average') ORDER BY id LIMIT 1)
+    LIMIT 1`;
   const f = feed[0];
   if (f === undefined) return { kind: "no_data", message: "no canonical quote to follow" };
   if (f.price_type !== "reference" && f.price_type !== "average") {
@@ -216,11 +320,45 @@ async function sessionStatus(sql: Sql, venue: string, now: Date): Promise<Status
   return covered.length > 0 ? "closed" : "unknown";
 }
 
+/**
+ * A derived cross's `rolling_24h_closes`: the 25 consecutive hourly cross
+ * closes ending with the latest (24 hours apart end to end), or `null`.
+ */
+async function crossStatistics(closes: CrossClose[]): Promise<v1.MarketStatisticsV1 | null> {
+  const contiguous =
+    closes.length === 25 &&
+    closes.every(
+      (c, i) =>
+        i === 0 || Date.parse(c.openTime) === Date.parse(closes[i - 1]?.openTime ?? "") + HOUR_MS,
+    );
+  if (!contiguous) return null;
+  const first = closes[0] as CrossClose;
+  const last = closes[24] as CrossClose;
+  const c = v1.changeOf(last.close, first.close);
+  if (c === null) return null;
+  return v1.MarketStatisticsV1.parse({
+    window: "rolling_24h_closes",
+    from: first.closeTime,
+    to: last.complete ? last.closeTime : last.receivedAt,
+    open: first.close,
+    high: closes.map((x) => x.close).reduce(max),
+    low: closes.map((x) => x.close).reduce(min),
+    close: last.close,
+    previousClose: null,
+    change: c.absolute,
+    changePercent: c.percent,
+    volume: null,
+    complete: last.complete,
+  });
+}
+
 async function statistics(
   sql: Sql,
   pair: Pair,
   session: boolean,
 ): Promise<v1.MarketStatisticsV1 | null> {
+  const cross = await crossCloses(sql, pair, "1h", { limit: 25, start: null, end: null });
+  if (cross !== null) return crossStatistics(cross);
   const interval = session ? "1d" : "1h";
   const from = await barSource(sql, pair, interval);
   if (from === null) return null;
@@ -272,6 +410,155 @@ async function statistics(
   });
 }
 
+/** A series polled within the day has at least this many values in 24 hours. */
+const INTRADAY_MIN_VALUES = 12;
+
+type Published = { asOf: string; price: string };
+
+/**
+ * The published values behind a pair's canonical quote (reference rates,
+ * averages): the last one at or before 24 hours ago and those since, or
+ * `null` for a traded market.
+ */
+async function publishedWindow(
+  sql: Sql,
+  pair: Pair,
+  now: Date,
+): Promise<{ before: Published | null; recent: Published[] } | null> {
+  const dayAgo = new Date(now.getTime() - 24 * HOUR_MS).toISOString();
+  const series = { series: "reference" as const, interval: "1d" as const };
+  const recent = await history(sql, pair, { limit: 5000, start: dayAgo, end: null }, series);
+  if ("kind" in recent) return null;
+  const before = await history(sql, pair, { limit: 1, start: null, end: dayAgo }, series);
+  return {
+    before: "kind" in before ? null : (before.observations[0] ?? null),
+    recent: recent.observations,
+  };
+}
+
+/**
+ * Statistics of a published series (V1.9): the source's own 24-hour OHLC
+ * (`rolling_24h`, gold-api metals with a key) when stored within 2 hours,
+ * else `rolling_24h_observations` for a
+ * series polled within the day (once 24 hours are stored), else
+ * `previous_publication`. `null` when fewer than two values are stored.
+ */
+async function publishedStatistics(
+  sql: Sql,
+  pair: Pair,
+  now: Date,
+): Promise<v1.MarketStatisticsV1 | null> {
+  // The source's own 24-hour OHLC (gold-api, polled hourly), while recent.
+  const stated = await sql.unsafe<
+    { start: string; end: string; open: string; high: string; low: string; close: string }[]
+  >(
+    `SELECT ${tsText("window_start")} AS start, ${tsText("window_end")} AS end,
+            open::text, high::text, low::text, close::text
+     FROM reference_windows
+     WHERE subject_id = $1 AND unit_id = $2 AND window_end >= $3::timestamptz
+       AND window_end - window_start = interval '24 hours'
+     ORDER BY window_end DESC LIMIT 1`,
+    [pair.subject, pair.unit, new Date(now.getTime() - 2 * HOUR_MS).toISOString()],
+  );
+  const r = stated[0];
+  if (r !== undefined) {
+    const c = v1.changeOf(r.close, r.open);
+    if (c !== null) {
+      return v1.MarketStatisticsV1.parse({
+        window: "rolling_24h",
+        from: canonicalTimestamp(r.start),
+        to: canonicalTimestamp(r.end),
+        open: r.open,
+        high: r.high,
+        low: r.low,
+        close: r.close,
+        previousClose: null,
+        change: c.absolute,
+        changePercent: c.percent,
+        volume: null,
+        complete: true,
+      });
+    }
+  }
+  const w = await publishedWindow(sql, pair, now);
+  if (w === null) return null;
+  const last = w.recent.at(-1);
+  if (w.before !== null && last !== undefined && w.recent.length >= INTRADAY_MIN_VALUES) {
+    const values = [w.before, ...w.recent].map((v) => v.price);
+    const c = v1.changeOf(last.price, w.before.price);
+    if (c === null) return null;
+    return v1.MarketStatisticsV1.parse({
+      window: "rolling_24h_observations",
+      from: w.before.asOf,
+      to: last.asOf,
+      open: w.before.price,
+      high: values.reduce(max),
+      low: values.reduce(min),
+      close: last.price,
+      previousClose: null,
+      change: c.absolute,
+      changePercent: c.percent,
+      volume: null,
+      complete: true,
+    });
+  }
+  // Polled within the day but not yet stored for 24 hours: no statistics
+  // until it has been (the previous value is a minute old, not a publication).
+  if (w.recent.length >= INTRADAY_MIN_VALUES) return null;
+  const latest = await history(
+    sql,
+    pair,
+    { limit: 2, start: null, end: null },
+    {
+      series: "reference",
+      interval: "1d",
+    },
+  );
+  if ("kind" in latest || latest.observations.length < 2) return null;
+  const [prev, cur] = latest.observations;
+  if (prev === undefined || cur === undefined) return null;
+  const c = v1.changeOf(cur.price, prev.price);
+  if (c === null) return null;
+  return v1.MarketStatisticsV1.parse({
+    window: "previous_publication",
+    from: prev.asOf,
+    to: cur.asOf,
+    open: prev.price,
+    high: max(prev.price, cur.price),
+    low: min(prev.price, cur.price),
+    close: cur.price,
+    previousClose: prev.price,
+    change: c.absolute,
+    changePercent: c.percent,
+    volume: null,
+    complete: true,
+  });
+}
+
+/**
+ * A published series' sparkline: the last value of each hour over 24 hours
+ * when it is polled within the day, else its last 24 publications.
+ */
+export async function publishedSparkline(sql: Sql, pair: Pair, now: Date): Promise<string[]> {
+  const w = await publishedWindow(sql, pair, now);
+  if (w === null) return [];
+  if (w.recent.length >= INTRADAY_MIN_VALUES) {
+    const byHour = new Map<number, string>();
+    for (const v of w.recent) byHour.set(Math.floor(Date.parse(v.asOf) / HOUR_MS), v.price);
+    return [...byHour.values()].slice(-24);
+  }
+  const latest = await history(
+    sql,
+    pair,
+    { limit: 24, start: null, end: null },
+    {
+      series: "reference",
+      interval: "1d",
+    },
+  );
+  return "kind" in latest ? [] : latest.observations.map((o) => o.price);
+}
+
 /** `MarketV1` from a canonical quote. */
 export async function market(
   sql: Sql,
@@ -302,7 +589,80 @@ export async function market(
     asOf: quote.asOf,
     freshness: quote.freshness,
     marketStatus,
-    statistics: marketStatus === null ? null : await statistics(sql, pair, equity),
+    statistics:
+      marketStatus === null
+        ? await publishedStatistics(sql, pair, now)
+        : await statistics(sql, pair, equity),
+  });
+}
+
+/**
+ * `MarketsV1`: one page of the markets with a canonical quote, each as
+ * `/v1/market` serves it plus a 24-hour sparkline, filtered by subject
+ * class and by a name or alias search.
+ */
+export async function markets(
+  sql: Sql,
+  classes: v1.InstrumentClass[],
+  query: string | null,
+  limit: number,
+  offset: number,
+  now: Date,
+  staleAfterSeconds: number,
+): Promise<v1.MarketsV1> {
+  const counts = await sql<{ class: v1.InstrumentClass | null; count: number }[]>`
+    SELECT i.instrument_class AS class, count(*)::int AS count
+    FROM canonical_quotes q LEFT JOIN instruments i ON i.id = q.subject_id
+    GROUP BY i.instrument_class ORDER BY i.instrument_class NULLS LAST`;
+  // `%`, `_` and `\` in the text match themselves.
+  const like = query === null ? null : `%${query.toLowerCase().replace(/[\\%_]/g, "\\$&")}%`;
+  const filtered = sql`
+    FROM canonical_quotes q
+    LEFT JOIN instruments i ON i.id = q.subject_id
+    LEFT JOIN currencies c ON c.id = q.subject_id
+    WHERE (cardinality(${classes}::text[]) = 0 OR i.instrument_class = ANY(${classes}::text[]))
+      AND (${like}::text IS NULL
+        OR lower(coalesce(i.name, c.name)) LIKE ${like}
+        OR EXISTS (SELECT 1 FROM aliases a WHERE a.node_id = q.subject_id AND a.alias_key LIKE ${like}))`;
+  const [{ total } = { total: 0 }] = await sql<{ total: number }[]>`
+    SELECT count(*)::int AS total ${filtered}`;
+  const page = await sql<{ subject: string; unit: string; unit_category: string }[]>`
+    SELECT q.subject_id::text AS subject, q.unit_id::text AS unit, q.unit_category
+    ${filtered}
+    ORDER BY lower(coalesce(i.name, c.name)), q.subject_id, q.unit_id
+    LIMIT ${limit} OFFSET ${offset}`;
+  const rows = await Promise.all(
+    page.map(async (row) => {
+      const pair: Pair = { subject: row.subject, unit: row.unit, unitCategory: row.unit_category };
+      const quote = await canonicalQuote(sql, pair, now, staleAfterSeconds);
+      const window = { limit: 24, start: null, end: null };
+      const cross = await crossCloses(sql, pair, "1h", window);
+      const hourly = cross === null ? await candles(sql, pair, "1h", window) : null;
+      return {
+        subject: await subjectOf(sql, pair.subject),
+        unit: await unitOf(sql, pair.unit, pair.unitCategory),
+        market: quote.kind === "quote" ? await market(sql, pair, quote.quote, now) : null,
+        sparkline:
+          quote.kind === "quote" &&
+          (quote.quote.priceType === "reference" || quote.quote.priceType === "average")
+            ? await publishedSparkline(sql, pair, now)
+            : cross !== null
+              ? cross.map((c) => c.close)
+              : hourly === null || "kind" in hourly
+                ? []
+                : hourly.candles.map((c) => c.close),
+      };
+    }),
+  );
+  return v1.MarketsV1.parse({
+    schemaVersion: 1,
+    classes,
+    query,
+    total,
+    offset,
+    limit,
+    counts,
+    markets: rows,
   });
 }
 

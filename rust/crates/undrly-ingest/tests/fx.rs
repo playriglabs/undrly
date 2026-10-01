@@ -203,7 +203,13 @@ async fn fx_universes_are_seeded_idempotently_with_shared_instruments() {
         .unwrap()
         .unwrap();
     assert_eq!(major.snapshot.members.len(), 29);
-    assert_eq!(sea.snapshot.members.len(), 9);
+    // V1.9 moved USD/PHP from excluded to a member (priced as a derived cross).
+    assert_eq!(sea.snapshot.members.len(), 10);
+    let global = latest_universe_snapshot(&mut conn, UniverseKey::FxGlobal)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(global.snapshot.members.len(), 4);
     let usd_sgd = id("fx:USD/SGD");
     for u in [&major, &sea] {
         assert!(u.snapshot.members.iter().any(|m| m.node == usd_sgd));
@@ -224,7 +230,8 @@ async fn fx_universes_are_seeded_idempotently_with_shared_instruments() {
     .fetch_one(&mut *conn)
     .await
     .unwrap();
-    assert_eq!((fx, pairs), (37, 37));
+    // V1.9 adds USD/PHP, USD/HKD, USD/AED, USD/BRL and USD/MXN.
+    assert_eq!((fx, pairs), (42, 42));
     // The memberships name the spec record.
     let (key,): (String,) = sqlx::query_as(
         "SELECT r.record_key FROM universe_snapshots s JOIN source_records r

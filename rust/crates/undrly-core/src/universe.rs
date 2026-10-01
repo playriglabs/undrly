@@ -28,16 +28,20 @@ pub enum UniverseKey {
     /// Curated Southeast Asian FX pairs with a trustworthy source
     /// (Undrly-authored list).
     FxSoutheastAsia,
+    /// Curated FX pairs outside the G10 and Southeast Asia, priced live
+    /// through stablecoin venues (Undrly-authored list, V1.9).
+    FxGlobal,
 }
 
 impl UniverseKey {
-    pub const ALL: [UniverseKey; 6] = [
+    pub const ALL: [UniverseKey; 7] = [
         UniverseKey::CryptoTop100,
         UniverseKey::Sp500,
         UniverseKey::Nasdaq100,
         UniverseKey::HyperliquidPerps,
         UniverseKey::FxMajor,
         UniverseKey::FxSoutheastAsia,
+        UniverseKey::FxGlobal,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -48,6 +52,7 @@ impl UniverseKey {
             UniverseKey::HyperliquidPerps => "hyperliquid-perps",
             UniverseKey::FxMajor => "fx-major",
             UniverseKey::FxSoutheastAsia => "fx-southeast-asia",
+            UniverseKey::FxGlobal => "fx-global",
         }
     }
 }

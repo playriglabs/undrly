@@ -1,8 +1,8 @@
 {
   "dataset": "undrly-fx-spec",
   "version": 1,
-  "asOf": "2026-09-26T00:00:00Z",
-  "description": "Undrly-authored FX universe definition (docs/v1.2-fx.md): currencies, the fx-major and fx-southeast-asia pairs, and which approved source publishes each pair. Sources were researched on 2026-09-26. `undrly-collect fx build` turns this file into data/reference/fx.json.",
+  "asOf": "2026-10-01T00:00:00Z",
+  "description": "Undrly-authored FX universe definition (docs/v1.2-fx.md, docs/v1.9-live-fx.md): currencies, the fx-major, fx-southeast-asia and fx-global pairs, and which approved source publishes each pair. Sources were researched on 2026-09-26 and 2026-10-01. Pairs without a direct feed here may be priced as derived cross rates declared in data/reference/stablecoin-fx-spec.json. `undrly-collect fx build` turns this file into data/reference/fx.json.",
   "sources": {
     "kraken": {
       "venue": "kraken",
@@ -123,6 +123,30 @@
     {
       "code": "MMK",
       "name": "Myanmar Kyat"
+    },
+    {
+      "code": "HKD",
+      "name": "Hong Kong Dollar"
+    },
+    {
+      "code": "AED",
+      "name": "UAE Dirham"
+    },
+    {
+      "code": "BRL",
+      "name": "Brazilian Real"
+    },
+    {
+      "code": "MXN",
+      "name": "Mexican Peso"
+    },
+    {
+      "code": "CNY",
+      "name": "Chinese Yuan Renminbi"
+    },
+    {
+      "code": "SAR",
+      "name": "Saudi Riyal"
     }
   ],
   "pairs": [
@@ -538,14 +562,44 @@
           "symbol": "SGD"
         }
       ]
+    },
+    {
+      "pair": "USD/PHP",
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "USD/HKD",
+      "universes": [
+        "fx-global"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "USD/AED",
+      "universes": [
+        "fx-global"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "USD/BRL",
+      "universes": [
+        "fx-global"
+      ],
+      "feeds": []
+    },
+    {
+      "pair": "USD/MXN",
+      "universes": [
+        "fx-global"
+      ],
+      "feeds": []
     }
   ],
   "excluded": [
-    {
-      "pair": "USD/PHP",
-      "universe": "fx-southeast-asia",
-      "reason": "no approved machine-readable source: Bangko Sentral ng Pilipinas publishes rates only through its website (its SharePoint list endpoint is undocumented and not a published API); ExchangeRate-API's terms forbid use in a service offering programmatic access; only cross rates (BI, BNM) exist"
-    },
     {
       "pair": "USD/VND",
       "universe": "fx-southeast-asia",
@@ -595,6 +649,16 @@
       "pair": "JPY/SGD",
       "universe": "fx-southeast-asia",
       "reason": "no direct source: MAS's API gateway requires a registered key; derived cross rates are out of scope"
+    },
+    {
+      "pair": "USD/CNY",
+      "universe": "fx-global",
+      "reason": "no approved source: no public venue lists a stablecoin or USD book in onshore CNY (checked 2026-10-01: Binance, OKX, Kraken, Coinbase, Bybit, Gate, HashKey), and the PBOC central parity is published only on its website"
+    },
+    {
+      "pair": "USD/SAR",
+      "universe": "fx-global",
+      "reason": "no approved source: no public venue lists a stablecoin or USD book in SAR (checked 2026-10-01: Binance, OKX, Kraken, Coinbase, Bybit, Gate); SAMA publishes no machine-readable rate, and the USD peg is not a substitute for a quote"
     }
   ]
 }

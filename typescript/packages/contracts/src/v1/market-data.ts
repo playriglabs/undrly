@@ -8,7 +8,7 @@ import { z } from "zod";
 import { changeOf, decimalCompare } from "./decimal.ts";
 import { PriceUnitV1 } from "./market-observation.ts";
 import { DecimalString, TimestampString, timestampMicros } from "./primitives.ts";
-import { PRICE_TYPES, PriceSubjectV1, VenueRefV1 } from "./quote.ts";
+import { INSTRUMENT_CLASSES, PRICE_TYPES, PriceSubjectV1, VenueRefV1 } from "./quote.ts";
 
 /**
  * Candle intervals served. `1h` and `1d` are the venue's own bars; `4h` is
@@ -95,14 +95,20 @@ export type CandlesV1 = z.infer<typeof CandlesV1>;
  * series (central-bank rates, commodity reference prices, monthly averages)
  * as published, oldest first: one value per publication, never OHLC. The
  * series is the one feed that produces the pair's current canonical quote.
+ *
+ * For a derived cross (V1.9, `cross-via-stablecoin-v1`) the series is the
+ * cross of its legs' bar closes at the same bar times (`?interval=1h|1d`,
+ * default `1d`): `priceType` `mid`, `basis` `derived`, each value
+ * `crossRate(numerator close, denominator close)`, `asOf` the bars' close
+ * time. `?series=reference` asks for the pair's reference feed instead.
  */
 export const HistoryV1 = z
   .strictObject({
     schemaVersion: z.literal(1),
     subject: PriceSubjectV1,
     unit: PriceUnitV1,
-    priceType: z.enum(["reference", "average"]),
-    basis: z.literal("aggregated"),
+    priceType: z.enum(["reference", "average", "mid"]),
+    basis: z.enum(["aggregated", "derived"]),
     observations: z.array(
       z.strictObject({
         /** The source's time for the value (a publication date at 00:00 UTC when only a date is stated). */
@@ -119,7 +125,10 @@ export const HistoryV1 = z
           timestampMicros(o.asOf) > timestampMicros(h.observations[i - 1]?.asOf ?? o.asOf),
       ),
     { message: "observations are strictly ascending" },
-  );
+  )
+  .refine((h) => (h.basis === "derived") === (h.priceType === "mid"), {
+    message: "a derived cross series is mid; a published series is reference or average",
+  });
 export type HistoryV1 = z.infer<typeof HistoryV1>;
 
 /**
@@ -147,6 +156,21 @@ export const MARKET_STATUSES = [
  * - `session` (equities): the venue's latest `1d` bar (its New York trading
  *   day) and the one before; `previousClose` is that earlier bar's close;
  *   `change = close - previousClose`.
+ * - `rolling_24h_closes` (derived crosses, V1.9): the cross of the legs'
+ *   hourly closes at the 25 consecutive hours ending with the latest; `open`
+ *   is the close 24 hours before, `high`/`low` the max/min **of those
+ *   closes** (not an intrabar range), `volume` `null`.
+ * - `rolling_24h` for a published series: the source's own open/high/low/
+ *   close over the 24 hours before its poll (gold-api metals), `volume` `null`.
+ * - Published series (reference rates and averages; `marketStatus` `null`),
+ *   from the stored values of the feed behind the canonical quote:
+ *   - `rolling_24h_observations`: a series polled within the day (metals):
+ *     `open` is the last value at or before 24 hours ago, `close` the
+ *     latest, `high`/`low` the max/min of the values in between;
+ *   - `previous_publication`: a daily or monthly publication: `close` is the
+ *     latest value, `previousClose` the one before (`from`/`to` are their
+ *     dates), `high`/`low` the larger/smaller of the two.
+ *   `volume` is `null`: nothing is traded.
  * `changePercent` is `change / (open or previousClose) × 100`, half to even
  * at 4 places. Missing bars make the statistics `null`, never estimated.
  * The bars are one venue's (Kraken, Hyperliquid or IEX; the same venue
@@ -154,7 +178,13 @@ export const MARKET_STATUSES = [
  */
 export const MarketStatisticsV1 = z
   .strictObject({
-    window: z.enum(["rolling_24h", "session"]),
+    window: z.enum([
+      "rolling_24h",
+      "session",
+      "rolling_24h_closes",
+      "rolling_24h_observations",
+      "previous_publication",
+    ]),
     from: TimestampString,
     to: TimestampString,
     open: DecimalString,
@@ -171,8 +201,11 @@ export const MarketStatisticsV1 = z
   })
   .superRefine((s, ctx) => {
     const issues: Issue[] = [];
-    if ((s.window === "session") !== (s.previousClose !== null)) {
-      issues.push({ message: "a session states its previous close; a rolling window does not" });
+    const withPrevious = s.window === "session" || s.window === "previous_publication";
+    if (withPrevious !== (s.previousClose !== null)) {
+      issues.push({
+        message: "a session or publication states its previous value; a rolling window does not",
+      });
     }
     const base = s.previousClose ?? s.open;
     const c = changeOf(s.close, base);
@@ -408,3 +441,55 @@ export const EconomicCalendarV1 = z
     message: "releases fall in the window",
   });
 export type EconomicCalendarV1 = z.infer<typeof EconomicCalendarV1>;
+
+/** Largest and default page size of `GET /v1/markets`. */
+export const MARKETS_MAX_LIMIT = 100;
+export const MARKETS_DEFAULT_LIMIT = 50;
+
+/**
+ * One market (subject, unit) with a canonical quote. `market` is exactly
+ * `/v1/market`'s body, `null` when no quote is servable now (an aggregate
+ * older than its window). `sparkline` is the closes of up to the latest 24
+ * hourly candles, oldest first; empty when the market has no hourly bars
+ * (reference series, for one).
+ */
+export const MarketsRowV1 = z.strictObject({
+  subject: PriceSubjectV1,
+  unit: PriceUnitV1,
+  market: MarketV1.nullable(),
+  sparkline: z.array(DecimalString).max(24),
+});
+export type MarketsRowV1 = z.infer<typeof MarketsRowV1>;
+
+/**
+ * `GET /v1/markets?class=&q=&limit=&offset=`: every market with a canonical
+ * quote, one page at a time, ordered by subject name then unit.
+ * - `classes` (`class=crypto_asset,fx`): only instrument subjects of those
+ *   classes; empty means all markets, currency subjects included.
+ * - `query` (`q=`): subjects whose name or an alias (symbol or name)
+ *   contains the text, case-insensitively.
+ * `counts` is the number of markets per subject class over all markets
+ * (`class: null` counts currency subjects), independent of both filters;
+ * `total` is the filtered count.
+ */
+export const MarketsV1 = z
+  .strictObject({
+    schemaVersion: z.literal(1),
+    classes: z.array(z.enum(INSTRUMENT_CLASSES)),
+    query: z.string().min(1).nullable(),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    limit: z.number().int().min(1).max(MARKETS_MAX_LIMIT),
+    counts: z.array(
+      z.strictObject({
+        class: z.enum(INSTRUMENT_CLASSES).nullable(),
+        count: z.number().int().positive(),
+      }),
+    ),
+    markets: z.array(MarketsRowV1),
+  })
+  .refine((m) => m.markets.length <= m.limit, { message: "at most limit markets per page" })
+  .refine((m) => m.markets.length === 0 || m.offset + m.markets.length <= m.total, {
+    message: "a page lies within total",
+  });
+export type MarketsV1 = z.infer<typeof MarketsV1>;

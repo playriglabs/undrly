@@ -251,6 +251,7 @@ pub fn build(
         aliases: Vec::new(),
         quote_feeds: Vec::new(),
         quote_aggregations: Vec::new(),
+        quote_derivations: Vec::new(),
         universes: Vec::new(),
     };
     let mut aliases: BTreeSet<(String, String, String)> = BTreeSet::new();
@@ -300,7 +301,11 @@ pub fn build(
     }
 
     // Pairs.
-    let universe_keys = [UniverseKey::FxMajor, UniverseKey::FxSoutheastAsia];
+    let universe_keys = [
+        UniverseKey::FxMajor,
+        UniverseKey::FxSoutheastAsia,
+        UniverseKey::FxGlobal,
+    ];
     let mut members: BTreeMap<&str, Vec<UniverseMemberRecord>> = BTreeMap::new();
     let mut seen_pairs: BTreeSet<(String, String)> = BTreeSet::new();
     let mut seen_feeds: BTreeSet<(String, String)> = BTreeSet::new();

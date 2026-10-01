@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "ids": {
+    "asset:EURC": "undrly:instrument:01m3v97hfdejxt2xbckxvnpjc9",
+    "venue:binance": "undrly:venue:01m3v97hfdejxt2xbck4ymbf5y",
+    "venue:bitkub": "undrly:venue:01m3v97hfdejxt2xbckg13p7m7",
+    "venue:coins-ph": "undrly:venue:01m3v97hfdejxt2xbckppreyph",
+    "venue:hashkey": "undrly:venue:01m3v97hfdejxt2xbckvtbxnhq",
+    "venue:indodax": "undrly:venue:01m3v97hfdejxt2xbckd26kj8g",
+    "venue:okx": "undrly:venue:01m3v97hfdejxt2xbckafk54bt"
+  }
+}

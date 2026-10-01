@@ -138,6 +138,60 @@ pub async fn insert_perp_context(
     })
 }
 
+/// A reference series' open/high/low/close over the source's own window
+/// (V1.9, `reference_windows`), for one (subject, unit).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceWindow {
+    pub subject: undrly_core::PriceSubject,
+    pub unit: undrly_core::PriceUnit,
+    pub start: undrly_core::Timestamp,
+    pub end: undrly_core::Timestamp,
+    pub open: undrly_core::Decimal,
+    pub high: undrly_core::Decimal,
+    pub low: undrly_core::Decimal,
+    pub close: undrly_core::Decimal,
+}
+
+/// Stores a window from `record`; the same window again is [`Write::Unchanged`].
+pub async fn insert_reference_window(
+    conn: &mut PgConnection,
+    w: &ReferenceWindow,
+    record: &RecordProvenance,
+) -> Result<Write, StoreError> {
+    let subject = w.subject.canonical();
+    let unit = w.unit.canonical();
+    let inserted = sqlx::query(
+        "INSERT INTO reference_windows
+           (subject_id, subject_category, unit_id, unit_category, source_id, window_start,
+            window_end, open, high, low, close, received_at, source_record_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::numeric, $9::numeric, $10::numeric,
+                 $11::numeric, $12, $13)
+         ON CONFLICT (subject_id, unit_id, source_id, window_start, window_end) DO NOTHING",
+    )
+    .bind(subject.uuid())
+    .bind(subject.category().as_str())
+    .bind(unit.uuid())
+    .bind(unit.category().as_str())
+    .bind(record.provenance.source_id.as_str())
+    .bind(w.start.as_datetime())
+    .bind(w.end.as_datetime())
+    .bind(decimal_to_sql(w.open))
+    .bind(decimal_to_sql(w.high))
+    .bind(decimal_to_sql(w.low))
+    .bind(decimal_to_sql(w.close))
+    .bind(record.provenance.received_at.as_datetime())
+    .bind(record.id.0)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        == 1;
+    Ok(if inserted {
+        Write::Inserted
+    } else {
+        Write::Unchanged
+    })
+}
+
 /// Stores a venue's calendar from `record`: its sessions, and the range of
 /// dates the calendar covers (dates in it without a session are closed).
 /// A session already stored for a date is replaced by a newer record's.

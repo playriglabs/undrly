@@ -118,6 +118,73 @@ pub fn invert_quote(price: Decimal, bid_ask: Option<BidAsk>) -> Option<(Decimal,
     Some((invert_rate(price)?, bid_ask))
 }
 
+/// `numerator / denominator`, rounded half to even to the fewer
+/// significant digits of the two (as stated): a ratio cannot be more
+/// precise than its inputs. Exact decimal division (28 significant digits)
+/// before that rounding. `None` unless both are positive.
+pub fn cross_rate(numerator: Decimal, denominator: Decimal) -> Option<Decimal> {
+    if numerator <= Decimal::ZERO || denominator <= Decimal::ZERO {
+        return None;
+    }
+    let digits = significant_digits(numerator).min(significant_digits(denominator));
+    numerator
+        .checked_div(denominator)?
+        .round_sf_with_strategy(digits, RoundingStrategy::MidpointNearestEven)
+}
+
+/// One leg of [`AggregationMethod::CrossViaStablecoinV1`]: a pair's
+/// canonical quote, reduced to what the cross needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrossLeg<K> {
+    pub price: Decimal,
+    pub bid_ask: Option<BidAsk>,
+    pub basis: ObservationBasis,
+    pub as_of: Timestamp,
+    /// The leg's own inputs (keys and the prices they contributed).
+    pub inputs: Vec<(K, Decimal)>,
+}
+
+/// The cross of two legs ([`AggregationMethod::CrossViaStablecoinV1`]):
+/// `numerator / denominator`. `None` when a leg is not venue-based
+/// (a reference rate or another derived quote never enters a cross) or a
+/// price is not positive.
+pub fn cross_quote<K: Ord + Clone>(
+    numerator: &CrossLeg<K>,
+    denominator: &CrossLeg<K>,
+) -> Option<Aggregate<K>> {
+    let venue_based = |b: ObservationBasis| {
+        matches!(b, ObservationBasis::Venue(_) | ObservationBasis::Aggregated)
+    };
+    if !venue_based(numerator.basis) || !venue_based(denominator.basis) {
+        return None;
+    }
+    let price = cross_rate(numerator.price, denominator.price)?;
+    let bid_ask = match (numerator.bid_ask, denominator.bid_ask) {
+        (Some(n), Some(d)) => Some(BidAsk {
+            bid: cross_rate(n.bid, d.ask)?,
+            ask: cross_rate(n.ask, d.bid)?,
+        }),
+        _ => None,
+    };
+    let mut inputs: Vec<(K, Decimal)> = numerator
+        .inputs
+        .iter()
+        .chain(&denominator.inputs)
+        .cloned()
+        .collect();
+    inputs.sort_by(|a, b| a.0.cmp(&b.0));
+    inputs.dedup_by(|a, b| a.0 == b.0);
+    Some(Aggregate {
+        method: AggregationMethod::CrossViaStablecoinV1,
+        price,
+        price_type: PriceType::Mid,
+        basis: ObservationBasis::Derived,
+        bid_ask,
+        as_of: numerator.as_of.min(denominator.as_of),
+        inputs,
+    })
+}
+
 /// Default freshness window of a feed (V1 behaviour).
 pub const DEFAULT_STALE_AFTER_SECONDS: u32 = 300;
 
@@ -128,6 +195,20 @@ pub struct QuoteAggregation {
     pub subject: PriceSubject,
     pub unit: PriceUnit,
     pub method: AggregationMethod,
+    pub provenance: Provenance,
+}
+
+/// A pair priced as a cross of two other pairs (V1.9,
+/// [`AggregationMethod::CrossViaStablecoinV1`]): `price(subject in unit) =
+/// price(numerator) / price(denominator)`, with provenance. The numerator is
+/// the stablecoin in `unit`, the denominator the same stablecoin in the
+/// subject's base currency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteDerivation {
+    pub subject: PriceSubject,
+    pub unit: PriceUnit,
+    pub numerator: (PriceSubject, PriceUnit),
+    pub denominator: (PriceSubject, PriceUnit),
     pub provenance: Provenance,
 }
 
@@ -168,6 +249,25 @@ pub enum AggregationMethod {
     /// The bid and ask are the venue's best book levels, not a spread around
     /// the mark: a mark may lie outside them.
     MarkWithVenueBookV1,
+    /// A cross rate through a stablecoin (V1.9, docs/v1.9-live-fx.md): the
+    /// pair's price is the ratio of two other pairs' canonical quotes, never
+    /// of its own observations. For `BASE/QUOTE` via stablecoin `S`:
+    ///
+    /// 1. numerator = the canonical quote of `S` in `QUOTE`, denominator =
+    ///    the canonical quote of `S` in `BASE`; both must exist and be
+    ///    **venue-based** (basis `venue` or `aggregated` from venues);
+    /// 2. `price = numerator / denominator`, exact decimal division rounded
+    ///    half to even to the fewer significant digits of the two prices
+    ///    ([`cross_rate`]): a ratio cannot be more precise than its inputs;
+    /// 3. when both legs carry a bid and ask, `bid = num.bid / den.ask` and
+    ///    `ask = num.ask / den.bid` (the conservative side of each);
+    /// 4. `basis = derived`, price type `mid`, as of the older leg. The
+    ///    inputs are both legs' own inputs, kept in `canonical_quote_legs`.
+    ///
+    /// It assumes the stablecoin trades at one price in both units: a
+    /// de-peg against one fiat moves the cross. That is why the basis says
+    /// `derived` and the legs stay inspectable.
+    CrossViaStablecoinV1,
 }
 
 /// Freshness window of [`AggregationMethod::MeanVenueMidV1`], in seconds.
@@ -178,10 +278,11 @@ pub const MEAN_VENUE_MID_MAX_AGE_SECONDS: i64 = 30;
 pub const MARK_BOOK_MAX_SKEW_SECONDS: i64 = 60;
 
 impl AggregationMethod {
-    pub const ALL: [AggregationMethod; 3] = [
+    pub const ALL: [AggregationMethod; 4] = [
         AggregationMethod::LatestObservationV1,
         AggregationMethod::MeanVenueMidV1,
         AggregationMethod::MarkWithVenueBookV1,
+        AggregationMethod::CrossViaStablecoinV1,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -189,13 +290,16 @@ impl AggregationMethod {
             AggregationMethod::LatestObservationV1 => "latest-observation-v1",
             AggregationMethod::MeanVenueMidV1 => "mean-venue-mid-v1",
             AggregationMethod::MarkWithVenueBookV1 => "mark-with-venue-book-v1",
+            AggregationMethod::CrossViaStablecoinV1 => "cross-via-stablecoin-v1",
         }
     }
 
     /// The freshness window observations must satisfy, if the method has one.
     pub const fn max_age_seconds(self) -> Option<i64> {
         match self {
-            AggregationMethod::LatestObservationV1 | AggregationMethod::MarkWithVenueBookV1 => None,
+            AggregationMethod::LatestObservationV1
+            | AggregationMethod::MarkWithVenueBookV1
+            | AggregationMethod::CrossViaStablecoinV1 => None,
             AggregationMethod::MeanVenueMidV1 => Some(MEAN_VENUE_MID_MAX_AGE_SECONDS),
         }
     }
@@ -285,6 +389,9 @@ pub fn aggregate<K: Ord + Clone>(
                 inputs: inputs.into_iter().map(|i| (i.key, i.mid)).collect(),
             })
         }
+        // Computed from other pairs' canonical quotes ([`cross_quote`]),
+        // never from the pair's own observations.
+        AggregationMethod::CrossViaStablecoinV1 => None,
         AggregationMethod::MarkWithVenueBookV1 => {
             let marks: Vec<(K, MarketObservation)> = candidates
                 .iter()
@@ -618,6 +725,94 @@ mod tests {
         assert_eq!(invert_rate(d("0.8")).unwrap().to_string(), "1");
         assert!(invert_rate(Decimal::ZERO).is_none());
         assert!(invert_rate(d("-1.5")).is_none());
+    }
+
+    #[test]
+    fn cross_rate_keeps_the_fewer_significant_digits() {
+        let d = |s| parse_canonical(s).unwrap();
+        // USD/IDR = USDT/IDR 17910.5 (6 digits) / USDT/USD 1.00005 (6 digits).
+        assert_eq!(
+            cross_rate(d("17910.5"), d("1.00005")).unwrap().to_string(),
+            "17909.6"
+        );
+        // A 4-digit leg limits the result to 4 digits: 33.57 / 1.0001.
+        assert_eq!(
+            cross_rate(d("33.57"), d("1.0001")).unwrap().to_string(),
+            "33.57"
+        );
+        // Exact ratios stay exact at the stated precision.
+        assert_eq!(
+            cross_rate(d("2.00"), d("1.00")).unwrap().to_string(),
+            "2.00"
+        );
+        assert!(cross_rate(d("1"), Decimal::ZERO).is_none());
+        assert!(cross_rate(d("-1"), d("1")).is_none());
+    }
+
+    #[test]
+    fn cross_quote_is_derived_from_two_venue_legs() {
+        let d = |s| parse_canonical(s).unwrap();
+        let t = |s| Timestamp::parse(s).unwrap();
+        let venue = ObservationBasis::Venue(crate::id::VenueId::generate());
+        let num = CrossLeg {
+            price: d("17910.5"),
+            bid_ask: Some(BidAsk {
+                bid: d("17910"),
+                ask: d("17911"),
+            }),
+            basis: ObservationBasis::Aggregated,
+            as_of: t("2026-10-01T05:00:10Z"),
+            inputs: vec![(1, d("17910.5")), (3, d("17910.4"))],
+        };
+        let den = CrossLeg {
+            price: d("1.00005"),
+            bid_ask: Some(BidAsk {
+                bid: d("1.0000"),
+                ask: d("1.0001"),
+            }),
+            basis: venue,
+            as_of: t("2026-10-01T05:00:02Z"),
+            inputs: vec![(2, d("1.00005"))],
+        };
+        let c = cross_quote(&num, &den).unwrap();
+        assert_eq!(c.method, AggregationMethod::CrossViaStablecoinV1);
+        assert_eq!(c.basis, ObservationBasis::Derived);
+        assert_eq!(c.price_type, PriceType::Mid);
+        assert_eq!(c.price.to_string(), "17909.6");
+        // bid = num.bid / den.ask, ask = num.ask / den.bid: the wider side.
+        let ba = c.bid_ask.unwrap();
+        assert_eq!(
+            (ba.bid.to_string(), ba.ask.to_string()),
+            ("17908".into(), "17911".into())
+        );
+        assert!(ba.bid <= c.price && c.price <= ba.ask);
+        assert_eq!(c.as_of, t("2026-10-01T05:00:02Z"), "the older leg");
+        assert_eq!(
+            c.inputs.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+
+        // A reference rate (or another derived quote) never enters a cross.
+        let reference = CrossLeg {
+            basis: ObservationBasis::Derived,
+            ..den.clone()
+        };
+        assert!(cross_quote(&num, &reference).is_none());
+        // One leg without a book: a price, no bid/ask.
+        let no_book = CrossLeg {
+            bid_ask: None,
+            ..den
+        };
+        assert!(cross_quote(&num, &no_book).unwrap().bid_ask.is_none());
+        // Derived pairs are never aggregated from their own observations.
+        assert!(
+            aggregate::<i64>(
+                AggregationMethod::CrossViaStablecoinV1,
+                &[],
+                t("2026-10-01T05:00:02Z")
+            )
+            .is_none()
+        );
     }
 
     #[test]

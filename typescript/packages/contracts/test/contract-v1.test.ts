@@ -207,6 +207,20 @@ describe("exact quote arithmetic", () => {
     expect(v1.changeOf("0.3", "0.1")).toStrictEqual({ absolute: "0.2", percent: "200.0000" });
   });
 
+  it("cross rate: the fewer significant digits of its legs (mirrors undrly_core)", () => {
+    // USD/IDR = USDT/IDR 17910.5 / USDT/USD 1.00005 (6 digits each).
+    expect(v1.crossRate("17910.5", "1.00005")).toBe("17909.6");
+    expect(v1.crossRate("33.57", "1.0001")).toBe("33.57");
+    expect(v1.crossRate("2.00", "1.00")).toBe("2.00");
+    // Below one: leading zeros are not significant (0.88444… → 3 digits).
+    expect(v1.crossRate("0.99942", "1.13")).toBe("0.884");
+    // Half to even at the last kept digit: 1 / 8 = 0.125 at 2 digits.
+    expect(v1.crossRate("1.0", "8.0")).toBe("0.12");
+    expect(v1.crossRate("1", "0")).toBeNull();
+    expect(v1.crossRate("-1", "1")).toBeNull();
+    expect(v1.crossRate("x", "1")).toBeNull();
+  });
+
   it("24h change: positive, negative, zero, exact percent", () => {
     expect(v1.changeOf("84076.2025000", "82950.1150000")).toStrictEqual({
       absolute: "1126.0875000",

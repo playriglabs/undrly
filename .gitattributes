@@ -11,3 +11,9 @@ tests/fixtures/sources/fed-h10/** binary
 tests/fixtures/sources/bank-indonesia/** binary
 tests/fixtures/sources/bnm/** binary
 tests/fixtures/sources/cbm/** binary
+tests/fixtures/sources/binance/** binary
+tests/fixtures/sources/okx/** binary
+tests/fixtures/sources/indodax/** binary
+tests/fixtures/sources/bitkub/** binary
+tests/fixtures/sources/coins-ph/** binary
+tests/fixtures/sources/hashkey/** binary

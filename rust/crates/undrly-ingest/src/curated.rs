@@ -10,7 +10,7 @@
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
     Alias, CanonicalId, ExternalIdentifier, IdentifierAssignment, Listing, ListingSymbol,
-    QuoteAggregation, QuoteFeed, Relationship, UniverseSnapshot, Validity,
+    QuoteAggregation, QuoteDerivation, QuoteFeed, Relationship, UniverseSnapshot, Validity,
 };
 use undrly_normalize::curated::normalize_universe;
 use undrly_provider::curated::CuratedProvider;
@@ -208,6 +208,16 @@ pub async fn ingest_universe_as(
             provenance: record.provenance.clone(),
         };
         report.count(market::insert_quote_aggregation(&mut tx, &declared, r).await?);
+    }
+    for d in &u.quote_derivations {
+        let declared = QuoteDerivation {
+            subject: d.subject,
+            unit: d.unit,
+            numerator: d.numerator,
+            denominator: d.denominator,
+            provenance: record.provenance.clone(),
+        };
+        report.count(market::insert_quote_derivation(&mut tx, &declared, r).await?);
     }
     // Memberships are asserted by the upstream universe file, stored earlier
     // as its own source record; the snapshot only references it.

@@ -18,6 +18,7 @@ use undrly_provider::finnhub::EarningsCalendar;
 use undrly_provider::fred::ReleaseDates;
 use undrly_provider::hyperliquid::{Candle, MetaAndAssetCtxs};
 use undrly_provider::kraken::Ohlc;
+use undrly_provider::{binance, bitkub, indodax, okx};
 
 use crate::alpaca::us_daylight_saving;
 use crate::{NormalizeError, decimal, invalid};
@@ -60,6 +61,11 @@ fn from_unix_seconds(field: &'static str, s: i64) -> Result<Timestamp, Normalize
 fn from_unix_millis(field: &'static str, ms: i64) -> Result<Timestamp, NormalizeError> {
     let t = DateTime::from_timestamp_millis(ms).ok_or_else(|| invalid(field, "out of range"))?;
     ts(field, t)
+}
+
+/// A JSON number as written in the payload, as an exact decimal.
+fn number(field: &'static str, n: &JsonNumber) -> Result<Decimal, NormalizeError> {
+    decimal(field, &n.0)
 }
 
 fn checked(bar: NormalizedBar) -> Result<NormalizedBar, NormalizeError> {
@@ -552,6 +558,167 @@ pub fn earnings(
     Ok(out)
 }
 
+// ------------------------------------------- V1.9 stablecoin/fiat venues
+
+/// The single symbol a bar payload that names no market belongs to.
+fn single<'a>(
+    symbols: &'a [VenueSymbol],
+    what: &'static str,
+) -> Result<Option<&'a VenueSymbol>, NormalizeError> {
+    match symbols {
+        [] => Ok(None),
+        [one] => Ok(Some(one)),
+        _ => Err(invalid(
+            what,
+            "bars name no market; request one market per record",
+        )),
+    }
+}
+
+/// Binance-layout klines (Binance, Coins.ph, HashKey) at the requested
+/// interval. The payload names neither market nor interval.
+pub struct KlineBarNormalizer(pub BarInterval);
+
+impl BarNormalizer for KlineBarNormalizer {
+    type Bars = binance::Klines;
+
+    fn normalize_bars(
+        &self,
+        k: &binance::Klines,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedBar>, NormalizeError> {
+        let Some(symbol) = single(symbols, "klines")? else {
+            return Ok(Vec::new());
+        };
+        k.0.iter()
+            .map(|b| {
+                let open_time = from_unix_millis("openTime", b.open_time)?;
+                checked(NormalizedBar {
+                    symbol: symbol.clone(),
+                    interval: self.0,
+                    open_time,
+                    close_time: close_of(self.0, open_time)?,
+                    open: decimal("open", &b.open)?,
+                    high: decimal("high", &b.high)?,
+                    low: decimal("low", &b.low)?,
+                    close: decimal("close", &b.close)?,
+                    volume: Some(decimal("volume", &b.volume)?),
+                    trade_count: b.trades,
+                })
+            })
+            .collect()
+    }
+}
+
+/// OKX candles (newest first as served) at the requested interval.
+pub struct OkxBarNormalizer(pub BarInterval);
+
+impl BarNormalizer for OkxBarNormalizer {
+    type Bars = okx::Candles;
+
+    fn normalize_bars(
+        &self,
+        c: &okx::Candles,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedBar>, NormalizeError> {
+        let Some(symbol) = single(symbols, "candles")? else {
+            return Ok(Vec::new());
+        };
+        c.0.iter()
+            .map(|b| {
+                let open_time = from_unix_millis("ts", b.ts)?;
+                checked(NormalizedBar {
+                    symbol: symbol.clone(),
+                    interval: self.0,
+                    open_time,
+                    close_time: close_of(self.0, open_time)?,
+                    open: decimal("open", &b.open)?,
+                    high: decimal("high", &b.high)?,
+                    low: decimal("low", &b.low)?,
+                    close: decimal("close", &b.close)?,
+                    volume: Some(decimal("vol", &b.volume)?),
+                    trade_count: None,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Indodax chart bars (prices as JSON numbers, kept as written).
+pub struct IndodaxBarNormalizer(pub BarInterval);
+
+impl BarNormalizer for IndodaxBarNormalizer {
+    type Bars = indodax::Bars;
+
+    fn normalize_bars(
+        &self,
+        b: &indodax::Bars,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedBar>, NormalizeError> {
+        let Some(symbol) = single(symbols, "bars")? else {
+            return Ok(Vec::new());
+        };
+        b.0.iter()
+            .map(|bar| {
+                let open_time = from_unix_seconds("Time", bar.time)?;
+                checked(NormalizedBar {
+                    symbol: symbol.clone(),
+                    interval: self.0,
+                    open_time,
+                    close_time: close_of(self.0, open_time)?,
+                    open: number("Open", &bar.open)?,
+                    high: number("High", &bar.high)?,
+                    low: number("Low", &bar.low)?,
+                    close: number("Close", &bar.close)?,
+                    volume: Some(decimal("Volume", &bar.volume)?),
+                    trade_count: None,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Bitkub chart bars (columnar; prices as JSON numbers, kept as written).
+/// `no_data` is an empty window.
+pub struct BitkubBarNormalizer(pub BarInterval);
+
+impl BarNormalizer for BitkubBarNormalizer {
+    type Bars = bitkub::History;
+
+    fn normalize_bars(
+        &self,
+        h: &bitkub::History,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedBar>, NormalizeError> {
+        let Some(symbol) = single(symbols, "history")? else {
+            return Ok(Vec::new());
+        };
+        if h.s == "no_data" {
+            return Ok(Vec::new());
+        }
+        if h.s != "ok" {
+            return Err(invalid("s", format!("status `{}`", h.s)));
+        }
+        (0..h.t.len())
+            .map(|i| {
+                let open_time = from_unix_seconds("t", h.t[i])?;
+                checked(NormalizedBar {
+                    symbol: symbol.clone(),
+                    interval: self.0,
+                    open_time,
+                    close_time: close_of(self.0, open_time)?,
+                    open: number("o", &h.o[i])?,
+                    high: number("h", &h.h[i])?,
+                    low: number("l", &h.l[i])?,
+                    close: number("c", &h.c[i])?,
+                    volume: Some(number("v", &h.v[i])?),
+                    trade_count: None,
+                })
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use undrly_provider::hyperliquid::HyperliquidProvider;
@@ -753,5 +920,95 @@ mod tests {
             .unwrap();
         assert_eq!(nov27.open_at.to_string(), "2026-11-27T14:30:00Z");
         assert_eq!(nov27.close_at.to_string(), "2026-11-27T18:00:00Z");
+    }
+
+    #[test]
+    fn v19_venue_bars_are_hour_aligned_and_consistent() {
+        use undrly_provider::bitkub::BitkubProvider;
+        use undrly_provider::coins_ph::CoinsPhProvider;
+        use undrly_provider::hashkey::HashKeyProvider;
+        use undrly_provider::indodax::IndodaxProvider;
+        use undrly_provider::okx::OkxProvider;
+
+        let h = BarInterval::OneHour;
+        let check = |bars: Vec<NormalizedBar>, symbol: &str| {
+            assert!(!bars.is_empty(), "{symbol}");
+            for b in &bars {
+                assert_eq!(b.symbol.as_str(), symbol);
+                assert_eq!(b.open_time.as_datetime().timestamp() % 3600, 0);
+                assert_eq!(
+                    b.close_time.as_datetime() - b.open_time.as_datetime(),
+                    chrono::Duration::hours(1)
+                );
+            }
+        };
+        let k = binance::BinanceProvider::new()
+            .decode_bars(&fixture("binance/klines-USDTIDR-1h.json"))
+            .unwrap();
+        check(
+            KlineBarNormalizer(h)
+                .normalize_bars(&k, &sym("USDTIDR"))
+                .unwrap(),
+            "USDTIDR",
+        );
+        let k = CoinsPhProvider::new()
+            .decode_bars(&fixture("coins-ph/klines-USDTPHP-1h.json"))
+            .unwrap();
+        check(
+            KlineBarNormalizer(h)
+                .normalize_bars(&k, &sym("USDTPHP"))
+                .unwrap(),
+            "USDTPHP",
+        );
+        let k = HashKeyProvider::new()
+            .decode_bars(&fixture("hashkey/klines-USDTHKD-1h.json"))
+            .unwrap();
+        check(
+            KlineBarNormalizer(h)
+                .normalize_bars(&k, &sym("USDTHKD"))
+                .unwrap(),
+            "USDTHKD",
+        );
+        let c = OkxProvider::new()
+            .decode_bars(&fixture("okx/candles-USDT-SGD-1H.json"))
+            .unwrap();
+        check(
+            OkxBarNormalizer(h)
+                .normalize_bars(&c, &sym("USDT-SGD"))
+                .unwrap(),
+            "USDT-SGD",
+        );
+        let b = IndodaxProvider::new()
+            .decode_bars(&fixture("indodax/history-USDTIDR-60.json"))
+            .unwrap();
+        let bars = IndodaxBarNormalizer(h)
+            .normalize_bars(&b, &sym("usdtidr"))
+            .unwrap();
+        // JSON numbers become decimals exactly as written.
+        assert_eq!(bars[0].open.to_string(), b.0[0].open.0);
+        check(bars, "usdtidr");
+        let b = BitkubProvider::new()
+            .decode_bars(&fixture("bitkub/history-USDT_THB-60.json"))
+            .unwrap();
+        check(
+            BitkubBarNormalizer(h)
+                .normalize_bars(&b, &sym("USDT_THB"))
+                .unwrap(),
+            "USDT_THB",
+        );
+        // A payload naming no market belongs to exactly one requested symbol.
+        let two = [
+            VenueSymbol::new("A").unwrap(),
+            VenueSymbol::new("B").unwrap(),
+        ];
+        assert!(
+            KlineBarNormalizer(h)
+                .normalize_bars(&k_empty(), &two)
+                .is_err()
+        );
+    }
+
+    fn k_empty() -> binance::Klines {
+        binance::Klines(Vec::new())
     }
 }

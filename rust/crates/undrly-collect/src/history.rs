@@ -40,20 +40,27 @@ use undrly_normalize::fx::{
     EcbNormalizer, FedH10Normalizer,
 };
 use undrly_normalize::market_data::{
-    AlpacaBarNormalizer, HyperliquidBarNormalizer, KrakenBarNormalizer,
+    AlpacaBarNormalizer, BitkubBarNormalizer, HyperliquidBarNormalizer, IndodaxBarNormalizer,
+    KlineBarNormalizer, KrakenBarNormalizer, OkxBarNormalizer,
 };
 use undrly_normalize::worldbank::WorldBankNormalizer;
 use undrly_provider::alpaca::{self, AlpacaProvider, Credentials};
 use undrly_provider::bank_indonesia::{self, BankIndonesiaProvider};
 use undrly_provider::bank_of_canada::{self, BankOfCanadaProvider};
+use undrly_provider::binance::{self, BinanceProvider};
+use undrly_provider::bitkub::{self, BitkubProvider};
 use undrly_provider::bnm::{self, BnmMonthProvider};
 use undrly_provider::cbm::{self, CbmProvider};
+use undrly_provider::coins_ph::{self, CoinsPhProvider};
 use undrly_provider::ecb::{self, EcbProvider};
 use undrly_provider::eia::{self, EiaProvider};
 use undrly_provider::fed_h10::{self, FedH10Provider};
+use undrly_provider::hashkey::{self, HashKeyProvider};
 use undrly_provider::http::{FetchedRecord, HttpClient};
 use undrly_provider::hyperliquid::{self, HyperliquidProvider};
+use undrly_provider::indodax::{self, IndodaxProvider};
 use undrly_provider::kraken::{self, KrakenProvider};
+use undrly_provider::okx::{self, OkxProvider};
 use undrly_provider::worldbank::{self, WorldBankProvider};
 use undrly_provider::{finnhub, fred};
 use undrly_store::market::quote_feeds_of_source;
@@ -316,6 +323,8 @@ async fn bars(
     }
     t.print("bars hyperliquid", started);
     failures += t.failures;
+
+    failures += stablecoin_venue_bars(conn, client, o).await?;
 
     // Alpaca IEX: batches of symbols per URL, every page followed.
     let Some(credentials) = alpaca else {
@@ -755,4 +764,179 @@ async fn reference(
 
     t.print("reference", started);
     Ok(t.failures)
+}
+
+/// V1.9 stablecoin/fiat venues (docs/v1.9-live-fx.md): each venue's 1h and
+/// 1d bars for its declared markets, one market and interval per request
+/// (OKX pages back 100 bars at a time). Returns the failed requests.
+async fn stablecoin_venue_bars(
+    conn: &mut PgConnection,
+    client: &HttpClient,
+    o: &Options,
+) -> Result<usize, Error> {
+    let now = Utc::now();
+    let mut failures = 0;
+    let windows = [
+        (BarInterval::OneHour, o.days_1h),
+        (BarInterval::OneDay, o.days_1d),
+    ];
+    let start = |days: i64| now - TimeDelta::days(days);
+
+    // Binance-layout klines (Binance, Coins.ph, HashKey): up to 1,000 bars
+    // from the window's start, which covers 30 days of hours or a year of days.
+    for source in [binance::SOURCE_ID, coins_ph::SOURCE_ID, hashkey::SOURCE_ID] {
+        let (markets, _) = symbols(conn, source, true).await?;
+        let started = Instant::now();
+        let mut t = Tally::default();
+        for market in &markets {
+            for (interval, days) in windows {
+                let tf = if interval == BarInterval::OneHour {
+                    "1h"
+                } else {
+                    "1d"
+                };
+                let from = start(days).timestamp_millis();
+                step!(t, format!("{source} {market} {tf}"), {
+                    let normalizer = KlineBarNormalizer(interval);
+                    let (f, r) = match source {
+                        binance::SOURCE_ID => {
+                            let f = binance::fetch_klines(client, market, tf, from, 1000).await?;
+                            let r = ingest_bars(
+                                conn,
+                                &BinanceProvider::new(),
+                                &normalizer,
+                                &raw(&f),
+                                &sym(market),
+                            )
+                            .await?;
+                            (f, r)
+                        }
+                        coins_ph::SOURCE_ID => {
+                            let f = coins_ph::fetch_klines(client, market, tf, from, 1000).await?;
+                            let r = ingest_bars(
+                                conn,
+                                &CoinsPhProvider::new(),
+                                &normalizer,
+                                &raw(&f),
+                                &sym(market),
+                            )
+                            .await?;
+                            (f, r)
+                        }
+                        _ => {
+                            let f = hashkey::fetch_klines(client, market, tf, from, 1000).await?;
+                            let r = ingest_bars(
+                                conn,
+                                &HashKeyProvider::new(),
+                                &normalizer,
+                                &raw(&f),
+                                &sym(market),
+                            )
+                            .await?;
+                            (f, r)
+                        }
+                    };
+                    t.bars(&f, &r);
+                    Ok::<(), Error>(())
+                });
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        }
+        t.print(&format!("bars {source}"), started);
+        failures += t.failures;
+    }
+
+    // OKX: newest first, 100 bars per page, paged back with `after`.
+    let (markets, _) = symbols(conn, okx::SOURCE_ID, true).await?;
+    let started = Instant::now();
+    let mut t = Tally::default();
+    for market in &markets {
+        for (interval, days) in windows {
+            let bar = if interval == BarInterval::OneHour {
+                "1H"
+            } else {
+                "1Dutc"
+            };
+            let oldest = start(days).timestamp_millis();
+            let mut after: Option<i64> = None;
+            loop {
+                let mut next: Option<i64> = None;
+                step!(t, format!("okx {market} {bar}"), {
+                    let f = okx::fetch_candles(client, market, bar, after).await?;
+                    let r = ingest_bars(
+                        conn,
+                        &OkxProvider::new(),
+                        &OkxBarNormalizer(interval),
+                        &raw(&f),
+                        &sym(market),
+                    )
+                    .await?;
+                    let page = <OkxProvider as undrly_provider::BarsProvider>::decode_bars(
+                        &OkxProvider::new(),
+                        &f.body,
+                    )
+                    .map_err(undrly_ingest::IngestError::from)?;
+                    next = page.0.last().map(|c| c.ts).filter(|ts| *ts > oldest);
+                    t.bars(&f, &r);
+                    Ok::<(), Error>(())
+                });
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                match next {
+                    Some(ts) => after = Some(ts),
+                    None => break,
+                }
+            }
+        }
+    }
+    t.print("bars okx", started);
+    failures += t.failures;
+
+    // Indodax and Bitkub chart history: one window per request.
+    let to = now.timestamp();
+    for source in [indodax::SOURCE_ID, bitkub::SOURCE_ID] {
+        let (markets, _) = symbols(conn, source, true).await?;
+        let started = Instant::now();
+        let mut t = Tally::default();
+        for market in &markets {
+            for (interval, days) in windows {
+                let tf = if interval == BarInterval::OneHour {
+                    "60"
+                } else {
+                    "1D"
+                };
+                let from = start(days).timestamp();
+                step!(t, format!("{source} {market} {tf}"), {
+                    let (f, r) = if source == indodax::SOURCE_ID {
+                        let f = indodax::fetch_history(client, market, tf, from, to).await?;
+                        let r = ingest_bars(
+                            conn,
+                            &IndodaxProvider::new(),
+                            &IndodaxBarNormalizer(interval),
+                            &raw(&f),
+                            &sym(market),
+                        )
+                        .await?;
+                        (f, r)
+                    } else {
+                        let f = bitkub::fetch_history(client, market, tf, from, to).await?;
+                        let r = ingest_bars(
+                            conn,
+                            &BitkubProvider::new(),
+                            &BitkubBarNormalizer(interval),
+                            &raw(&f),
+                            &sym(market),
+                        )
+                        .await?;
+                        (f, r)
+                    };
+                    t.bars(&f, &r);
+                    Ok::<(), Error>(())
+                });
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+        t.print(&format!("bars {source}"), started);
+        failures += t.failures;
+    }
+    Ok(failures)
 }

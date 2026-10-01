@@ -42,6 +42,7 @@ use undrly_provider::{coinbase, coingecko, kraken, nasdaq, sec, ssga};
 
 pub mod cusip;
 pub mod fx;
+pub mod stablecoin_fx;
 
 /// Source id under which built snapshots are stored.
 pub const SNAPSHOT_SOURCE: &str = "undrly-universe";
@@ -1188,6 +1189,7 @@ fn finish(ctx: Ctx<'_>) -> Result<Build, BuildError> {
             .collect(),
         quote_feeds: out.feeds.into_values().collect(),
         quote_aggregations: out.aggregations.into_values().collect(),
+        quote_derivations: Vec::new(),
         universes,
     };
 

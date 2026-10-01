@@ -36,7 +36,7 @@ use sqlx::postgres::PgPoolOptions;
 use undrly_core::{
     DisplayName, PriceType, Redistribution, Source, SourceId, Timestamp, VenueSymbol,
 };
-use undrly_ingest::market_data::ingest_perp_contexts;
+use undrly_ingest::market_data::{ingest_perp_contexts, ingest_reference_window};
 use undrly_ingest::quotes::{
     QuoteIngestReport, ingest_quotes_for, ingest_quotes_of_types, refresh_canonical_quotes,
 };
@@ -51,22 +51,31 @@ use undrly_normalize::fx::{
 use undrly_normalize::gold_api::GoldApiNormalizer;
 use undrly_normalize::hyperliquid::{HyperliquidBookNormalizer, HyperliquidNormalizer};
 use undrly_normalize::kraken::KrakenNormalizer;
+use undrly_normalize::venues::{
+    BitkubNormalizer, BookTickerNormalizer, HashKeyNormalizer, IndodaxNormalizer, OkxNormalizer,
+};
 use undrly_normalize::worldbank::WorldBankNormalizer;
 use undrly_provider::alpaca::{self, AlpacaProvider, Credentials};
 use undrly_provider::bank_indonesia::{self, BankIndonesiaProvider};
 use undrly_provider::bank_of_canada::{self, BankOfCanadaProvider};
+use undrly_provider::binance::{self, BinanceProvider};
+use undrly_provider::bitkub::{self, BitkubProvider};
 use undrly_provider::bitstamp::{self, BitstampProvider};
 use undrly_provider::bnm::{self, BnmProvider};
 use undrly_provider::cbm::{self, CbmProvider};
 use undrly_provider::coinbase::{self, CoinbaseProvider};
+use undrly_provider::coins_ph::{self, CoinsPhProvider};
 use undrly_provider::curated::CuratedProvider;
 use undrly_provider::ecb::{self, EcbProvider};
 use undrly_provider::eia::{self, EiaProvider};
 use undrly_provider::fed_h10::{self, FedH10Provider};
 use undrly_provider::gold_api::{self, GoldApiProvider};
+use undrly_provider::hashkey::{self, HashKeyProvider};
 use undrly_provider::http::{FetchError, FetchedRecord, HttpClient};
 use undrly_provider::hyperliquid::{self, HyperliquidBookProvider, HyperliquidProvider};
+use undrly_provider::indodax::{self, IndodaxProvider};
 use undrly_provider::kraken::{self, KrakenProvider};
+use undrly_provider::okx::{self, OkxProvider};
 use undrly_provider::sec::http::{SecClient, SecUserAgent};
 use undrly_provider::worldbank::{self, WorldBankProvider};
 use undrly_provider::{coingecko, sec, ssga};
@@ -80,11 +89,14 @@ const COMMODITIES: &str = "data/reference/commodities.json";
 const FX: &str = "data/reference/fx.json";
 const FX_IDS: &str = "data/reference/fx-ids.json";
 const FX_REPORT: &str = "data/reference/fx-report.md";
+const STABLECOIN_FX: &str = "data/reference/stablecoin-fx.json";
+const STABLECOIN_FX_IDS: &str = "data/reference/stablecoin-fx-ids.json";
+const STABLECOIN_FX_REPORT: &str = "data/reference/stablecoin-fx-report.md";
 const UNIVERSE_DIR: &str = "data/universe";
 
 /// Every source. Redistribution starts `unknown` (treated as restricted)
 /// until a human reviews each source's terms.
-const SOURCES: [(&str, &str); 28] = [
+const SOURCES: [(&str, &str); 34] = [
     ("undrly-curated", "Undrly curated reference data"),
     (
         "undrly-universe",
@@ -140,6 +152,12 @@ const SOURCES: [(&str, &str); 28] = [
         "Robinhood Assets (Jersey) Limited Final Terms (documents)",
     ),
     ("tempo-rpc", "Tempo Mainnet RPC (rpc.tempo.xyz)"),
+    ("binance", "Binance spot public market data"),
+    ("okx", "OKX public market data"),
+    ("indodax", "Indodax public market data"),
+    ("bitkub", "Bitkub public market data"),
+    ("coins-ph", "Coins.ph (Coins Pro) public market data"),
+    ("hashkey", "HashKey Exchange public market data"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -151,6 +169,8 @@ enum Feed {
     /// Hyperliquid order books (`l2Book`, one perp per request).
     HyperliquidBook,
     GoldApi,
+    /// gold-api's OHLC over the last 24 hours (API key, V1.9).
+    GoldApiOhlc,
     Alpaca,
     Eia,
     WorldBank,
@@ -161,15 +181,23 @@ enum Feed {
     BankIndonesia,
     Bnm,
     Cbm,
+    /// V1.9 stablecoin/fiat venue books.
+    Binance,
+    Okx,
+    Indodax,
+    Bitkub,
+    CoinsPh,
+    HashKey,
 }
 
 impl Feed {
-    const ALL: [Feed; 15] = [
+    const ALL: [Feed; 22] = [
         Feed::Kraken,
         Feed::Coinbase,
         Feed::Hyperliquid,
         Feed::HyperliquidBook,
         Feed::GoldApi,
+        Feed::GoldApiOhlc,
         Feed::Alpaca,
         Feed::Eia,
         Feed::WorldBank,
@@ -180,6 +208,12 @@ impl Feed {
         Feed::BankIndonesia,
         Feed::Bnm,
         Feed::Cbm,
+        Feed::Binance,
+        Feed::Okx,
+        Feed::Indodax,
+        Feed::Bitkub,
+        Feed::CoinsPh,
+        Feed::HashKey,
     ];
 
     fn source(self) -> &'static str {
@@ -187,7 +221,7 @@ impl Feed {
             Feed::Kraken => kraken::SOURCE_ID,
             Feed::Coinbase => coinbase::SOURCE_ID,
             Feed::Hyperliquid | Feed::HyperliquidBook => hyperliquid::SOURCE_ID,
-            Feed::GoldApi => gold_api::SOURCE_ID,
+            Feed::GoldApi | Feed::GoldApiOhlc => gold_api::SOURCE_ID,
             Feed::Alpaca => alpaca::SOURCE_ID,
             Feed::Eia => eia::SOURCE_ID,
             Feed::WorldBank => worldbank::SOURCE_ID,
@@ -198,6 +232,12 @@ impl Feed {
             Feed::BankIndonesia => bank_indonesia::SOURCE_ID,
             Feed::Bnm => bnm::SOURCE_ID,
             Feed::Cbm => cbm::SOURCE_ID,
+            Feed::Binance => binance::SOURCE_ID,
+            Feed::Okx => okx::SOURCE_ID,
+            Feed::Indodax => indodax::SOURCE_ID,
+            Feed::Bitkub => bitkub::SOURCE_ID,
+            Feed::CoinsPh => coins_ph::SOURCE_ID,
+            Feed::HashKey => hashkey::SOURCE_ID,
         }
     }
 
@@ -211,10 +251,19 @@ impl Feed {
             // 178 requests of weight 2 against Hyperliquid's 1,200 per minute.
             Feed::HyperliquidBook => 60,
             Feed::GoldApi => 60,
+            // Free tier: 10 history/OHLC requests an hour; four metals hourly.
+            Feed::GoldApiOhlc => 3600,
             Feed::Alpaca => 30,
             Feed::Eia => 6 * 3600,
             Feed::WorldBank => 24 * 3600,
             Feed::Bitstamp => 10,
+            // Stablecoin/fiat books (docs/v1.9-live-fx.md).
+            Feed::Binance
+            | Feed::Okx
+            | Feed::Indodax
+            | Feed::Bitkub
+            | Feed::CoinsPh
+            | Feed::HashKey => 10,
             // Daily reference rates (docs/v1.2-fx.md §6); an unchanged
             // response is the same raw record.
             Feed::Ecb | Feed::BankOfCanada | Feed::BankIndonesia | Feed::Bnm | Feed::Cbm => 3600,
@@ -237,8 +286,15 @@ impl Feed {
             Feed::Coinbase
             | Feed::HyperliquidBook
             | Feed::GoldApi
+            | Feed::GoldApiOhlc
             | Feed::Bitstamp
-            | Feed::BankIndonesia => symbols.iter().map(|s| vec![s.clone()]).collect(),
+            | Feed::BankIndonesia
+            | Feed::Okx
+            | Feed::Indodax
+            | Feed::Bitkub
+            | Feed::CoinsPh
+            | Feed::HashKey => symbols.iter().map(|s| vec![s.clone()]).collect(),
+            Feed::Binance => pack(symbols, |b| BinanceProvider::book_ticker_url(b).len()),
             Feed::BankOfCanada => {
                 pack(symbols, |b| BankOfCanadaProvider::observations_url(b).len())
             }
@@ -478,6 +534,12 @@ async fn seed(conn: &mut PgConnection, path: Option<&str>) -> Result<(), Error> 
     seed_curated(conn, CuratedProvider::new(), DEFAULT_UNIVERSE).await?;
     seed_curated(conn, CuratedProvider::new(), COMMODITIES).await?;
     seed_fx(conn).await?;
+    seed_universe(conn).await?;
+    seed_stablecoin_fx(conn).await
+}
+
+/// The V1.1 universe snapshot, its raw upstream files first.
+async fn seed_universe(conn: &mut PgConnection) -> Result<(), Error> {
     let root = Path::new(UNIVERSE_DIR);
     let snapshot = root.join("snapshot.json");
     if !snapshot.exists() {
@@ -523,6 +585,16 @@ async fn seed(conn: &mut PgConnection, path: Option<&str>) -> Result<(), Error> 
         &snapshot.display().to_string(),
     )
     .await
+}
+
+/// Stablecoin/fiat markets and derived FX crosses (docs/v1.9-live-fx.md),
+/// after the FX file and the universe snapshot it references.
+async fn seed_stablecoin_fx(conn: &mut PgConnection) -> Result<(), Error> {
+    if !Path::new(STABLECOIN_FX).exists() {
+        println!("seed: no {STABLECOIN_FX} (run `undrly-collect fx build`)");
+        return Ok(());
+    }
+    seed_curated(conn, CuratedProvider::new(), STABLECOIN_FX).await
 }
 
 /// The FX universes (docs/v1.2-fx.md): the spec first, as its own raw
@@ -574,6 +646,34 @@ fn fx_build() -> Result<ExitCode, Error> {
         build.minted
     );
     println!("  report: {FX_REPORT}");
+
+    // V1.9: stablecoin/fiat markets and derived crosses, on the FX ids.
+    let stable_ids: IdMap = if Path::new(STABLECOIN_FX_IDS).exists() {
+        json(STABLECOIN_FX_IDS)?
+    } else {
+        IdMap::default()
+    };
+    let spec = read(undrly_universe::stablecoin_fx::SPEC_PATH)?;
+    let stable = undrly_universe::stablecoin_fx::build(
+        &spec,
+        &v1,
+        &build.ids,
+        stable_ids,
+        &mut undrly_universe::mint,
+    )?;
+    write(STABLECOIN_FX_IDS, &to_json(&stable.ids))?;
+    write(STABLECOIN_FX, &to_json(&stable.universe))?;
+    write(STABLECOIN_FX_REPORT, stable.report.as_bytes())?;
+    let u = &stable.universe;
+    println!(
+        "stablecoin fx build: {} venues, {} feeds, {} aggregations, {} derived crosses; {} ids minted",
+        u.venues.len(),
+        u.quote_feeds.len(),
+        u.quote_aggregations.len(),
+        u.quote_derivations.len(),
+        stable.minted
+    );
+    println!("  report: {STABLECOIN_FX_REPORT}");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -753,6 +853,7 @@ async fn collect(conn: &mut PgConnection, once: bool) -> Result<ExitCode, Error>
         _ => None,
     };
     let eia_key = std::env::var("EIA_API_KEY").ok().filter(|k| !k.is_empty());
+    let gold_key = std::env::var("GOLD_API_KEY").ok().filter(|k| !k.is_empty());
     let feeds: Vec<Feed> = Feed::ALL
         .into_iter()
         .filter(|f| match f {
@@ -764,12 +865,17 @@ async fn collect(conn: &mut PgConnection, once: bool) -> Result<ExitCode, Error>
                 println!("eia: skipped (EIA_API_KEY not set)");
                 false
             }
+            Feed::GoldApiOhlc if gold_key.is_none() => {
+                println!("gold-api ohlc: skipped (GOLD_API_KEY not set)");
+                false
+            }
             _ => true,
         })
         .collect();
     let keys = Keys {
         alpaca: credentials.as_ref(),
         eia: eia_key.as_deref(),
+        gold: gold_key.as_deref(),
     };
     if once {
         return once_pass(conn, &client, &keys, &feeds).await;
@@ -830,7 +936,7 @@ async fn once_pass(
     keys: &Keys<'_>,
     feeds: &[Feed],
 ) -> Result<ExitCode, Error> {
-    const ORDER: [Feed; 15] = [
+    const ORDER: [Feed; 22] = [
         Feed::WorldBank,
         Feed::Eia,
         Feed::FedH10,
@@ -840,12 +946,20 @@ async fn once_pass(
         Feed::Bnm,
         Feed::Cbm,
         Feed::GoldApi,
+        Feed::GoldApiOhlc,
         Feed::Alpaca,
         // Books first, then the marks they are attached to (within 60 s).
         Feed::HyperliquidBook,
         Feed::Hyperliquid,
         Feed::Coinbase,
         Feed::Bitstamp,
+        // Stablecoin/fiat legs before Kraken's USD legs, so a cross sees both fresh.
+        Feed::Binance,
+        Feed::Okx,
+        Feed::Indodax,
+        Feed::Bitkub,
+        Feed::CoinsPh,
+        Feed::HashKey,
         Feed::Kraken,
     ];
     let mut failures = 0;
@@ -882,6 +996,7 @@ async fn once_pass(
 struct Keys<'a> {
     alpaca: Option<&'a Credentials>,
     eia: Option<&'a str>,
+    gold: Option<&'a str>,
 }
 
 /// A source's progress through its current poll.
@@ -982,6 +1097,11 @@ async fn poll_batch(
         Feed::Hyperliquid => hyperliquid::fetch_meta_and_asset_ctxs(client).await?,
         Feed::HyperliquidBook => hyperliquid::fetch_l2_book(client, refs[0]).await?,
         Feed::GoldApi => gold_api::fetch_price(client, refs[0]).await?,
+        Feed::GoldApiOhlc => {
+            let key = keys.gold.expect("gold-api ohlc enabled only with a key");
+            let end = chrono::Utc::now().timestamp();
+            gold_api::fetch_ohlc(client, key, refs[0], end - 86_400, end).await?
+        }
         Feed::Alpaca => {
             let credentials = keys.alpaca.expect("alpaca enabled only with credentials");
             alpaca::fetch_snapshots(client, credentials, &refs).await?
@@ -1011,12 +1131,27 @@ async fn poll_batch(
         }
         Feed::Bnm => bnm::fetch_rates(client).await?,
         Feed::Cbm => cbm::fetch_latest(client).await?,
+        Feed::Binance => binance::fetch_book_tickers(client, &refs).await?,
+        Feed::Okx => okx::fetch_ticker(client, refs[0]).await?,
+        Feed::Indodax => indodax::fetch_ticker(client, refs[0]).await?,
+        Feed::Bitkub => bitkub::fetch_ticker(client, refs[0]).await?,
+        Feed::CoinsPh => coins_ph::fetch_book_ticker(client, refs[0]).await?,
+        Feed::HashKey => hashkey::fetch_book_ticker(client, refs[0]).await?,
     };
     let raw = RawRecord {
         record_key: fetched.record_key.clone(),
         payload: fetched.body.clone(),
         received_at: fetched.received_at,
     };
+    if feed == Feed::GoldApiOhlc {
+        // A window, not quotes: stored as the source states it (V1.9).
+        let symbol = VenueSymbol::new(&batch[0]).map_err(|e| Error::Usage(e.to_string()))?;
+        let write = ingest_reference_window(conn, &raw, &symbol).await?;
+        tally.records += 1;
+        tally.bytes += fetched.body.len();
+        tally.new += usize::from(write == undrly_store::Write::Inserted);
+        return Ok(());
+    }
     let requested: Vec<VenueSymbol> = batch
         .iter()
         .filter_map(|s| VenueSymbol::new(s).ok())
@@ -1069,6 +1204,8 @@ async fn poll_batch(
             )
             .await?
         }
+        // Stored as a window and returned above.
+        Feed::GoldApiOhlc => unreachable!("gold-api ohlc is not a quote feed"),
         Feed::GoldApi => {
             ingest_quotes_for(
                 conn,
@@ -1150,6 +1287,59 @@ async fn poll_batch(
         }
         Feed::Cbm => {
             ingest_quotes_for(conn, &CbmProvider::new(), &CbmNormalizer, &raw, requested).await?
+        }
+        Feed::Binance => {
+            ingest_quotes_for(
+                conn,
+                &BinanceProvider::new(),
+                &BookTickerNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::Okx => {
+            ingest_quotes_for(conn, &OkxProvider::new(), &OkxNormalizer, &raw, requested).await?
+        }
+        Feed::Indodax => {
+            ingest_quotes_for(
+                conn,
+                &IndodaxProvider::new(),
+                &IndodaxNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::Bitkub => {
+            ingest_quotes_for(
+                conn,
+                &BitkubProvider::new(),
+                &BitkubNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::CoinsPh => {
+            ingest_quotes_for(
+                conn,
+                &CoinsPhProvider::new(),
+                &BookTickerNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::HashKey => {
+            ingest_quotes_for(
+                conn,
+                &HashKeyProvider::new(),
+                &HashKeyNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
         }
     };
     let refreshed = refresh_canonical_quotes(conn, &report.pairs, Timestamp::now()).await?;

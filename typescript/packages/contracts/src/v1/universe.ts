@@ -10,6 +10,7 @@ export const UNIVERSE_KEYS = [
   "hyperliquid-perps",
   "fx-major",
   "fx-southeast-asia",
+  "fx-global",
 ] as const;
 export type UniverseKey = (typeof UNIVERSE_KEYS)[number];
 

@@ -31,12 +31,15 @@ use undrly_core::SourceId;
 pub mod alpaca;
 pub mod bank_indonesia;
 pub mod bank_of_canada;
+pub mod binance;
+pub mod bitkub;
 pub mod bitstamp;
 pub mod bnm;
 pub mod cbm;
 pub mod circle;
 pub mod coinbase;
 pub mod coingecko;
+pub mod coins_ph;
 pub mod curated;
 pub mod ecb;
 pub mod eia;
@@ -46,11 +49,14 @@ pub mod finnhub;
 pub mod fixture;
 pub mod fred;
 pub mod gold_api;
+pub mod hashkey;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod hyperliquid;
+pub mod indodax;
 pub mod kraken;
 pub mod nasdaq;
+pub mod okx;
 pub mod rhj;
 pub mod sec;
 pub mod solana;
@@ -115,6 +121,24 @@ macro_rules! quote_provider {
     };
 }
 pub(crate) use quote_provider;
+
+/// [`BarsProvider`] for a provider made by [`quote_provider!`], whose bar
+/// payload `decode` turns into `$bars` (the V1.9 venues share this).
+macro_rules! bars_provider {
+    ($name:ident, $bars:ty, $decode:path) => {
+        impl $crate::BarsProvider for $name {
+            type Bars = $bars;
+
+            fn decode_bars(&self, payload: &[u8]) -> Result<$bars, $crate::DecodeError> {
+                $decode(payload).map_err(|reason| $crate::DecodeError {
+                    source_id: <Self as $crate::Provider>::source_id(self).clone(),
+                    reason,
+                })
+            }
+        }
+    };
+}
+pub(crate) use bars_provider;
 
 /// A captured fixture under `tests/fixtures/sources/` (tests only).
 #[cfg(test)]

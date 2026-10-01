@@ -138,7 +138,8 @@
   "aggregationMethods": [
     "latest-observation-v1",
     "mean-venue-mid-v1",
-    "mark-with-venue-book-v1"
+    "mark-with-venue-book-v1",
+    "cross-via-stablecoin-v1"
   ],
   "unitsOfMeasure": [
     "troy_ounce",
@@ -153,7 +154,8 @@
     "nasdaq100",
     "hyperliquid-perps",
     "fx-major",
-    "fx-southeast-asia"
+    "fx-southeast-asia",
+    "fx-global"
   ],
   "freshnessClocks": [
     "continuous",

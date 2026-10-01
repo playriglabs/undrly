@@ -11,8 +11,10 @@
  * GET /v1/universes              universes with a snapshot (V1.1)
  * GET /v1/universes/:key         one universe's latest membership
  * GET /v1/candles/:query         venue candles (?interval=1h|4h|1d&limit=&start=&end=) (V1.3)
- * GET /v1/history/:query         a reference series' published values (?limit=&start=&end=)
+ * GET /v1/history/:query         a reference series' published values, or a derived
+ *                                cross's closes (?limit=&start=&end=&interval=&series=)
  * GET /v1/market/:query          the quote in market context: status and statistics
+ * GET /v1/markets                every quoted market, paged (?class=a,b&q=&limit=&offset=)
  * GET /v1/derivatives/:query     a perpetual's mark, index, funding and open interest
  * GET /v1/calendar/:query        a session market's trading calendar (?from=&to= dates)
  * GET /v1/economic-calendar      scheduled US economic releases (?from=&to=&category=)
@@ -28,10 +30,12 @@ import {
   type Bounds,
   calendar,
   candles,
+  crossLegs,
   derivatives,
   economicCalendar,
   history,
   market,
+  markets,
   newYorkToday,
 } from "./market-data.ts";
 import {
@@ -80,6 +84,10 @@ const SERVICE_INDEX = v1.ServiceIndexV1.parse({
     },
     { path: "/v1/history/{query}?limit=", returns: "a reference series' published values" },
     { path: "/v1/market/{query}", returns: "the quote with market status and statistics" },
+    {
+      path: "/v1/markets?class=&q=&limit=&offset=",
+      returns: "every quoted market, paged, with status, statistics and a 24h sparkline",
+    },
     {
       path: "/v1/derivatives/{query}",
       returns: "a perpetual's mark, index, funding, open interest",
@@ -256,6 +264,12 @@ export function createApp(sql: Sql, options: AppOptions) {
     const query = queryOf(c.req.param("query"), undefined);
     const pair = await onePair(query, c.req.query("unit"));
     if (pair instanceof Response) return pair;
+    if ((await crossLegs(sql, pair)) !== null) {
+      return fail(
+        "no_data",
+        `${query}: a derived cross has no venue bars; its closes are at /v1/history?interval=1h|1d`,
+      );
+    }
     const r = await candles(sql, pair, interval as v1.CandleInterval, b);
     return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
   });
@@ -263,10 +277,18 @@ export function createApp(sql: Sql, options: AppOptions) {
   app.get("/v1/history/:query{.+}", async (c) => {
     const b = bounds((n) => c.req.query(n));
     if (b instanceof Response) return b;
+    const series = c.req.query("series") ?? "default";
+    if (series !== "default" && series !== "reference") {
+      return fail("bad_request", "series is `reference` (or omitted)");
+    }
+    const interval = c.req.query("interval") ?? "1d";
+    if (interval !== "1h" && interval !== "1d") {
+      return fail("bad_request", "interval is 1h or 1d");
+    }
     const query = queryOf(c.req.param("query"), undefined);
     const pair = await onePair(query, c.req.query("unit"));
     if (pair instanceof Response) return pair;
-    const r = await history(sql, pair, b);
+    const r = await history(sql, pair, b, { series, interval });
     return "kind" in r ? fail("no_data", `${query}: ${r.message}`) : Response.json(r);
   });
 
@@ -278,6 +300,41 @@ export function createApp(sql: Sql, options: AppOptions) {
     const q = await canonicalQuote(sql, pair, at, options.staleAfterSeconds);
     if (q.kind !== "quote") return fail("no_quote", `no quote for ${query}`);
     return Response.json(await market(sql, pair, q.quote, at));
+  });
+
+  app.get("/v1/markets", async (c) => {
+    const classes = (c.req.query("class") ?? "").split(",").filter((x) => x !== "");
+    if (!classes.every((x) => (v1.INSTRUMENT_CLASSES as readonly string[]).includes(x))) {
+      return fail(
+        "bad_request",
+        `class is a comma-separated list of ${v1.INSTRUMENT_CLASSES.join(", ")}`,
+      );
+    }
+    const q = (c.req.query("q") ?? "").trim();
+    if (q.length > 64) return fail("bad_request", "q is at most 64 characters");
+    const int = (name: string, fallback: number, min: number, max: number) => {
+      const text = c.req.query(name);
+      if (text === undefined) return fallback;
+      return /^[0-9]{1,6}$/.test(text) && Number(text) >= min && Number(text) <= max
+        ? Number(text)
+        : null;
+    };
+    const limit = int("limit", v1.MARKETS_DEFAULT_LIMIT, 1, v1.MARKETS_MAX_LIMIT);
+    if (limit === null) {
+      return fail("bad_request", `limit must be an integer from 1 to ${v1.MARKETS_MAX_LIMIT}`);
+    }
+    const offset = int("offset", 0, 0, 999_999);
+    if (offset === null) return fail("bad_request", "offset must be a non-negative integer");
+    const body = await markets(
+      sql,
+      [...new Set(classes)] as v1.InstrumentClass[],
+      q === "" ? null : q,
+      limit,
+      offset,
+      now(),
+      options.staleAfterSeconds,
+    );
+    return Response.json(body);
   });
 
   app.get("/v1/derivatives/:query{.+}", async (c) => {

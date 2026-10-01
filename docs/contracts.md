@@ -152,8 +152,17 @@ V1.1 additions (v1 is unreleased, so v1 itself was extended):
 V1.3 additions (market data, [`v1.3-market-data.md`](v1.3-market-data.md)):
 
 - `CandlesV1` (`/v1/candles`), `HistoryV1` (`/v1/history`), `MarketV1`
-  (`/v1/market`), `DerivativesV1` (`/v1/derivatives`); semantics in the
-  schemas' doc comments (`typescript/packages/contracts/src/v1/market-data.ts`).
+  (`/v1/market`), `MarketsV1` (`/v1/markets`), `DerivativesV1`
+  (`/v1/derivatives`); semantics in the schemas' doc comments
+  (`typescript/packages/contracts/src/v1/market-data.ts`).
+- `MarketsV1` (`/v1/markets?class=&q=&limit=&offset=`): every market with a
+  canonical quote, paged (limit 1–100, default 50), ordered by subject name.
+  `class` takes a comma-separated list of instrument classes; `q` matches
+  subject names and aliases (case-insensitive substring, wildcards literal).
+  Each row is `/v1/market`'s body (`null` when no quote is servable now) plus
+  a `sparkline` of up to 24 hourly closes. `counts` per subject class ignore
+  both filters; `total` is the filtered count. Built for the dashboard's
+  market table (docs/v1.8-mcp.md §17).
 - Error code `no_data` (404): the market exists, the endpoint has no data
   for it.
 
@@ -204,6 +213,25 @@ V1.4 additions (cross-ecosystem identity,
   candidates, each with its `matches` (rule, side, namespace, value, venue,
   source), current `identifiers`, outgoing `relationships` (with the
   projections, marked `projected`) and, for pairs, `quoted`. No scores.
+
+### Derived FX (V1.9)
+
+- `cross-via-stablecoin-v1` (`AggregationMethod`): a `DerivedQuoteV1`
+  (`basis: derived`, `priceType: mid`), the ratio of two pairs' canonical
+  quotes through a stablecoin, rounded to the fewer significant digits of the
+  two (`v1.crossRate`). Its inputs are the legs' observations
+  (`canonical_quote_legs`); `asOf` is the older leg.
+- `MarketStatisticsV1.window` adds `rolling_24h_closes` (a cross: max/min
+  of 25 hourly cross closes, `volume: null`), and for published series
+  (reference rates, averages; `marketStatus: null`)
+  `rolling_24h_observations` (polled within the day) and
+  `previous_publication` (latest vs the value before, `previousClose` set).
+  A published series' `/v1/markets` sparkline is its hourly last values or
+  its last 24 publications.
+- `HistoryV1` adds `priceType: mid` with `basis: derived` for a cross's
+  closes (`/v1/history/{q}?interval=1h|1d`); `?series=reference` returns a
+  cross pair's own reference feed.
+- Universe key `fx-global`. Details: [`docs/v1.9-live-fx.md`](v1.9-live-fx.md).
 
 ## Changing the API contract
 

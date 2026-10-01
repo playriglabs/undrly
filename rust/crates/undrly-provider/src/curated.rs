@@ -36,6 +36,9 @@ pub struct Universe {
     /// Pairs aggregated with a method other than the default.
     #[serde(default)]
     pub quote_aggregations: Vec<QuoteAggregationRecord>,
+    /// Pairs priced as a cross of two other pairs (V1.9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quote_derivations: Vec<QuoteDerivationRecord>,
     /// Universe memberships (generated snapshots only).
     #[serde(default)]
     pub universes: Vec<UniverseRecord>,
@@ -70,6 +73,20 @@ pub struct QuoteAggregationRecord {
     pub subject: String,
     pub unit: String,
     pub method: String,
+}
+
+/// `subject` in `unit` = (`via` in `unit`) / (`via` in `base`), e.g. USD/IDR
+/// = USDT/IDR / USDT/USD (V1.9, `cross-via-stablecoin-v1`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuoteDerivationRecord {
+    pub subject: String,
+    pub unit: String,
+    pub method: String,
+    /// The stablecoin both legs price.
+    pub via: String,
+    /// The currency the denominator leg prices `via` in.
+    pub base: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

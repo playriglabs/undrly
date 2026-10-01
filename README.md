@@ -49,10 +49,11 @@ V1.2 adds two curated FX universes ([`docs/v1.2-fx.md`](docs/v1.2-fx.md)):
   (Kraken; Kraken + Bitstamp for EUR/USD and GBP/USD), otherwise
   central-bank **reference** rates (ECB, Bank of Canada, Federal Reserve
   H.10). 10 crosses have no approved direct source and return `no_quote`.
-- **`fx-southeast-asia`** (9 pairs): official reference rates only (Bank
+- **`fx-southeast-asia`** (10 pairs): official reference rates (Bank
   Indonesia JISDOR and transaction rates, Bank Negara Malaysia, Central Bank
-  of Myanmar, H.10, ECB). USD/PHP and USD/VND have no approved
-  machine-readable source.
+  of Myanmar, H.10, ECB). USD/VND has no approved machine-readable source;
+  since V1.9, USD/IDR, USD/THB, USD/SGD and USD/PHP are priced live as
+  derived crosses (below).
 
 An FX market is an instrument of class `fx` between two currency nodes
 (`EUR/USD`: 1 EUR in USD). Query it as `EUR/USD`, `eur/usd` or `EURUSD`;
@@ -122,6 +123,26 @@ Tools: `search_instruments`, `resolve_instrument`, `explain_instrument`,
 `get_instrument`, `get_instrument_graph`, `get_quote`, `get_markets`,
 `get_history`, `get_derivatives`; resource `undrly://vocabulary`.
 
+## Live FX through stablecoins (V1.9, local)
+
+V1.9 ([`docs/v1.9-live-fx.md`](docs/v1.9-live-fx.md)) prices FX live where
+V1.2 had only daily reference rates:
+
+- **Stablecoin/fiat markets** from venue books: USDT/USDC in IDR (Binance,
+  Indodax), THB (Bitkub), PHP (Coins.ph), SGD (OKX, Coinbase), HKD (HashKey),
+  AED, BRL, MXN (Binance, OKX, Coinbase), and EUR, GBP, AUD, CAD (Kraken,
+  Coinbase, OKX); EURC in USD and EUR. Query them like any pair:
+  `/v1/quote/USDT/IDR`.
+- **Derived FX**: `USD/IDR`, `USD/THB`, `USD/PHP`, `USD/SGD`, `USD/HKD`,
+  `USD/AED`, `USD/BRL`, `USD/MXN` = `USDT/X ÷ USDT/USD`, served with
+  `basis: derived` and method `cross-via-stablecoin-v1`, 24h statistics and
+  hourly history from the legs' closes.
+- Books wider than 10 bps at research are excluded (USD/JPY stays a
+  reference rate); CNY and SAR have no source and are listed as unsupported.
+
+The definition is committed (`data/reference/stablecoin-fx-spec.json` →
+`undrly-collect fx build` → `data/reference/stablecoin-fx.json`).
+
 ## Quickstart
 
 Needs Docker, Rust (`rustup`), Bun ≥ 1.4 and `jq`.
@@ -161,6 +182,7 @@ All routes are `GET`, read-only, and answer from Undrly's own storage.
 | `/v1/candles/{query}?interval=1h\|4h\|1d&limit=` | a market's venue candles (OHLCV), oldest first (V1.3) |
 | `/v1/history/{query}?limit=` | a reference series' published values (central-bank rates, commodity references) |
 | `/v1/market/{query}` | the quote with market status (`continuous`, `open`, `closed`, …) and session or rolling-24h statistics |
+| `/v1/markets?class=&q=&limit=&offset=` | every quoted market, paged and filterable by class and name, each with market status, statistics and a 24h sparkline |
 | `/v1/derivatives/{query}` | a perpetual's mark, index, funding rate and open interest |
 | `/v1/calendar/{query}?from=&to=` | a stock's trading days, hours, early closes, holidays, corporate actions (dividends, splits, mergers…) and earnings dates with estimates |
 | `/v1/economic-calendar?from=&to=&category=` | scheduled US economic releases (CPI, jobs report, GDP, PCE, …) |
@@ -209,7 +231,7 @@ gold-api, Alpaca/IEX; for V1.1 also CoinGecko, SSGA, Nasdaq, SEC, EIA and
 the World Bank; for V1.2 also Bitstamp, the ECB, the Bank of Canada, the
 Federal Reserve, Bank Indonesia, Bank Negara Malaysia and the Central Bank of
 Myanmar; for V1.3 also FRED and Finnhub, whose free plan is personal-use
-only) are **unreviewed**, and Undrly does **not** currently
+only; for V1.9 also Binance, OKX, Indodax, Bitkub, Coins.ph and HashKey) are **unreviewed**, and Undrly does **not** currently
 claim production redistribution rights for any of them. Do not expose this
 data publicly. Details per source: [`docs/sources/quotes.md`](docs/sources/quotes.md).
 

@@ -4,10 +4,49 @@
 //! The feed's unit is USD, so a response stating another currency is rejected
 //! rather than mislabeled.
 
-use undrly_core::{PriceType, VenueSymbol};
-use undrly_provider::gold_api::Price;
+use undrly_core::{Decimal, PriceType, Timestamp, VenueSymbol};
+use undrly_provider::gold_api::{Ohlc, Price};
 
-use crate::{NormalizeError, NormalizedQuote, QuoteNormalizer, decimal, timestamp};
+use crate::{NormalizeError, NormalizedQuote, QuoteNormalizer, decimal, invalid, timestamp};
+
+/// A source's open/high/low/close over its own window (V1.9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalizedWindow {
+    pub start: Timestamp,
+    pub end: Timestamp,
+    pub open: Decimal,
+    pub high: Decimal,
+    pub low: Decimal,
+    pub close: Decimal,
+}
+
+fn unix(field: &'static str, s: i64) -> Result<Timestamp, NormalizeError> {
+    let micros = s
+        .checked_mul(1_000_000)
+        .ok_or_else(|| invalid(field, "out of range"))?;
+    Timestamp::from_unix_micros(micros).map_err(|e| invalid(field, e))
+}
+
+/// gold-api `/ohlc` → its window, exactly as stated. A window that ends
+/// before it starts or values out of order are errors, never repaired.
+pub fn normalize_window(o: &Ohlc) -> Result<NormalizedWindow, NormalizeError> {
+    let w = NormalizedWindow {
+        start: unix("startTimestamp", o.start_timestamp)?,
+        end: unix("endTimestamp", o.end_timestamp)?,
+        open: decimal("open", &o.open.0)?,
+        high: decimal("high", &o.high.0)?,
+        low: decimal("low", &o.low.0)?,
+        close: decimal("close", &o.close.0)?,
+    };
+    if w.end <= w.start {
+        return Err(invalid("endTimestamp", "the window ends before it starts"));
+    }
+    let (o, h, l, c) = (w.open, w.high, w.low, w.close);
+    if !(l <= h && l <= o && o <= h && l <= c && c <= h) {
+        return Err(invalid("ohlc", "low <= open, close <= high"));
+    }
+    Ok(w)
+}
 
 pub struct GoldApiNormalizer;
 
@@ -77,5 +116,28 @@ mod tests {
                 .normalize_quotes(&exponent, &[VenueSymbol::new("XAU").unwrap()])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn ohlc_window_as_stated() {
+        let payload = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../tests/fixtures/sources/gold-api/ohlc-XAU-24h.json"),
+        )
+        .unwrap();
+        let o = undrly_provider::gold_api::GoldApiProvider::new()
+            .decode_ohlc(&payload)
+            .unwrap();
+        let w = normalize_window(&o).unwrap();
+        assert_eq!(w.high.to_string(), "4219.0");
+        assert_eq!(
+            (w.end.as_datetime() - w.start.as_datetime()).num_hours(),
+            24
+        );
+        let bad = Ohlc {
+            high: o.low.clone(),
+            ..o
+        };
+        assert!(normalize_window(&bad).is_err());
     }
 }
