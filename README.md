@@ -183,6 +183,7 @@ All routes are `GET`, read-only, and answer from Undrly's own storage.
 | `/v1/history/{query}?limit=` | a reference series' published values (central-bank rates, commodity references) |
 | `/v1/market/{query}` | the quote with market status (`continuous`, `open`, `closed`, …) and session or rolling-24h statistics |
 | `/v1/markets?class=&q=&limit=&offset=` | every quoted market, paged and filterable by class and name, each with market status, statistics and a 24h sparkline |
+| `/v1/markets/query?id=&unit=` | the shortest query that reaches one market (`NVDA`, `BTC-PERP`, `USDT/IDR`), checked with the resolver; ids when none is unique |
 | `/v1/derivatives/{query}` | a perpetual's mark, index, funding rate and open interest |
 | `/v1/calendar/{query}?from=&to=` | a stock's trading days, hours, early closes, holidays, corporate actions (dividends, splits, mergers…) and earnings dates with estimates |
 | `/v1/economic-calendar?from=&to=&category=` | scheduled US economic releases (CPI, jobs report, GDP, PCE, …) |

@@ -493,3 +493,24 @@ export const MarketsV1 = z
     message: "a page lies within total",
   });
 export type MarketsV1 = z.infer<typeof MarketsV1>;
+
+/**
+ * `GET /v1/markets/query?id=&unit=`: the shortest query that resolves to
+ * exactly this market (subject, unit), for people and code that would rather
+ * write `/v1/quote/BTC-PERP` than ids (V1.9). Tried in order: an FX pair's
+ * name, a symbol (`NVDA`), a symbol in the unit (`USDT/IDR`), a name, a
+ * name in the unit; each must resolve, by the API's own resolver, to this
+ * one market.
+ * When none does, `query` is the canonical id with `?unit=` and `exact` is
+ * `false`. A symbol can be reassigned: store ids, not queries.
+ */
+export const MarketQueryV1 = z.strictObject({
+  schemaVersion: z.literal(1),
+  subject: PriceSubjectV1,
+  unit: PriceUnitV1,
+  /** The path segment after `/v1/quote/` (with `?unit=` for the id form). */
+  query: z.string().min(1),
+  /** `true` when `query` is a readable form; `false` for the id fallback. */
+  readable: z.boolean(),
+});
+export type MarketQueryV1 = z.infer<typeof MarketQueryV1>;

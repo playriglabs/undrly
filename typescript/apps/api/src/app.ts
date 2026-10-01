@@ -15,6 +15,7 @@
  *                                cross's closes (?limit=&start=&end=&interval=&series=)
  * GET /v1/market/:query          the quote in market context: status and statistics
  * GET /v1/markets                every quoted market, paged (?class=a,b&q=&limit=&offset=)
+ * GET /v1/markets/query          the shortest query for one market (?id=&unit=)
  * GET /v1/derivatives/:query     a perpetual's mark, index, funding and open interest
  * GET /v1/calendar/:query        a session market's trading calendar (?from=&to= dates)
  * GET /v1/economic-calendar      scheduled US economic releases (?from=&to=&category=)
@@ -48,6 +49,7 @@ import {
   resolveResult,
   type Sql,
   search,
+  shortestQuery,
   universe,
   universes,
 } from "./service.ts";
@@ -300,6 +302,14 @@ export function createApp(sql: Sql, options: AppOptions) {
     const q = await canonicalQuote(sql, pair, at, options.staleAfterSeconds);
     if (q.kind !== "quote") return fail("no_quote", `no quote for ${query}`);
     return Response.json(await market(sql, pair, q.quote, at));
+  });
+
+  app.get("/v1/markets/query", async (c) => {
+    const id = (c.req.query("id") ?? "").trim();
+    if (id === "") return fail("bad_request", "missing query parameter id");
+    const pair = await onePair(id, c.req.query("unit"));
+    if (pair instanceof Response) return pair;
+    return Response.json(await shortestQuery(sql, pair));
   });
 
   app.get("/v1/markets", async (c) => {

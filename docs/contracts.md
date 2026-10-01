@@ -231,6 +231,9 @@ V1.4 additions (cross-ecosystem identity,
 - `HistoryV1` adds `priceType: mid` with `basis: derived` for a cross's
   closes (`/v1/history/{q}?interval=1h|1d`); `?series=reference` returns a
   cross pair's own reference feed.
+- `MarketQueryV1` (`/v1/markets/query?id=&unit=`): the shortest readable
+  query that the resolver maps to exactly that market (`readable: true`),
+  else the id form. Readable queries are for people and examples; store ids.
 - Universe key `fx-global`. Details: [`docs/v1.9-live-fx.md`](v1.9-live-fx.md).
 
 ## Changing the API contract

@@ -551,6 +551,31 @@ describe.skipIf(url === undefined)("market data with a database", () => {
     }
   });
 
+  it("markets/query: the shortest query that resolves to exactly the market", async () => {
+    const all = v1.MarketsV1.parse((await get("/v1/markets?limit=100")).body);
+    for (const row of all.markets) {
+      const params = new URLSearchParams({ id: row.subject.id, unit: row.unit.id });
+      const r = v1.MarketQueryV1.parse((await get(`/v1/markets/query?${params}`)).body);
+      expect(r.subject.id).toBe(row.subject.id);
+      // Whatever form it is, quoting it reaches this very market.
+      const q = (await get(`/v1/quote/${r.query}`)).body as {
+        subject?: { id: string };
+        unit?: { id: string };
+      };
+      if (row.market !== null) {
+        expect([q.subject?.id, q.unit?.id]).toEqual([row.subject.id, row.unit.id]);
+      }
+    }
+    const idr = all.markets.find((m) => m.subject.name === "USD/IDR");
+    if (idr) {
+      const params = new URLSearchParams({ id: idr.subject.id, unit: idr.unit.id });
+      const r = v1.MarketQueryV1.parse((await get(`/v1/markets/query?${params}`)).body);
+      expect(r).toMatchObject({ query: "USD/IDR", readable: true });
+    }
+    const bad = await get("/v1/markets/query");
+    expect(bad.status).toBe(400);
+  });
+
   it("calendar: sessions, early closes and closed weekdays of a session market", async () => {
     const r = await get("/v1/calendar/NVDA?from=2026-09-24&to=2026-09-30");
     expect(r.status).toBe(200);

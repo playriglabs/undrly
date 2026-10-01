@@ -1304,3 +1304,39 @@ export async function universe(sql: Sql, key: v1.UniverseKey): Promise<v1.Univer
     }),
   });
 }
+
+/**
+ * The shortest query that resolves to exactly `pair` (`v1.MarketQueryV1`),
+ * checked with the resolver itself, or the canonical id form.
+ */
+export async function shortestQuery(sql: Sql, pair: Pair): Promise<v1.MarketQueryV1> {
+  const subject = await subjectOf(sql, pair.subject);
+  const unit = await unitOf(sql, pair.unit, pair.unitCategory);
+  const symbols = await sql<{ alias: string }[]>`
+    SELECT alias FROM aliases WHERE node_id = ${pair.subject} AND kind = 'symbol'
+    ORDER BY length(alias), alias`;
+  const code = unit.code;
+  const candidates: string[] = [];
+  if (subject.kind === "instrument" && subject.class === "fx") candidates.push(subject.name);
+  // Bare forms first: `/unit` only when the bare one is not this market alone.
+  for (const { alias } of symbols) candidates.push(alias);
+  for (const { alias } of symbols) if (code) candidates.push(`${alias}/${code}`);
+  candidates.push(subject.name);
+  if (code) candidates.push(`${subject.name}/${code}`);
+  for (const query of [...new Set(candidates)]) {
+    const r = await resolveQuery(sql, query);
+    if (r === null || r.status === "not_found") continue;
+    const pairs = await pricedPairs(sql, r);
+    const only = pairs.length === 1 ? pairs[0] : undefined;
+    if (only && only.subject === pair.subject && only.unit === pair.unit) {
+      return v1.MarketQueryV1.parse({ schemaVersion: 1, subject, unit, query, readable: true });
+    }
+  }
+  return v1.MarketQueryV1.parse({
+    schemaVersion: 1,
+    subject,
+    unit,
+    query: `${subject.id}?unit=${unit.id}`,
+    readable: false,
+  });
+}
