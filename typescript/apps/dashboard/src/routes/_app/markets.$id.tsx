@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import type { v1 } from "@undrly/contracts";
 import clsx from "clsx";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ClassIcon } from "../../components/ClassIcon";
 import { type ChartMode, TradingChart } from "../../components/TradingChart";
 import { Age, Change, ErrorState, Tag } from "../../components/ui";
@@ -17,6 +17,7 @@ import {
   subjectClass,
   unitCode,
 } from "../../lib/format";
+import { API_ORIGIN, DOCS_URL } from "../../lib/links";
 import { marketDetailQuery, seriesQuery } from "../../lib/queries";
 
 type Search = { unit?: string; range?: Range };
@@ -61,13 +62,23 @@ function MarketPage() {
   }
   const m = market.data;
   const candidate = explain.ok ? explain.data.candidates[0] : undefined;
-  const request = `/v1/quote/${m.subject.id}?unit=${m.unit.id}`;
+  // Readable when the API finds one (`/v1/quote/NVDA`), else ids.
+  const request = data.query.ok
+    ? `/v1/quote/${data.query.data.query}`
+    : `/v1/quote/${m.subject.id}?unit=${m.unit.id}`;
 
   return (
     // The layout bleeds to the right edge (for Explore's table); this page keeps its gutter.
     <div className="grid items-start gap-6 pr-8 max-md:pr-4 xl:grid-cols-[minmax(0,1fr)_400px]">
       <div className="min-w-0">
-        <Toolbar request={request} />
+        <Toolbar
+          request={request}
+          title={
+            data.query.ok && data.query.data.readable
+              ? data.query.data.query
+              : `${displayName(m.subject.name)}/${unitCode(m.unit)}`
+          }
+        />
 
         <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,1fr))]">
           <div className="flex min-w-0 items-center gap-4 py-2">
@@ -160,7 +171,7 @@ function MarketPage() {
 
 type Row = [string, ReactNode];
 
-function Toolbar({ request }: { request: string | null }) {
+function Toolbar({ request, title }: { request: string | null; title?: string }) {
   const router = useRouter();
   return (
     <div className="flex items-center justify-between gap-3">
@@ -180,13 +191,93 @@ function Toolbar({ request }: { request: string | null }) {
             label="Copy link"
             boxed
           />
-          <CopyButton
-            value={`curl -s -H "Authorization: Bearer $UNDRLY_API_KEY" "https://api.undrly.xyz${request}"`}
-            label="Copy request"
-            text="‹/› Code"
-            boxed
-            primary
-          />
+          <CodeMenu request={request} title={title ?? request} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The request as a copyable curl, one argument per line. */
+const curlOf = (request: string) =>
+  `curl -s \\\n  "${API_ORIGIN}${request}" \\\n  -H "Authorization: Bearer $UNDRLY_API_KEY"`;
+
+/** "‹/› Code": a dropdown with the market's request as curl, to copy. */
+function CodeMenu({ request, title }: { request: string; title: string }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (
+        e instanceof KeyboardEvent ? e.key === "Escape" : !root.current?.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  const curl = curlOf(request);
+  return (
+    <div ref={root} className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-2 bg-[#dbe4d3] px-3 py-1.5 text-[14px] text-[#1a2317] transition-colors hover:bg-[#eff5e9]"
+      >
+        <span aria-hidden="true">‹/›</span> Code
+        <svg
+          className={clsx("size-3.5 transition-transform", open && "rotate-180")}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          role="dialog"
+          aria-label="Request code"
+          className="absolute top-full right-0 z-30 mt-2 w-[min(560px,calc(100vw-2rem))] border border-line-strong bg-panel shadow-[0_16px_40px_rgba(0,0,0,0.45)]"
+        >
+          <div className="flex items-center justify-between gap-4 px-5 pt-4 pb-3">
+            <p className="truncate text-[15px] text-ink">{title}</p>
+            <CopyButton value={curl} label="Copy request" text="Copy" />
+          </div>
+          <pre className="mx-5 overflow-x-auto border border-line bg-paper px-4 py-3 font-mono text-[12.5px] leading-6 text-ink">
+            <code>
+              {"curl -s \\\n  "}
+              <span className="text-up">{`"${API_ORIGIN}${request}"`}</span>
+              {" \\\n  -H "}
+              <span className="text-up">{'"Authorization: Bearer $UNDRLY_API_KEY"'}</span>
+            </code>
+          </pre>
+          <div className="mt-4 flex items-center gap-2 border-t border-line px-5 py-3">
+            <a
+              href={DOCS_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 border border-line-strong px-3 py-1.5 text-[13px] text-ink transition-colors hover:bg-card"
+            >
+              Documentation <span aria-hidden="true">↗</span>
+            </a>
+            <Link
+              to="/api-keys"
+              className="inline-flex items-center gap-2 border border-line-strong px-3 py-1.5 text-[13px] text-ink transition-colors hover:bg-card"
+            >
+              Get an API key
+            </Link>
+          </div>
         </div>
       ) : null}
     </div>
@@ -316,7 +407,7 @@ function ChartCard({ id, unit, range }: { id: string; unit: string | undefined; 
 function UseCard({ request }: { request: string }) {
   return (
     <section className="relative overflow-hidden border border-[#3a4a33] bg-[linear-gradient(135deg,#1d2a19_0%,#10160f_60%)] p-6">
-      <h2 className="font-display text-[26px] leading-tight text-ink">Use this market</h2>
+      <h2 className="text-[24px] leading-tight tracking-[-0.01em] text-ink">Use this market</h2>
       <p className="mt-2 text-[14px] leading-[1.6] text-[#c2ccbd]">
         The same quote, with its unit and freshness, from one request.
       </p>
@@ -325,7 +416,7 @@ function UseCard({ request }: { request: string }) {
       </pre>
       <div className="mt-4">
         <CopyButton
-          value={`curl -s -H "Authorization: Bearer $UNDRLY_API_KEY" "https://api.undrly.xyz${request}"`}
+          value={curlOf(request)}
           label="Copy request"
           text="Copy request"
           boxed
@@ -494,7 +585,7 @@ type Candidate = v1.ExplainV1["candidates"][number];
 
 /**
  * Identifiers and relationships, where they say something: not for crypto or
- * forex, and without an equity's TRADES_ON (the quote's venue, shown above).
+ * forex, and never TRADES_ON (where it trades is the quote's venue, shown above).
  */
 function IdentitySection({
   subject,
@@ -508,7 +599,7 @@ function IdentitySection({
     return null;
   }
   const relationships = uniqueRelationships(candidate.relationships).filter(
-    (r) => !(cls === "equity" && r.relationshipType === "TRADES_ON"),
+    (r) => r.relationshipType !== "TRADES_ON",
   );
   const rows: Row[] = [
     ...candidate.identifiers.map(

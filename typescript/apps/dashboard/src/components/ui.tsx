@@ -85,7 +85,7 @@ export function Tag({
 export function ErrorState({ title, message }: { title: string; message: string }) {
   return (
     <div className="border border-dashed border-line-strong px-6 py-14 text-center">
-      <p className="font-display text-2xl">{title}</p>
+      <p className="text-2xl">{title}</p>
       <p className="mt-2 text-[14px] text-muted">{message}</p>
     </div>
   );

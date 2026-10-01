@@ -73,10 +73,14 @@ export const getMarketDetail = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .validator((input: { id: string; unit?: string }) => input)
   .handler(async ({ data }) => {
-    const [market, quote, explain] = await Promise.all([
+    const queryParams = new URLSearchParams({ id: data.id });
+    if (data.unit) queryParams.set("unit", data.unit);
+    const [market, quote, explain, query] = await Promise.all([
       get(marketPath("market", data.id, data.unit), v1.MarketV1),
       get(marketPath("quote", data.id, data.unit), v1.QuoteV1),
       get(`/v1/explain?${new URLSearchParams({ q: data.id })}`, v1.ExplainV1),
+      // The shortest query for this market, for the copyable request.
+      get(`/v1/markets/query?${queryParams}`, v1.MarketQueryV1),
     ]);
     const derivatives =
       market.ok &&
@@ -84,14 +88,17 @@ export const getMarketDetail = createServerFn({ method: "GET" })
       market.data.subject.class === "perpetual_future"
         ? await get(marketPath("derivatives", data.id, data.unit), v1.DerivativesV1)
         : null;
-    return { market, quote, explain, derivatives };
+    return { market, quote, explain, derivatives, query };
   });
 
-/** Chart ranges: what each one asks of the candle intervals the API serves (1h, 4h, 1d). */
+/**
+ * Chart ranges: what each one asks of the candle intervals the API serves (1h, 4h, 1d).
+ * The short ranges load twice their span, so the chart opens with more bars to read.
+ */
 export const RANGES = {
-  "24H": { interval: "1h", limit: 24 },
-  "1W": { interval: "4h", limit: 42 },
-  "1M": { interval: "1d", limit: 30 },
+  "24H": { interval: "1h", limit: 48 },
+  "1W": { interval: "4h", limit: 84 },
+  "1M": { interval: "1d", limit: 60 },
   "3M": { interval: "1d", limit: 90 },
   "1Y": { interval: "1d", limit: 365 },
 } as const satisfies Record<string, { interval: v1.CandleInterval; limit: number }>;

@@ -15,13 +15,14 @@ const th =
  */
 function ApiKeys() {
   return (
-    <>
+    // The layout bleeds to the right edge (for Explore's table); this page keeps its gutter.
+    <div className="pr-8 max-md:pr-4">
       <div className="flex items-end justify-between gap-8 max-md:flex-col max-md:items-start max-md:gap-4">
         <div>
-          <h1 className="text-[44px] leading-none tracking-[-0.03em] max-md:text-[34px]">
+          <h1 className="text-[29px] leading-none font-sans tracking-[-0.03em] max-md:text-[34px]">
             API keys
           </h1>
-          <p className="mt-3 max-w-[560px] text-[15px] leading-[1.6] text-muted">
+          <p className="mt-3 max-w-140 text-[15px] leading-[1.6] text-muted">
             Keys authenticate requests to the Undrly API and the MCP server. Send one as a bearer
             token on every request.
           </p>
@@ -67,6 +68,6 @@ function ApiKeys() {
   "https://api.undrly.xyz/v1/quote/BTC/USD"`}
         </pre>
       </Panel>
-    </>
+    </div>
   );
 }

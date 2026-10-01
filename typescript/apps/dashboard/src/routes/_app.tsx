@@ -12,9 +12,11 @@ import type { v1 } from "@undrly/contracts";
 import clsx from "clsx";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ClassGlyph } from "../components/ClassIcon";
+import { UserAvatar } from "../components/UserAvatar";
 import { authClient } from "../lib/auth-client";
 import { CrumbContext } from "../lib/crumb";
 import { CLASS_LABEL, CLASS_ORDER } from "../lib/format";
+import { DOCS_URL } from "../lib/links";
 import { marketCountsQuery } from "../lib/queries";
 import { getSessionUser } from "../server/session";
 
@@ -94,6 +96,14 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
       </nav>
 
       <div className="px-3 pb-2">
+        <a
+          href={DOCS_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-3 px-3 py-2.5 text-[15px] text-muted transition-colors hover:bg-card hover:text-ink"
+        >
+          <DocsIcon /> Documentation
+        </a>
         <Link
           to="/api-keys"
           className="flex items-center gap-3 px-3 py-2.5 text-[15px] text-muted transition-colors hover:bg-card hover:text-ink data-[status=active]:bg-card data-[status=active]:text-ink"
@@ -101,7 +111,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
           <KeyIcon /> API keys
         </Link>
       </div>
-      <UserBlock email={user.email} name={user.name} />
+      <UserBlock email={user.email} />
     </aside>
   );
 }
@@ -130,7 +140,7 @@ function SideLink(props: {
   );
 }
 
-function UserBlock({ email, name }: { email: string; name: string }) {
+function UserBlock({ email }: { email: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const signOut = async () => {
@@ -142,14 +152,12 @@ function UserBlock({ email, name }: { email: string; name: string }) {
   return (
     <div className="border-t border-line px-5 pt-4 pb-5">
       <div className="flex items-center gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center bg-forest font-display text-[18px] text-[#1a2317] uppercase">
-          {(name || email).slice(0, 1)}
-        </span>
+        <UserAvatar seed={email} />
         <span className="min-w-0">
           <span className="block truncate text-[14px] text-ink" title={email}>
             {email}
           </span>
-          <span className="block text-[12px] text-faint">Preview access</span>
+          <span className="block text-[12px] text-faint">7D Trial</span>
         </span>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2">
@@ -264,6 +272,22 @@ function SearchBox() {
         ⌘K
       </kbd>
     </form>
+  );
+}
+
+function DocsIcon(): ReactNode {
+  return (
+    <svg
+      className="size-4 shrink-0"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path d="M5 4.5h9.5L19 9v10.5H5z" />
+      <path d="M14.5 4.5V9H19M8.5 13h7M8.5 16.5h5" />
+    </svg>
   );
 }
 

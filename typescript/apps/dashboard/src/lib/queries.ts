@@ -1,4 +1,4 @@
-import { keepPreviousData, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
 import {
   getMarketCounts,
   getMarketDetail,
@@ -11,10 +11,19 @@ import {
 /** Prices move: the table and quote panels refresh while the page is open. */
 const LIVE_MS = 15_000;
 
-export const marketsQuery = (filter: MarketsFilter) =>
-  queryOptions({
-    queryKey: ["markets", filter.classes, filter.q, filter.page],
-    queryFn: () => getMarkets({ data: filter }),
+/**
+ * The market table, a page of 50 at a time as it scrolls. Every loaded page
+ * refreshes with the rest of the dashboard.
+ */
+export const marketsQuery = (filter: Omit<MarketsFilter, "page">) =>
+  infiniteQueryOptions({
+    queryKey: ["markets", filter.classes, filter.q],
+    queryFn: ({ pageParam }) => getMarkets({ data: { ...filter, page: pageParam } }),
+    initialPageParam: 1,
+    getNextPageParam: (last, all) =>
+      last.ok && last.data.offset + last.data.markets.length < last.data.total
+        ? all.length + 1
+        : undefined,
     placeholderData: keepPreviousData,
     refetchInterval: LIVE_MS,
   });

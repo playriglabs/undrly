@@ -9,7 +9,10 @@ export function ClassIcon({ subject, size = 36 }: { subject: v1.PriceSubjectV1; 
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
-      <ClassGlyph cls={cls} />
+      {/* The glyph fills 60% of the tile: 22px in the table, 31px on a detail page. */}
+      <span style={{ width: Math.round(size * 0.6), height: Math.round(size * 0.6) }}>
+        <ClassGlyph cls={cls} className="size-full" />
+      </span>
     </span>
   );
 }

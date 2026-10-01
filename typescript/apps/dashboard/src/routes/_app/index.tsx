@@ -1,12 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { v1 } from "@undrly/contracts";
 import clsx from "clsx";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ClassIcon } from "../../components/ClassIcon";
 import { Sparkline } from "../../components/Sparkline";
 import { Change, ErrorState } from "../../components/ui";
-import { PAGE_SIZE } from "../../lib/api";
 import {
   CLASS_LABEL,
   CLASS_ORDER,
@@ -19,7 +18,7 @@ import {
 } from "../../lib/format";
 import { marketCountsQuery, marketsQuery } from "../../lib/queries";
 
-type Search = { class?: string; q?: string; page?: number };
+type Search = { class?: string; q?: string };
 
 /** `class` in the URL is a comma-separated list, like the API's. */
 const classesOf = (value: string | undefined): v1.InstrumentClass[] =>
@@ -33,39 +32,44 @@ export const Route = createFileRoute("/_app/")({
   validateSearch: (search: Record<string, unknown>): Search => {
     const classes = classesOf(typeof search.class === "string" ? search.class : undefined);
     const q = typeof search.q === "string" ? search.q.trim().slice(0, 64) : "";
-    const page = Number(search.page);
     return {
       ...(classes.length ? { class: classes.join(",") } : {}),
       ...(q ? { q } : {}),
-      ...(Number.isInteger(page) && page > 1 ? { page } : {}),
     };
   },
   loaderDeps: ({ search }) => ({
     classes: classesOf(search.class),
     q: search.q ?? "",
-    page: search.page ?? 1,
   }),
-  loader: ({ context, deps }) => context.queryClient.ensureQueryData(marketsQuery(deps)),
+  loader: ({ context, deps }) => context.queryClient.ensureInfiniteQueryData(marketsQuery(deps)),
   head: () => ({ meta: [{ title: "Explore — Undrly" }] }),
   component: Explore,
 });
 
 function Explore() {
   const search = Route.useSearch();
-  const filter = {
-    classes: classesOf(search.class),
-    q: search.q ?? "",
-    page: search.page ?? 1,
-  };
-  const { data: result, isFetching } = useQuery(marketsQuery(filter));
+  const filter = { classes: classesOf(search.class), q: search.q ?? "" };
+  const query = useInfiniteQuery(marketsQuery(filter));
+  const pages = query.data?.pages ?? [];
+  const failed = pages.find((p) => !p.ok);
+  const loaded = pages.flatMap((p) => (p.ok ? p.data.markets : []));
+  const first = pages[0];
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+    // -mb-10: main's 64px bottom padding becomes 24px here, matching the top.
+    <div className="grid items-start gap-6 lg:-mb-10 lg:grid-cols-[300px_minmax(0,1fr)]">
       <Filters classes={filter.classes} q={filter.q} />
-      {result && !result.ok ? (
-        <ErrorState title="Markets are unavailable" message={result.message} />
-      ) : result?.ok ? (
-        <MarketTable data={result.data} page={filter.page} fetching={isFetching} />
+      {failed && !failed.ok ? (
+        <ErrorState title="Markets are unavailable" message={failed.message} />
+      ) : first?.ok ? (
+        <MarketTable
+          rows={loaded}
+          total={first.data.total}
+          fetching={query.isFetching && !query.isFetchingNextPage}
+          hasMore={query.hasNextPage}
+          loadingMore={query.isFetchingNextPage}
+          loadMore={() => void query.fetchNextPage()}
+        />
       ) : null}
     </div>
   );
@@ -87,7 +91,6 @@ function Filters({ classes, q }: { classes: v1.InstrumentClass[]; q: string }) {
         search: (prev) => ({
           ...prev,
           q: text.trim() || undefined,
-          page: undefined,
         }),
         replace: true,
       });
@@ -101,7 +104,6 @@ function Filters({ classes, q }: { classes: v1.InstrumentClass[]; q: string }) {
       search: (prev) => ({
         ...prev,
         class: next.length ? next.join(",") : undefined,
-        page: undefined,
       }),
     });
   };
@@ -213,25 +215,48 @@ const th =
   "px-4 py-3.5 text-left text-[12px] font-normal tracking-[0.06em] whitespace-nowrap text-faint uppercase";
 
 function MarketTable({
-  data,
-  page,
+  rows,
+  total,
   fetching,
+  hasMore,
+  loadingMore,
+  loadMore,
 }: {
-  data: v1.MarketsV1;
-  page: number;
+  rows: v1.MarketsRowV1[];
+  total: number;
   fetching: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
 }) {
-  const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+  const scroller = useRef<HTMLDivElement>(null);
+  const sentinel = useRef<HTMLTableRowElement>(null);
+  // Load the next page when the last rows come into view inside the table.
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !hasMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && !loadingMore) loadMore();
+      },
+      { root: scroller.current, rootMargin: "400px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, loadMore]);
+
   return (
     <div
       className={clsx(
-        "border border-r-0 border-line bg-panel transition-opacity",
+        // Fills the viewport below the header (64px) with the page's 24px
+        // above and below, so rows scroll inside the table, not the page.
+        "flex flex-col border border-r-0 border-line bg-panel transition-opacity lg:h-[calc(100dvh-7rem)]",
         fetching && "opacity-80",
       )}
     >
-      <div className="overflow-x-auto">
+      <div ref={scroller} className="overflow-auto lg:min-h-0 lg:flex-1">
         <table className="w-full min-w-245 border-collapse">
-          <thead className="border-b border-line">
+          <thead className="sticky top-0 z-10 bg-panel shadow-[inset_0_-1px_0_var(--color-line)]">
             <tr>
               <th className={th}>Name</th>
               <th className={th}>Asset</th>
@@ -243,45 +268,32 @@ function MarketTable({
             </tr>
           </thead>
           <tbody>
-            {data.markets.length === 0 ? (
+            {rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-16 text-center text-[14px] text-faint">
                   No markets match these filters.
                 </td>
               </tr>
             ) : (
-              data.markets.map((row) => <Row key={`${row.subject.id}:${row.unit.id}`} row={row} />)
+              rows.map((row) => <Row key={`${row.subject.id}:${row.unit.id}`} row={row} />)
             )}
+            {hasMore ? (
+              <tr ref={sentinel}>
+                <td colSpan={7} className="px-4 py-5 text-center text-[13px] text-faint">
+                  {loadingMore ? "Loading more markets…" : ""}
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
-      <div className="flex items-center justify-between border-t border-line px-4 py-3 text-[13px] text-muted">
-        <span className="tabular">{data.total.toLocaleString("en-US")} results</span>
-        {pages > 1 ? (
-          <div className="flex items-center gap-2">
-            <PageLink page={page - 1} disabled={page <= 1} label="Previous" />
-            <span className="px-2 text-[12px] text-faint tabular">
-              {page} / {pages}
-            </span>
-            <PageLink page={page + 1} disabled={page >= pages} label="Next" />
-          </div>
-        ) : null}
+      <div className="flex shrink-0 items-center justify-between border-t border-line px-4 py-3 text-[13px] text-muted">
+        <span className="tabular">
+          {rows.length.toLocaleString("en-US")} of {total.toLocaleString("en-US")} markets
+        </span>
+        {loadingMore ? <span className="text-faint">Loading…</span> : null}
       </div>
     </div>
-  );
-}
-
-function PageLink({ page, disabled, label }: { page: number; disabled: boolean; label: string }) {
-  const cls = "border border-line-strong px-3 py-1.5 transition-colors";
-  if (disabled) return <span className={clsx(cls, "text-faint opacity-50")}>{label}</span>;
-  return (
-    <Link
-      from={Route.fullPath}
-      search={(prev) => ({ ...prev, page: page > 1 ? page : undefined })}
-      className={clsx(cls, "text-ink hover:bg-card")}
-    >
-      {label}
-    </Link>
   );
 }
 

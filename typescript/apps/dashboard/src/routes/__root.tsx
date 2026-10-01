@@ -32,7 +32,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     <RootDocument>
       <div className="flex min-h-screen items-center justify-center px-4">
         <div className="max-w-[440px] border border-line bg-panel p-8">
-          <p className="font-display text-[28px] leading-tight">Something went wrong</p>
+          <p className="text-[28px] leading-tight">Something went wrong</p>
           <p className="mt-3 font-mono text-[12px] break-words text-faint">
             {error instanceof Error ? error.message : String(error)}
           </p>

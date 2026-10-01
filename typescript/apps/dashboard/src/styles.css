@@ -44,10 +44,11 @@
     font-synthesis: none;
     color-scheme: dark;
   }
+  /* Headings are sans; Reckless is kept for the undrly wordmark only. */
   h1,
   h2,
   h3 {
-    @apply font-display font-normal;
+    @apply font-sans font-normal;
   }
   ::selection {
     @apply bg-[#506345] text-white;
