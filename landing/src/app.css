@@ -1,0 +1,59 @@
+@import 'tailwindcss';
+
+@font-face {
+  font-family: 'Pilat';
+  src: url('/fonts/Pilat-Book.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Reckless';
+  src: url('/fonts/Reckless-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Reckless';
+  src: url('/fonts/Reckless-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: 'Pilat', sans-serif;
+  --font-display: 'Reckless', Georgia, serif;
+  --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  /* Pilat ships one weight; bold UI text uses Inter Tight's variable axis. */
+  --font-inter: 'Inter Tight Variable', sans-serif;
+  --color-paper: #090b0a;
+  --color-ink: #eceeeb;
+  --color-muted: #969d96;
+  --color-forest: #b6c8a6;
+  --color-line: #242925;
+  --color-line-strong: #2c352a;
+  --color-card: #1b211a;
+}
+
+@layer base {
+  html {
+    @apply scroll-smooth scroll-pt-22.5 bg-paper font-sans text-ink antialiased motion-reduce:scroll-auto;
+    font-synthesis: none;
+    color-scheme: dark;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-display font-normal;
+  }
+  ::selection {
+    @apply bg-[#506345] text-white;
+  }
+  a,
+  button,
+  [tabindex] {
+    @apply outline-offset-[5px] focus-visible:outline-2 focus-visible:outline-forest;
+  }
+  button {
+    @apply cursor-pointer;
+  }
+}
