@@ -1,0 +1,6 @@
+.output/
+.tanstack/
+.vinxi/
+dist/
+.env
+dist/
