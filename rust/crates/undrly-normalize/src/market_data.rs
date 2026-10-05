@@ -18,7 +18,7 @@ use undrly_provider::finnhub::EarningsCalendar;
 use undrly_provider::fred::ReleaseDates;
 use undrly_provider::hyperliquid::{Candle, MetaAndAssetCtxs};
 use undrly_provider::kraken::Ohlc;
-use undrly_provider::{binance, bitkub, indodax, okx};
+use undrly_provider::{binance, bitkub, coinbase, geckoterminal, indodax, okx};
 
 use crate::alpaca::us_daylight_saving;
 use crate::{NormalizeError, decimal, invalid};
@@ -610,6 +610,119 @@ impl BarNormalizer for KlineBarNormalizer {
     }
 }
 
+/// A JSON number in plain or scientific notation (`1.2e-05`), as the exact
+/// decimal it writes. GeckoTerminal states prices as JSON numbers.
+fn plain_number(field: &'static str, n: &JsonNumber) -> Result<Decimal, NormalizeError> {
+    let Some((mantissa, exp)) = n.0.split_once(['e', 'E']) else {
+        return number(field, n);
+    };
+    let exp: i64 = exp.parse().map_err(|_| invalid(field, "bad exponent"))?;
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(m) => ("-", m),
+        None => ("", mantissa),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = format!("{int}{frac}");
+    // The decimal point sits `int.len() + exp` digits into `digits`.
+    let point = int.len() as i64 + exp;
+    let text = if point <= 0 {
+        format!("0.{}{digits}", "0".repeat(point.unsigned_abs() as usize))
+    } else if point as usize >= digits.len() {
+        format!("{digits}{}", "0".repeat(point as usize - digits.len()))
+    } else {
+        format!(
+            "{}.{}",
+            &digits[..point as usize],
+            &digits[point as usize..]
+        )
+    };
+    let trimmed = text.trim_start_matches('0');
+    let text = if trimmed.is_empty() || trimmed.starts_with('.') {
+        format!("0{trimmed}")
+    } else {
+        trimmed.to_owned()
+    };
+    decimal(field, &format!("{sign}{text}"))
+}
+
+/// Coinbase Exchange candles (V1.10, newest first as served) at the
+/// requested interval; volume in the base asset. The payload names neither
+/// product nor interval.
+pub struct CoinbaseBarNormalizer(pub BarInterval);
+
+impl BarNormalizer for CoinbaseBarNormalizer {
+    type Bars = coinbase::Candles;
+
+    fn normalize_bars(
+        &self,
+        c: &coinbase::Candles,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedBar>, NormalizeError> {
+        let Some(symbol) = single(symbols, "candles")? else {
+            return Ok(Vec::new());
+        };
+        let mut bars =
+            c.0.iter()
+                .map(|b| {
+                    let open_time = from_unix_millis("time", b.time.saturating_mul(1000))?;
+                    checked(NormalizedBar {
+                        symbol: symbol.clone(),
+                        interval: self.0,
+                        open_time,
+                        close_time: close_of(self.0, open_time)?,
+                        open: plain_number("open", &b.open)?,
+                        high: plain_number("high", &b.high)?,
+                        low: plain_number("low", &b.low)?,
+                        close: plain_number("close", &b.close)?,
+                        volume: Some(plain_number("volume", &b.volume)?),
+                        trade_count: None,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+        bars.reverse();
+        Ok(bars)
+    }
+}
+
+/// GeckoTerminal pool OHLC (V1.10, newest first as served) at the requested
+/// interval, in USD for the priced side of the pool. The payload names
+/// neither pool nor interval. Volume (USD, the pool's) is not kept.
+pub struct GeckoTerminalBarNormalizer(pub BarInterval);
+
+impl BarNormalizer for GeckoTerminalBarNormalizer {
+    type Bars = geckoterminal::Ohlcv;
+
+    fn normalize_bars(
+        &self,
+        o: &geckoterminal::Ohlcv,
+        symbols: &[VenueSymbol],
+    ) -> Result<Vec<NormalizedBar>, NormalizeError> {
+        let Some(symbol) = single(symbols, "ohlcv")? else {
+            return Ok(Vec::new());
+        };
+        let mut bars =
+            o.0.iter()
+                .map(|b| {
+                    let open_time = from_unix_millis("openTime", b.open_time.saturating_mul(1000))?;
+                    checked(NormalizedBar {
+                        symbol: symbol.clone(),
+                        interval: self.0,
+                        open_time,
+                        close_time: close_of(self.0, open_time)?,
+                        open: plain_number("open", &b.open)?,
+                        high: plain_number("high", &b.high)?,
+                        low: plain_number("low", &b.low)?,
+                        close: plain_number("close", &b.close)?,
+                        volume: None,
+                        trade_count: None,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+        bars.reverse();
+        Ok(bars)
+    }
+}
+
 /// OKX candles (newest first as served) at the requested interval.
 pub struct OkxBarNormalizer(pub BarInterval);
 
@@ -726,6 +839,59 @@ mod tests {
     use undrly_provider::{BarsProvider, QuoteProvider, alpaca};
 
     use super::*;
+
+    #[test]
+    fn coinbase_candles_oldest_first_in_their_own_column_order() {
+        let c = undrly_provider::coinbase::CoinbaseProvider::new()
+            .decode_bars(
+                br#"[[1791169200,0.00063,0.0006363,0.000634,0.0006359,1805388],
+                     [1791165600,0.000631,0.000639,0.0006338,0.000634,24373202]]"#,
+            )
+            .unwrap();
+        let sym = VenueSymbol::new("AMP-USD").unwrap();
+        let b = CoinbaseBarNormalizer(BarInterval::OneHour)
+            .normalize_bars(&c, std::slice::from_ref(&sym))
+            .unwrap();
+        assert_eq!(b.len(), 2);
+        // [time, low, high, open, close, volume]
+        assert_eq!(
+            (
+                b[0].open.to_string(),
+                b[0].high.to_string(),
+                b[0].low.to_string()
+            ),
+            ("0.0006338".into(), "0.000639".into(), "0.000631".into())
+        );
+        assert_eq!(b[1].close.to_string(), "0.0006359");
+        assert_eq!(b[1].volume.unwrap().to_string(), "1805388");
+    }
+
+    #[test]
+    fn geckoterminal_bars_oldest_first_with_exact_numbers() {
+        use undrly_provider::BarsProvider;
+        let o = undrly_provider::geckoterminal::GeckoTerminalProvider::new()
+            .decode_bars(
+                br#"{"data":{"attributes":{"ohlcv_list":[
+                  [1791133200,1.2e-05,1.3e-05,1.1e-05,1.25e-05,10.5],
+                  [1791129600,630.04,633.5,626.9,628.56,1206.0]]}}}"#,
+            )
+            .unwrap();
+        let sym = VenueSymbol::new("b:CXio").unwrap();
+        let b = GeckoTerminalBarNormalizer(BarInterval::OneHour)
+            .normalize_bars(&o, std::slice::from_ref(&sym))
+            .unwrap();
+        assert_eq!(b.len(), 2);
+        assert_eq!(b[0].open.to_string(), "630.04");
+        assert_eq!(b[1].open.to_string(), "0.000012");
+        assert_eq!(b[1].close.to_string(), "0.0000125");
+        assert!(b[0].volume.is_none());
+        assert_eq!(
+            plain_number("x", &undrly_provider::JsonNumber("-1.5E3".into()))
+                .unwrap()
+                .to_string(),
+            "-1500"
+        );
+    }
 
     fn fixture(path: &str) -> Vec<u8> {
         std::fs::read(

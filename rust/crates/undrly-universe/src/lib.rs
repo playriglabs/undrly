@@ -12,7 +12,7 @@
 //!
 //! Identity rules:
 //!
-//! - crypto assets are keyed by CoinGecko id; venue markets map to them only
+//! - crypto assets (CoinGecko's top 250) are keyed by CoinGecko id; venue markets map to them only
 //!   through CoinGecko's exchange tickers, confirmed against the venue's own
 //!   market list;
 //! - perpetuals are keyed by Hyperliquid market name; the underlying comes
@@ -35,14 +35,16 @@ use undrly_core::{
 use undrly_provider::QuoteProvider;
 use undrly_provider::curated::{
     AliasRecord, EntityRecord, InstrumentRecord, ListingRecord, QuoteAggregationRecord,
-    QuoteFeedRecord, Universe, UniverseMemberRecord, UniverseRecord, VenueRecord,
+    QuoteDerivationRecord, QuoteFeedRecord, Universe, UniverseMemberRecord, UniverseRecord,
+    VenueRecord,
 };
 use undrly_provider::hyperliquid::HyperliquidProvider;
-use undrly_provider::{coinbase, coingecko, kraken, nasdaq, sec, ssga};
+use undrly_provider::{binance, coinbase, coingecko, invesco, kraken, sec, ssga};
 
 pub mod cusip;
 pub mod fx;
 pub mod stablecoin_fx;
+pub mod tokenized;
 
 /// Source id under which built snapshots are stored.
 pub const SNAPSHOT_SOURCE: &str = "undrly-universe";
@@ -53,6 +55,10 @@ const MARKET_STALE_AFTER: u32 = 300;
 /// Paths of the raw files inside the raw directory.
 pub mod paths {
     pub const MARKETS: &str = "coingecko/markets.json";
+    pub const MARKETS_PAGE2: &str = "coingecko/markets-002.json";
+    pub const BINANCE_TICKERS: &str = "coingecko/binance-tickers-";
+    pub const MDY_HOLDINGS: &str = "ssga/holdings-daily-us-en-mdy.xlsx";
+    pub const SPSM_HOLDINGS: &str = "ssga/holdings-daily-us-en-spsm.xlsx";
     pub const COINS_LIST: &str = "coingecko/coins-list.json";
     pub const KRAKEN_TICKERS: &str = "coingecko/kraken-tickers-";
     pub const COINBASE_TICKERS: &str = "coingecko/gdax-tickers-";
@@ -61,7 +67,16 @@ pub mod paths {
     pub const COINBASE_PRODUCTS: &str = "coinbase/products.json";
     pub const HYPERLIQUID_META: &str = "hyperliquid/meta-and-asset-ctxs.json";
     pub const SPY_HOLDINGS: &str = "ssga/holdings-daily-us-en-spy.xlsx";
-    pub const NASDAQ100: &str = "nasdaq/nasdaq100.json";
+    pub const QQQ_HOLDINGS: &str = "invesco/qqq-holdings.json";
+    pub const BACKED_TOKENS: &str = "backed/tokens.json";
+    pub const BACKPACK_SECURITIES: &str = "backpack/securities.json";
+    pub const BACKPACK_ASSETS: &str = "backpack/assets.json";
+    pub const RHJ_ASSETS: &str = "rhj/assets.json";
+    pub const BSTOCKS: &str = "binance/bstocks.json";
+    /// GeckoTerminal pools of one Solana token: `…<mint>.json`.
+    pub const GECKOTERMINAL_POOLS: &str = "geckoterminal/pools/";
+    pub const GECKOTERMINAL_DEXES: &str = "geckoterminal/dexes.json";
+    pub const BINANCE_EXCHANGE_INFO: &str = "binance/exchange-info.json";
     pub const SEC_TICKERS: &str = "sec-edgar/company_tickers_exchange.json";
 }
 
@@ -118,10 +133,19 @@ pub struct Inputs<'a> {
     /// The curated V1 universe (pinned ids reused, never redeclared).
     pub v1: &'a Universe,
     pub ids: IdMap,
+    /// Underlying ISINs of products ingested from reviewed Final Terms
+    /// (data/reference/tokenized-securities.json); their registry rows are
+    /// not imported again.
+    pub bound_underlyings: &'a BTreeSet<String>,
+    /// Objects another curated file declares, by this build's key → their
+    /// canonical id ([`STABLECOIN_PINS`]): reused, never redeclared.
+    pub external: &'a BTreeMap<String, String>,
 }
 
 pub struct Build {
     pub snapshot: Universe,
+    /// Tokenized products' deployments (ingested by `onchain`).
+    pub deployments: tokenized::Deployments,
     pub ids: IdMap,
     /// Markdown import report.
     pub report: String,
@@ -214,6 +238,15 @@ const V1_PINS: [(&str, &str); 10] = [
     ("venue:coinbase", "coinbase"),
 ];
 
+/// Objects the V1.9 stablecoin FX file (`data/reference/stablecoin-fx.json`)
+/// declared first: this build's key → that file's key. Reviewed 2026-10-04:
+/// CoinGecko's `euro-coin` is Circle's EURC, the asset V1.9 prices on Kraken
+/// (`EURCUSD`) and Coinbase (`EURC-USD`); Binance is V1.9's venue.
+pub const STABLECOIN_PINS: [(&str, &str); 2] = [
+    ("coingecko:euro-coin", "asset:EURC"),
+    ("venue:binance", "venue:binance"),
+];
+
 #[derive(Default)]
 struct Out {
     entities: BTreeMap<String, EntityRecord>,
@@ -224,6 +257,7 @@ struct Out {
     aliases: BTreeSet<(String, String, String)>,
     feeds: BTreeMap<(String, String, String), QuoteFeedRecord>,
     aggregations: BTreeMap<(String, String), QuoteAggregationRecord>,
+    derivations: BTreeMap<(String, String), QuoteDerivationRecord>,
     universes: Vec<UniverseRecord>,
     /// (section, subject, reason)
     excluded: BTreeSet<(String, String, String)>,
@@ -333,6 +367,25 @@ impl Ctx<'_> {
         self.out.feeds.insert(key, feed);
     }
 
+    /// Restates a market quoted only in USDT in US dollars:
+    /// `node/USD = node/USDT × USDT/USD` (`convert-via-stablecoin-v1`,
+    /// docs/v1.10-tokenized-stocks.md §12). The USDT market stays its own.
+    fn convert_usdt_to_usd(&mut self, node: &str) -> Result<(), BuildError> {
+        let usd = usd(self)?;
+        let usdt = self.v1.id("usdt")?;
+        self.out.derivations.insert(
+            (node.to_owned(), usd.clone()),
+            QuoteDerivationRecord {
+                subject: node.to_owned(),
+                unit: usd,
+                method: "convert-via-stablecoin-v1".into(),
+                via: usdt,
+                base: None,
+            },
+        );
+        Ok(())
+    }
+
     fn universe(
         &mut self,
         key: &str,
@@ -375,6 +428,21 @@ pub fn build(
             }
         }
     }
+    let mut v1 = v1;
+    for (key, id) in inputs.external {
+        match ids.ids.get(key) {
+            Some(existing) if existing != id => {
+                return Err(BuildError::IdMap(format!(
+                    "{key} is declared elsewhere as {id}, map has {existing}"
+                )));
+            }
+            _ => {
+                ids.ids.insert(key.clone(), id.clone());
+            }
+        }
+        // Declared by its own file: referred to by id, like V1 objects.
+        v1.ids.insert(id.clone());
+    }
     let mut ctx = Ctx {
         inputs,
         v1,
@@ -385,8 +453,9 @@ pub fn build(
     };
     crypto(&mut ctx)?;
     perps(&mut ctx)?;
-    equities(&mut ctx)?;
-    finish(ctx)
+    let equities = equities(&mut ctx)?;
+    let deployments = tokenized::tokenized(&mut ctx, &equities, inputs.bound_underlyings)?;
+    finish(ctx, deployments)
 }
 
 fn usd(ctx: &Ctx<'_>) -> Result<String, BuildError> {
@@ -426,11 +495,13 @@ fn crypto_asset(
     Ok(ctx.node_ref(&key))
 }
 
-/// Venue USD markets per CoinGecko coin id: coin → pair symbols, via
-/// CoinGecko's tickers and confirmed in the venue's own market list.
+/// Venue markets quoted in `target` per CoinGecko coin id: coin → pair
+/// symbol, via CoinGecko's tickers and confirmed in the venue's own market
+/// list.
 fn venue_markets(
     ctx: &mut Ctx<'_>,
     section: &str,
+    target: &str,
     tickers: &[coingecko::Ticker],
     venue_symbol: &dyn Fn(&coingecko::Ticker) -> Option<String>,
     wanted: &BTreeSet<String>,
@@ -440,7 +511,7 @@ fn venue_markets(
         let Some(coin) = t.coin_id.as_deref() else {
             continue;
         };
-        if t.target != "USD" || !wanted.contains(coin) {
+        if t.target != target || !wanted.contains(coin) {
             continue;
         }
         match venue_symbol(t) {
@@ -462,23 +533,32 @@ fn venue_markets(
             ctx.exclude(
                 section,
                 coin,
-                format!("several USD markets {symbols:?}; none chosen"),
+                format!("several {target} markets {symbols:?}; none chosen"),
             );
         }
     }
     out
 }
 
+fn tickers_of(ctx: &Ctx<'_>, prefix: &str) -> Result<Vec<coingecko::Ticker>, BuildError> {
+    let mut out = Vec::new();
+    for page in ctx.pages(prefix)? {
+        out.extend(coingecko::decode_tickers(page)?.tickers);
+    }
+    Ok(out)
+}
+
 fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
-    let markets = coingecko::decode_markets(ctx.file(paths::MARKETS)?.1)?;
-    let mut kraken_tickers = Vec::new();
-    for page in ctx.pages(paths::KRAKEN_TICKERS)? {
-        kraken_tickers.extend(coingecko::decode_tickers(page)?.tickers);
+    // The ranking: page 1 (ranks 1–250) and, when fetched, page 2 (251–500).
+    let mut markets = coingecko::decode_markets(ctx.file(paths::MARKETS)?.1)?;
+    let paged = has_file(ctx, paths::MARKETS_PAGE2);
+    if paged {
+        markets.extend(coingecko::decode_markets(
+            ctx.file(paths::MARKETS_PAGE2)?.1,
+        )?);
     }
-    let mut coinbase_tickers = Vec::new();
-    for page in ctx.pages(paths::COINBASE_TICKERS)? {
-        coinbase_tickers.extend(coingecko::decode_tickers(page)?.tickers);
-    }
+    let kraken_tickers = tickers_of(ctx, paths::KRAKEN_TICKERS)?;
+    let coinbase_tickers = tickers_of(ctx, paths::COINBASE_TICKERS)?;
     let pairs = kraken::decode_asset_pairs(ctx.file(paths::KRAKEN_ASSET_PAIRS)?.1)?;
     let products = coinbase::decode_products(ctx.file(paths::COINBASE_PRODUCTS)?.1)?;
 
@@ -488,8 +568,12 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
     let mut rows: Vec<&coingecko::Market> = markets.iter().collect();
     rows.sort_by_key(|m| (m.market_cap_rank.unwrap_or(u32::MAX), m.id.clone()));
     for m in rows {
+        // The two pages are two requests: a coin that moved between them
+        // appears twice; it is one member.
+        if !wanted.insert(m.id.clone()) {
+            continue;
+        }
         let node = crypto_asset(ctx, &m.id, &m.symbol, &m.name)?;
-        wanted.insert(m.id.clone());
         members.push(UniverseMemberRecord {
             node,
             rank: m.market_cap_rank,
@@ -512,7 +596,8 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
         .collect();
     let kraken = venue_markets(
         ctx,
-        "crypto-top100 / Kraken",
+        "crypto / Kraken",
+        "USD",
         &kraken_tickers,
         &|t| {
             by_wsname
@@ -523,7 +608,8 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
     );
     let coinbase = venue_markets(
         ctx,
-        "crypto-top100 / Coinbase",
+        "crypto / Coinbase",
+        "USD",
         &coinbase_tickers,
         &|t| {
             products
@@ -538,17 +624,57 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
         },
         &wanted,
     );
+    // Binance spot USDT markets (V1.10), when its tickers and market list
+    // were fetched and its venue is declared (V1.9).
+    let binance_venue = ctx.node_ref("venue:binance");
+    let binance = if has_file(ctx, &format!("{}001.json", paths::BINANCE_TICKERS))
+        && has_file(ctx, paths::BINANCE_EXCHANGE_INFO)
+        && ctx.is_v1(&binance_venue)
+    {
+        let tickers = tickers_of(ctx, paths::BINANCE_TICKERS)?;
+        let info = binance::decode_exchange_info(ctx.file(paths::BINANCE_EXCHANGE_INFO)?.1)?;
+        let by_assets: HashMap<(&str, &str), &str> = info
+            .symbols
+            .iter()
+            .filter(|m| m.status == "TRADING")
+            .map(|m| {
+                (
+                    (m.base_asset.as_str(), m.quote_asset.as_str()),
+                    m.symbol.as_str(),
+                )
+            })
+            .collect();
+        venue_markets(
+            ctx,
+            "crypto / Binance",
+            "USDT",
+            &tickers,
+            &|t| {
+                by_assets
+                    .get(&(t.base.as_str(), t.target.as_str()))
+                    .map(|s| (*s).to_owned())
+            },
+            &wanted,
+        )
+    } else {
+        BTreeMap::new()
+    };
 
     let usd = usd(ctx)?;
+    let usdt = ctx.v1.id("usdt")?;
     let kraken_venue = ctx.v1.id("kraken")?;
     let coinbase_venue = ctx.v1.id("coinbase")?;
     let mut both = 0;
     let mut kraken_only = 0;
     let mut coinbase_only = 0;
+    let mut usd_none = 0;
+    let mut on_binance = 0;
+    let mut priced = 0;
     for coin in &wanted {
         let node = ctx.node_ref(&format!("coingecko:{coin}"));
         let k = kraken.get(coin);
         let c = coinbase.get(coin);
+        let b = binance.get(coin).filter(|_| node != usdt);
         if let Some(symbol) = k {
             ctx.feed(QuoteFeedRecord {
                 source: kraken::SOURCE_ID.into(),
@@ -585,6 +711,29 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
                 coinbase_venue.clone(),
             ));
         }
+        // A USDT market is its own market (priced in Tether), never averaged
+        // with USD ones.
+        if let Some(symbol) = b {
+            ctx.feed(QuoteFeedRecord {
+                source: binance::SOURCE_ID.into(),
+                symbol: symbol.clone(),
+                subject: node.clone(),
+                unit: usdt.clone(),
+                basis: "venue".into(),
+                venue: Some(binance_venue.clone()),
+                price_type: "mid".into(),
+                stale_after_seconds: Some(MARKET_STALE_AFTER),
+                freshness_clock: None,
+                inverted: false,
+            });
+            ctx.out
+                .relationships
+                .insert((node.clone(), "TRADES_ON".into(), binance_venue.clone()));
+            on_binance += 1;
+        }
+        if k.is_some() || c.is_some() || b.is_some() {
+            priced += 1;
+        }
         match (k, c) {
             (Some(_), Some(_)) => {
                 both += 1;
@@ -602,19 +751,33 @@ fn crypto(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
             }
             (Some(_), None) => kraken_only += 1,
             (None, Some(_)) => coinbase_only += 1,
-            (None, None) => ctx.exclude(
-                "crypto-top100 / quotes",
-                coin.clone(),
-                "no crosswalked Kraken or Coinbase USD market: imported without a quote feed",
-            ),
+            (None, None) => {
+                usd_none += 1;
+                if b.is_some() {
+                    ctx.convert_usdt_to_usd(&node)?;
+                } else {
+                    ctx.exclude(
+                        "crypto / quotes",
+                        coin.clone(),
+                        "no crosswalked Kraken, Coinbase or Binance market: imported without a quote feed",
+                    );
+                }
+            }
         }
     }
     ctx.out.notes.push(format!(
-        "crypto-top100: {} members; USD markets on Kraken + Coinbase {both}, Kraken only {kraken_only}, Coinbase only {coinbase_only}, none {}",
+        "crypto: {} members, {priced} priced; USD markets on Kraken + Coinbase {both}, Kraken only {kraken_only}, Coinbase only {coinbase_only}, none {usd_none}; Binance USDT markets {on_binance}",
         members.len(),
-        wanted.len() - both - kraken_only - coinbase_only
     ));
-    ctx.universe("crypto-top100", paths::MARKETS, as_of, members)
+    // The top 100 and 250 are page 1's first rows; the top 500 needs page 2
+    // too, so its snapshot names page 2 (the last page read).
+    let top = |n: usize| -> Vec<UniverseMemberRecord> { members.iter().take(n).cloned().collect() };
+    ctx.universe("crypto-top100", paths::MARKETS, as_of.clone(), top(100))?;
+    ctx.universe("crypto-top250", paths::MARKETS, as_of.clone(), top(250))?;
+    if paged {
+        ctx.universe("crypto-top500", paths::MARKETS_PAGE2, as_of, top(500))?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------- perps
@@ -878,28 +1041,203 @@ fn spy_date(text: &str) -> Result<String, BuildError> {
         .map_err(|e| BuildError::Invalid(format!("SPY holdings date `{text}`: {e}")))
 }
 
-/// `Sep 24, 2026` → `2026-09-24T00:00:00Z`.
-fn nasdaq_date(text: &str) -> Result<String, BuildError> {
-    chrono::NaiveDate::parse_from_str(text.trim(), "%b %d, %Y")
-        .map(|d| format!("{}T00:00:00Z", d.format("%Y-%m-%d")))
-        .map_err(|e| BuildError::Invalid(format!("Nasdaq list date `{text}`: {e}")))
+/// An imported equity, found by its CUSIP (a build-local key).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EquityRef {
+    /// How the snapshot refers to it (V1 id or build key).
+    pub node: String,
+    /// Its build key (`spy:<CUSIP>`).
+    pub key: String,
+    /// Its listing symbol on its primary venue (`BRK.B`).
+    pub symbol: String,
 }
 
-fn equities(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
-    let holdings = ssga::decode_holdings(ctx.file(paths::SPY_HOLDINGS)?.1)?;
-    let sec_rows = sec::decode_company_tickers_exchange(ctx.file(paths::SEC_TICKERS)?.1)?;
-    let mut by_ticker: HashMap<&str, Vec<&sec::TickerExchange>> = HashMap::new();
-    for r in &sec_rows {
-        by_ticker.entry(r.ticker.as_str()).or_default().push(r);
+/// Imported equities by CUSIP.
+pub(crate) type Equities = BTreeMap<String, EquityRef>;
+
+/// The build key of the equity with this CUSIP. The `spy:` prefix is
+/// historical (V1.1 imported SPY holdings only); the key is the CUSIP, so a
+/// security held by both SPY and QQQ is one instrument.
+fn equity_key(cusip: &str) -> String {
+    format!("spy:{cusip}")
+}
+
+/// Imports one holding (ticker + CUSIP from an ETF's holdings file): the
+/// equity, its issuer (CIK from SEC's ticker table), its primary listing and
+/// its IEX feeds. `None` (with the reason recorded) when the security cannot
+/// be identified or listed.
+fn import_equity(
+    ctx: &mut Ctx<'_>,
+    section: &str,
+    by_ticker: &HashMap<&str, Vec<&sec::TickerExchange>>,
+    ticker: &str,
+    cusip: &str,
+    name: &str,
+    per_mic: &mut BTreeMap<&'static str, usize>,
+) -> Result<Option<EquityRef>, BuildError> {
+    let label = ticker.to_owned();
+    // One explicit class-share rule: SPY/Alpaca `BRK.B` is SEC `BRK-B`.
+    let sec_ticker = ticker.replace('.', "-");
+    let sec_row = match by_ticker.get(sec_ticker.as_str()).map(Vec::as_slice) {
+        Some([one]) => *one,
+        Some(many) => {
+            ctx.exclude(
+                section,
+                label,
+                format!("SEC lists {} issuers for ticker {sec_ticker}", many.len()),
+            );
+            return Ok(None);
+        }
+        None => {
+            ctx.exclude(
+                section,
+                label,
+                format!("ticker {sec_ticker} not in SEC's ticker table"),
+            );
+            return Ok(None);
+        }
+    };
+    let Some(mic) = sec_row.exchange.as_deref().and_then(mic_of) else {
+        ctx.exclude(
+            section,
+            label,
+            format!("SEC exchange {:?} has no MIC rule", sec_row.exchange),
+        );
+        return Ok(None);
+    };
+    *per_mic.entry(mic).or_default() += 1;
+
+    let key = equity_key(cusip);
+    let id = ctx.id(&key, Category::Instrument)?;
+    let node = ctx.node_ref(&key);
+    if !ctx.is_v1(&id) && !ctx.out.instruments.contains_key(&key) {
+        // Issuer: one entity per CIK.
+        let entity_key = format!("sec:{}", sec_row.cik);
+        let entity_id = ctx.id(&entity_key, Category::Entity)?;
+        let entity = ctx.node_ref(&entity_key);
+        if !ctx.is_v1(&entity_id) && !ctx.out.entities.contains_key(&entity_key) {
+            ctx.out.entities.insert(
+                entity_key.clone(),
+                EntityRecord {
+                    key: entity_key.clone(),
+                    id: entity_id,
+                    kind: "company".into(),
+                    name: sec_row.name.trim().to_owned(),
+                    lei: None,
+                    cik: Some(format!("{:010}", sec_row.cik)),
+                },
+            );
+            ctx.alias(&entity_key, &sec_row.name, "name");
+        }
+        ctx.out.instruments.insert(
+            key.clone(),
+            InstrumentRecord {
+                key: key.clone(),
+                id,
+                class: "equity".into(),
+                name: name.to_owned(),
+                isin: None,
+                figi: None,
+                contract_multiplier: None,
+                unit_of_measure: None,
+                base: None,
+                quote: None,
+            },
+        );
+        ctx.alias(&key, ticker, "symbol");
+        ctx.alias(&key, name, "name");
+        let usd = usd(ctx)?;
+        let iex = ctx.v1.id("iex")?;
+        ctx.out
+            .relationships
+            .insert((key.clone(), "ISSUED_BY".into(), entity));
+        ctx.out
+            .relationships
+            .insert((key.clone(), "DENOMINATED_IN".into(), usd.clone()));
+        ctx.out
+            .relationships
+            .insert((key.clone(), "TRADES_ON".into(), iex.clone()));
+        let venue_key = format!("venue:{mic}");
+        let venue_id = ctx.id(&venue_key, Category::Venue)?;
+        let venue = ctx.node_ref(&venue_key);
+        if !ctx.is_v1(&venue_id) && !ctx.out.venues.contains_key(&venue_key) {
+            ctx.out.venues.insert(
+                venue_key.clone(),
+                VenueRecord {
+                    key: venue_key.clone(),
+                    id: venue_id,
+                    name: venue_name(mic).into(),
+                    mic: Some(mic.into()),
+                },
+            );
+            ctx.alias(&venue_key, mic, "symbol");
+            ctx.alias(&venue_key, venue_name(mic), "name");
+            for (_, alias) in VENUE_ALIASES.iter().filter(|(m, _)| *m == mic) {
+                ctx.alias(&venue_key, alias, "symbol");
+            }
+        }
+        let listing_key = format!("listing:{key}:{mic}");
+        let listing_id = ctx.id(&listing_key, Category::Listing)?;
+        ctx.out.listings.insert(
+            listing_key.clone(),
+            ListingRecord {
+                key: listing_key,
+                id: listing_id,
+                instrument: key.clone(),
+                venue,
+                symbol: ticker.to_owned(),
+                figi: None,
+            },
+        );
+        // IEX's last trade and IEX's top-of-book mid: two feeds.
+        for price_type in ["last", "mid"] {
+            ctx.feed(QuoteFeedRecord {
+                source: "alpaca".into(),
+                symbol: ticker.to_owned(),
+                subject: key.clone(),
+                unit: usd.clone(),
+                basis: "venue".into(),
+                venue: Some(iex.clone()),
+                price_type: price_type.into(),
+                stale_after_seconds: Some(MARKET_STALE_AFTER),
+                freshness_clock: None,
+                inverted: false,
+            });
+        }
     }
-    let usd = usd(ctx)?;
-    let iex = ctx.v1.id("iex")?;
-    let section = "sp500";
+    Ok(Some(EquityRef {
+        node,
+        key,
+        symbol: ticker.to_owned(),
+    }))
+}
+
+/// `2026-10-02` → `2026-10-02T00:00:00Z`.
+fn iso_date(what: &str, text: &str) -> Result<String, BuildError> {
+    chrono::NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d")
+        .map(|d| format!("{}T00:00:00Z", d.format("%Y-%m-%d")))
+        .map_err(|e| BuildError::Invalid(format!("{what} date `{text}`: {e}")))
+}
+
+fn has_file(ctx: &Ctx<'_>, path: &str) -> bool {
+    ctx.inputs.manifest.files.iter().any(|f| f.path == path)
+}
+
+/// One SSGA holdings workbook (SPY, MDY, SPSM) → universe `key`. Members
+/// already imported from another file (by CUSIP) are reused.
+fn ssga_universe(
+    ctx: &mut Ctx<'_>,
+    key: &str,
+    path: &str,
+    by_ticker: &HashMap<&str, Vec<&sec::TickerExchange>>,
+    index: &mut Equities,
+) -> Result<(), BuildError> {
+    let holdings = ssga::decode_holdings(ctx.file(path)?.1)?;
+    let section = key;
     let mut members = Vec::new();
-    let mut seen = HashSet::new();
-    // (listing symbol on XNAS) → node, for Nasdaq-100 matching.
-    let mut on_nasdaq: HashMap<String, String> = HashMap::new();
+    let mut seen = BTreeSet::new();
     let mut per_mic: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut new_here = 0;
     for h in &holdings.rows {
         let label = h
             .ticker
@@ -933,145 +1271,29 @@ fn equities(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
             ctx.exclude(section, label, "duplicate row for the same security");
             continue;
         }
-        // One explicit class-share rule: SPY/Alpaca `BRK.B` is SEC `BRK-B`.
-        let sec_ticker = ticker.replace('.', "-");
-        let sec_row = match by_ticker.get(sec_ticker.as_str()).map(Vec::as_slice) {
-            Some([one]) => *one,
-            Some(many) => {
-                ctx.exclude(
-                    section,
-                    label,
-                    format!("SEC lists {} issuers for ticker {sec_ticker}", many.len()),
-                );
-                continue;
-            }
+        let e = match index.get(cusip) {
+            Some(e) => e.clone(),
             None => {
-                ctx.exclude(
-                    section,
-                    label,
-                    format!("ticker {sec_ticker} not in SEC's ticker table"),
-                );
-                continue;
+                let name = h.name.clone().unwrap_or_else(|| ticker.to_owned());
+                let Some(e) =
+                    import_equity(ctx, section, by_ticker, ticker, cusip, &name, &mut per_mic)?
+                else {
+                    continue;
+                };
+                new_here += 1;
+                index.insert(cusip.to_owned(), e.clone());
+                e
             }
         };
-        let Some(mic) = sec_row.exchange.as_deref().and_then(mic_of) else {
-            ctx.exclude(
-                section,
-                label,
-                format!("SEC exchange {:?} has no MIC rule", sec_row.exchange),
-            );
-            continue;
-        };
-        *per_mic.entry(mic).or_default() += 1;
-
-        let key = format!("spy:{cusip}");
-        let id = ctx.id(&key, Category::Instrument)?;
-        let node = ctx.node_ref(&key);
-        if !ctx.is_v1(&id) {
-            let name = h.name.clone().unwrap_or_else(|| ticker.to_owned());
-            // Issuer: one entity per CIK.
-            let entity_key = format!("sec:{}", sec_row.cik);
-            let entity_id = ctx.id(&entity_key, Category::Entity)?;
-            let entity = ctx.node_ref(&entity_key);
-            if !ctx.is_v1(&entity_id) && !ctx.out.entities.contains_key(&entity_key) {
-                ctx.out.entities.insert(
-                    entity_key.clone(),
-                    EntityRecord {
-                        key: entity_key.clone(),
-                        id: entity_id,
-                        kind: "company".into(),
-                        name: sec_row.name.trim().to_owned(),
-                        lei: None,
-                        cik: Some(format!("{:010}", sec_row.cik)),
-                    },
-                );
-                ctx.alias(&entity_key, &sec_row.name, "name");
-            }
-            ctx.out.instruments.insert(
-                key.clone(),
-                InstrumentRecord {
-                    key: key.clone(),
-                    id,
-                    class: "equity".into(),
-                    name: name.clone(),
-                    isin: None,
-                    figi: None,
-                    contract_multiplier: None,
-                    unit_of_measure: None,
-                    base: None,
-                    quote: None,
-                },
-            );
-            ctx.alias(&key, ticker, "symbol");
-            ctx.alias(&key, &name, "name");
-            ctx.out
-                .relationships
-                .insert((key.clone(), "ISSUED_BY".into(), entity));
-            ctx.out
-                .relationships
-                .insert((key.clone(), "DENOMINATED_IN".into(), usd.clone()));
-            ctx.out
-                .relationships
-                .insert((key.clone(), "TRADES_ON".into(), iex.clone()));
-            let venue_key = format!("venue:{mic}");
-            let venue_id = ctx.id(&venue_key, Category::Venue)?;
-            let venue = ctx.node_ref(&venue_key);
-            if !ctx.is_v1(&venue_id) && !ctx.out.venues.contains_key(&venue_key) {
-                ctx.out.venues.insert(
-                    venue_key.clone(),
-                    VenueRecord {
-                        key: venue_key.clone(),
-                        id: venue_id,
-                        name: venue_name(mic).into(),
-                        mic: Some(mic.into()),
-                    },
-                );
-                ctx.alias(&venue_key, mic, "symbol");
-                ctx.alias(&venue_key, venue_name(mic), "name");
-                for (_, alias) in VENUE_ALIASES.iter().filter(|(m, _)| *m == mic) {
-                    ctx.alias(&venue_key, alias, "symbol");
-                }
-            }
-            let listing_key = format!("listing:{key}:{mic}");
-            let listing_id = ctx.id(&listing_key, Category::Listing)?;
-            ctx.out.listings.insert(
-                listing_key.clone(),
-                ListingRecord {
-                    key: listing_key,
-                    id: listing_id,
-                    instrument: key.clone(),
-                    venue,
-                    symbol: ticker.to_owned(),
-                    figi: None,
-                },
-            );
-            // IEX's last trade and IEX's top-of-book mid: two feeds.
-            for price_type in ["last", "mid"] {
-                ctx.feed(QuoteFeedRecord {
-                    source: "alpaca".into(),
-                    symbol: ticker.to_owned(),
-                    subject: key.clone(),
-                    unit: usd.clone(),
-                    basis: "venue".into(),
-                    venue: Some(iex.clone()),
-                    price_type: price_type.into(),
-                    stale_after_seconds: Some(MARKET_STALE_AFTER),
-                    freshness_clock: None,
-                    inverted: false,
-                });
-            }
-        }
-        if mic == "XNAS" {
-            on_nasdaq.insert(ticker.to_owned(), node.clone());
-        }
         members.push(UniverseMemberRecord {
-            node,
+            node: e.node,
             rank: None,
             source_symbol: Some(ticker.to_owned()),
         });
     }
     ctx.out.notes.push(format!(
-        "sp500 (SPY holdings, {}): {} holdings rows, {} imported (primary listing {}), {} other rows (notes/footer) ignored",
+        "{key} ({} holdings, {}): {} holdings rows, {} members ({new_here} imported here; primary listing {}), {} other rows (notes/footer) ignored",
+        holdings.fund_ticker.as_deref().unwrap_or("?"),
         holdings.as_of,
         holdings.rows.len(),
         members.len(),
@@ -1083,57 +1305,109 @@ fn equities(ctx: &mut Ctx<'_>) -> Result<(), BuildError> {
         holdings.other_rows
     ));
     let as_of = spy_date(&holdings.as_of)?;
-    ctx.universe("sp500", paths::SPY_HOLDINGS, as_of, members)?;
+    ctx.universe(key, path, as_of, members)
+}
 
-    // Nasdaq-100: only members that are imported S&P 500 securities listed
-    // on Nasdaq under the same symbol (decision 4). The list is optional.
-    if !ctx
-        .inputs
-        .manifest
-        .files
-        .iter()
-        .any(|f| f.path == paths::NASDAQ100)
-    {
-        ctx.out
-            .notes
-            .push("nasdaq100: not built. Universe support is modeled, but live membership import is deferred pending an approved machine-readable source.".into());
-        return Ok(());
+fn equities(ctx: &mut Ctx<'_>) -> Result<Equities, BuildError> {
+    let sec_rows = sec::decode_company_tickers_exchange(ctx.file(paths::SEC_TICKERS)?.1)?;
+    let mut by_ticker: HashMap<&str, Vec<&sec::TickerExchange>> = HashMap::new();
+    for r in &sec_rows {
+        by_ticker.entry(r.ticker.as_str()).or_default().push(r);
     }
-    let list = nasdaq::decode_nasdaq100(ctx.file(paths::NASDAQ100)?.1)?;
-    let mut members = Vec::new();
-    let mut rows: Vec<&nasdaq::Member> = list.data.data.rows.iter().collect();
-    rows.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-    for m in rows {
-        match on_nasdaq.get(&m.symbol) {
-            Some(node) => members.push(UniverseMemberRecord {
-                node: node.clone(),
-                rank: None,
-                source_symbol: Some(m.symbol.clone()),
-            }),
-            None => ctx.exclude(
-                "nasdaq100",
-                format!("{} ({})", m.symbol, m.company_name),
-                "not an imported S&P 500 security listed on Nasdaq: no trustworthy identifier, skipped",
-            ),
+    let mut index = Equities::new();
+    ssga_universe(ctx, "sp500", paths::SPY_HOLDINGS, &by_ticker, &mut index)?;
+    // S&P MidCap 400 and SmallCap 600 (V1.10), each optional.
+    for (key, path) in [
+        ("sp400", paths::MDY_HOLDINGS),
+        ("sp600", paths::SPSM_HOLDINGS),
+    ] {
+        if has_file(ctx, path) {
+            ssga_universe(ctx, key, path, &by_ticker, &mut index)?;
         }
     }
+
+    // Nasdaq-100 through QQQ's holdings (a proxy, like SPY for the S&P 500):
+    // members are identified by CUSIP exactly as SPY's, so a security held
+    // by both is one instrument. The file is optional.
+    if !has_file(ctx, paths::QQQ_HOLDINGS) {
+        ctx.out
+            .notes
+            .push("nasdaq100: not built (no QQQ holdings file; run `universe fetch`)".into());
+        return Ok(index);
+    }
+    let qqq = invesco::decode_holdings(ctx.file(paths::QQQ_HOLDINGS)?.1)?;
+    let section = "nasdaq100";
+    let mut members = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut per_mic: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut new_members = 0;
+    for h in &qqq.holdings {
+        let label = h
+            .ticker
+            .clone()
+            .or_else(|| h.issuer_name.clone())
+            .unwrap_or_else(|| "row".into());
+        let kind = h.security_type_code.as_deref().unwrap_or("");
+        if !invesco::EQUITY_TYPES.contains(&kind) {
+            ctx.exclude(
+                section,
+                label,
+                format!("security type {kind:?} is not a share"),
+            );
+            continue;
+        }
+        let (Some(ticker), Some(cusip)) = (
+            h.ticker.as_deref(),
+            h.cusip.as_deref().filter(|c| cusip::is_valid(c)),
+        ) else {
+            ctx.exclude(section, label, "no ticker or no valid CUSIP");
+            continue;
+        };
+        if h.currency.as_deref() != Some("USD") {
+            ctx.exclude(section, label, format!("currency {:?}", h.currency));
+            continue;
+        }
+        if !seen.insert(cusip.to_owned()) {
+            ctx.exclude(section, label, "duplicate row for the same security");
+            continue;
+        }
+        let e = match index.get(cusip) {
+            Some(e) => e.clone(),
+            None => {
+                let name = h.issuer_name.clone().unwrap_or_else(|| ticker.to_owned());
+                let Some(e) =
+                    import_equity(ctx, section, &by_ticker, ticker, cusip, &name, &mut per_mic)?
+                else {
+                    continue;
+                };
+                new_members += 1;
+                index.insert(cusip.to_owned(), e.clone());
+                e
+            }
+        };
+        members.push(UniverseMemberRecord {
+            node: e.node,
+            rank: None,
+            source_symbol: Some(ticker.to_owned()),
+        });
+    }
+    members.sort_by(|a, b| a.source_symbol.cmp(&b.source_symbol));
     ctx.out.notes.push(format!(
-        "nasdaq100: {} listed, {} members imported",
-        list.data.data.rows.len(),
-        members.len()
+        "nasdaq100 (QQQ holdings, {}): {} holdings rows, {} members ({} also in sp500, {} imported here)",
+        qqq.effective_business_date,
+        qqq.holdings.len(),
+        members.len(),
+        members.len() - new_members,
+        new_members
     ));
-    let as_of = nasdaq_date(
-        list.data
-            .date
-            .as_deref()
-            .ok_or_else(|| BuildError::Invalid("Nasdaq list has no date".into()))?,
-    )?;
-    ctx.universe("nasdaq100", paths::NASDAQ100, as_of, members)
+    let as_of = iso_date("QQQ holdings", &qqq.effective_business_date)?;
+    ctx.universe("nasdaq100", paths::QQQ_HOLDINGS, as_of, members)?;
+    Ok(index)
 }
 
 // ---------------------------------------------------------------- output
 
-fn finish(ctx: Ctx<'_>) -> Result<Build, BuildError> {
+fn finish(ctx: Ctx<'_>, deployments: tokenized::Deployments) -> Result<Build, BuildError> {
     let Ctx {
         inputs,
         v1,
@@ -1189,7 +1463,7 @@ fn finish(ctx: Ctx<'_>) -> Result<Build, BuildError> {
             .collect(),
         quote_feeds: out.feeds.into_values().collect(),
         quote_aggregations: out.aggregations.into_values().collect(),
-        quote_derivations: Vec::new(),
+        quote_derivations: out.derivations.into_values().collect(),
         universes,
     };
 
@@ -1253,14 +1527,15 @@ fn finish(ctx: Ctx<'_>) -> Result<Build, BuildError> {
     );
     let _ = writeln!(
         r,
-        "- new quote feeds: {} ({}); aggregation declarations: {}",
+        "- new quote feeds: {} ({}); aggregation declarations: {}; USDT-only markets restated in USD (convert-via-stablecoin-v1): {}",
         snapshot.quote_feeds.len(),
         feeds_by_source
             .iter()
             .map(|(s, n)| format!("{s} {n}"))
             .collect::<Vec<_>>()
             .join(", "),
-        snapshot.quote_aggregations.len()
+        snapshot.quote_aggregations.len(),
+        snapshot.quote_derivations.len()
     );
     let _ = writeln!(
         r,
@@ -1269,7 +1544,7 @@ fn finish(ctx: Ctx<'_>) -> Result<Build, BuildError> {
     );
     let _ = writeln!(
         r,
-        "- identifiers: no ISIN or CUSIP is emitted for SPY securities (never constructed); issuer entities carry SEC CIKs"
+        "- identifiers: no CUSIP is emitted and no ISIN is constructed; an equity's ISIN is the one a tokenized product's issuer states for it (docs/v1.10-tokenized-stocks.md); issuer entities carry SEC CIKs"
     );
     let _ = writeln!(r, "\n## Symbol collisions\n");
     let _ = writeln!(
@@ -1307,6 +1582,7 @@ fn finish(ctx: Ctx<'_>) -> Result<Build, BuildError> {
     }
     Ok(Build {
         snapshot,
+        deployments,
         ids,
         report: r,
         coverage,

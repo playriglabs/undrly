@@ -139,7 +139,8 @@
     "latest-observation-v1",
     "mean-venue-mid-v1",
     "mark-with-venue-book-v1",
-    "cross-via-stablecoin-v1"
+    "cross-via-stablecoin-v1",
+    "convert-via-stablecoin-v1"
   ],
   "unitsOfMeasure": [
     "troy_ounce",
@@ -150,7 +151,11 @@
   ],
   "universeKeys": [
     "crypto-top100",
+    "crypto-top250",
+    "crypto-top500",
     "sp500",
+    "sp400",
+    "sp600",
     "nasdaq100",
     "hyperliquid-perps",
     "fx-major",

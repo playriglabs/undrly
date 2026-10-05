@@ -360,7 +360,7 @@ pub fn build(
             unit: fx_id(&format!("iso4217:{quote}"))?,
             method: AggregationMethod::CrossViaStablecoinV1.as_str().into(),
             via: via.clone(),
-            base: fx_id(&format!("iso4217:{base}"))?,
+            base: Some(fx_id(&format!("iso4217:{base}"))?),
         });
         derived_rows.push((
             d.pair.clone(),
@@ -485,9 +485,12 @@ mod tests {
                 .all(|x| x.method == "mean-venue-mid-v1")
         );
         assert_eq!(u.quote_derivations.len(), 8);
-        assert!(u.quote_derivations.iter().all(
-            |d| d.method == "cross-via-stablecoin-v1" && d.base == fx_ids().ids["iso4217:USD"]
-        ));
+        assert!(
+            u.quote_derivations
+                .iter()
+                .all(|d| d.method == "cross-via-stablecoin-v1"
+                    && d.base.as_deref() == Some(fx_ids().ids["iso4217:USD"].as_str()))
+        );
     }
 
     #[test]

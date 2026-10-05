@@ -29,9 +29,12 @@
 use undrly_core::SourceId;
 
 pub mod alpaca;
+pub mod backed;
+pub mod backpack;
 pub mod bank_indonesia;
 pub mod bank_of_canada;
 pub mod binance;
+pub mod binance_bstocks;
 pub mod bitkub;
 pub mod bitstamp;
 pub mod bnm;
@@ -48,12 +51,15 @@ pub mod fed_h10;
 pub mod finnhub;
 pub mod fixture;
 pub mod fred;
+pub mod geckoterminal;
 pub mod gold_api;
 pub mod hashkey;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod hyperliquid;
 pub mod indodax;
+pub mod invesco;
+pub mod jupiter;
 pub mod kraken;
 pub mod nasdaq;
 pub mod okx;

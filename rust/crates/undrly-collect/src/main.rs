@@ -7,9 +7,10 @@
 //!                                   snapshot (or only `path`)
 //! undrly-collect run [--once]       poll quote sources sequentially, forever or once
 //! undrly-collect universe fetch     download raw universe files (the only networked step)
+//! undrly-collect universe pools     GeckoTerminal pools of the Solana tokens (also run by fetch)
 //! undrly-collect universe build     raw files + id map → snapshot + report (pure)
 //! undrly-collect fx build           FX spec + id map → data/reference/fx.json + report (pure)
-//! undrly-collect history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N]
+//! undrly-collect history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N] [--source ID]
 //!                                   backfill bars, reference series and the equity calendar
 //! undrly-collect onchain            chains and issuer deployments from their own sources
 //!                                   (data/reference/onchain.json; V1.5)
@@ -50,6 +51,7 @@ use undrly_normalize::fx::{
 };
 use undrly_normalize::gold_api::GoldApiNormalizer;
 use undrly_normalize::hyperliquid::{HyperliquidBookNormalizer, HyperliquidNormalizer};
+use undrly_normalize::jupiter::JupiterNormalizer;
 use undrly_normalize::kraken::KrakenNormalizer;
 use undrly_normalize::venues::{
     BitkubNormalizer, BookTickerNormalizer, HashKeyNormalizer, IndodaxNormalizer, OkxNormalizer,
@@ -74,11 +76,14 @@ use undrly_provider::hashkey::{self, HashKeyProvider};
 use undrly_provider::http::{FetchError, FetchedRecord, HttpClient};
 use undrly_provider::hyperliquid::{self, HyperliquidBookProvider, HyperliquidProvider};
 use undrly_provider::indodax::{self, IndodaxProvider};
+use undrly_provider::jupiter::{self, JupiterProvider};
 use undrly_provider::kraken::{self, KrakenProvider};
 use undrly_provider::okx::{self, OkxProvider};
 use undrly_provider::sec::http::{SecClient, SecUserAgent};
 use undrly_provider::worldbank::{self, WorldBankProvider};
-use undrly_provider::{coingecko, sec, ssga};
+use undrly_provider::{
+    backed, backpack, binance_bstocks, coingecko, geckoterminal, invesco, rhj, sec, ssga,
+};
 use undrly_store::market::quote_feeds_of_source;
 use undrly_store::sources::insert_source;
 use undrly_universe::{IdMap, Inputs, Manifest, ManifestFile, paths, sha256_hex, to_json};
@@ -96,7 +101,7 @@ const UNIVERSE_DIR: &str = "data/universe";
 
 /// Every source. Redistribution starts `unknown` (treated as restricted)
 /// until a human reviews each source's terms.
-const SOURCES: [(&str, &str); 34] = [
+const SOURCES: [(&str, &str); 41] = [
     ("undrly-curated", "Undrly curated reference data"),
     (
         "undrly-universe",
@@ -158,6 +163,25 @@ const SOURCES: [(&str, &str); 34] = [
     ("bitkub", "Bitkub public market data"),
     ("coins-ph", "Coins.ph (Coins Pro) public market data"),
     ("hashkey", "HashKey Exchange public market data"),
+    ("invesco", "Invesco QQQ ETF holdings"),
+    (
+        "backed-api",
+        "Backed Assets (JE) Limited xStocks registry (api.backed.fi)",
+    ),
+    (
+        "backpack",
+        "Backpack Exchange public API (Backpack Securities)",
+    ),
+    ("jupiter", "Jupiter Price API (Solana tokens by mint)"),
+    ("binance-bstocks", "Binance bStocks list (binance.com)"),
+    (
+        "geckoterminal",
+        "GeckoTerminal public API: Solana DEX pools and their OHLC",
+    ),
+    (
+        "bnb-chain-rpc",
+        "BNB Chain mainnet RPC (bsc-dataseed.bnbchain.org)",
+    ),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -188,10 +212,12 @@ enum Feed {
     Bitkub,
     CoinsPh,
     HashKey,
+    /// V1.10: tokenized stocks on Solana, by mint.
+    Jupiter,
 }
 
 impl Feed {
-    const ALL: [Feed; 22] = [
+    const ALL: [Feed; 23] = [
         Feed::Kraken,
         Feed::Coinbase,
         Feed::Hyperliquid,
@@ -214,6 +240,7 @@ impl Feed {
         Feed::Bitkub,
         Feed::CoinsPh,
         Feed::HashKey,
+        Feed::Jupiter,
     ];
 
     fn source(self) -> &'static str {
@@ -238,6 +265,7 @@ impl Feed {
             Feed::Bitkub => bitkub::SOURCE_ID,
             Feed::CoinsPh => coins_ph::SOURCE_ID,
             Feed::HashKey => hashkey::SOURCE_ID,
+            Feed::Jupiter => jupiter::SOURCE_ID,
         }
     }
 
@@ -269,6 +297,9 @@ impl Feed {
             Feed::Ecb | Feed::BankOfCanada | Feed::BankIndonesia | Feed::Bnm | Feed::Cbm => 3600,
             // Published weekly.
             Feed::FedH10 => 6 * 3600,
+            // Onchain trading moves slower than a venue book; a handful of
+            // requests a minute, well inside the free tier.
+            Feed::Jupiter => 60,
         })
     }
 
@@ -294,7 +325,17 @@ impl Feed {
             | Feed::Bitkub
             | Feed::CoinsPh
             | Feed::HashKey => symbols.iter().map(|s| vec![s.clone()]).collect(),
-            Feed::Binance => pack(symbols, |b| BinanceProvider::book_ticker_url(b).len()),
+            // Up to the record key's 2,048 characters since V1.10 (about 120
+            // symbols a request), for its ~500 USDT markets.
+            Feed::Binance => pack_to(symbols, BINANCE_URL_MAX, |b| {
+                BinanceProvider::book_ticker_url(b).len()
+            }),
+            // 40 mints per request (Jupiter allows 50): the record key (the
+            // URL) stays within source_records' 2,048 characters.
+            Feed::Jupiter => symbols
+                .chunks(JUPITER_BATCH)
+                .map(<[String]>::to_vec)
+                .collect(),
             Feed::BankOfCanada => {
                 pack(symbols, |b| BankOfCanadaProvider::observations_url(b).len())
             }
@@ -323,7 +364,7 @@ impl Feed {
             // close to the latest mark (MARK_BOOK_MAX_SKEW_SECONDS).
             Feed::HyperliquidBook => Duration::from_millis(50),
             // Kraken's public API allows about one request per second.
-            Feed::Kraken => Duration::from_secs(1),
+            Feed::Kraken | Feed::Jupiter => Duration::from_secs(1),
             _ => Duration::from_millis(50),
         }
     }
@@ -341,16 +382,28 @@ impl Feed {
     }
 }
 
-/// Mirrors the `source_records.record_key` length limit.
+/// The URL length Kraken and Alpaca batches are packed to (V1.1; the
+/// `source_records.record_key` limit was 256 until V1.10 raised it).
 const RECORD_KEY_MAX: usize = 256;
+
+/// Mints per Jupiter request.
+const JUPITER_BATCH: usize = 40;
+
+/// Binance spot book-ticker URLs are packed to this length (V1.10).
+const BINANCE_URL_MAX: usize = 2000;
 
 /// Greedy batches in order, each with a URL of at most [`RECORD_KEY_MAX`].
 fn pack(symbols: &[String], url_len: impl Fn(&[&str]) -> usize) -> Vec<Vec<String>> {
+    pack_to(symbols, RECORD_KEY_MAX, url_len)
+}
+
+/// Greedy batches in order, each with a URL of at most `max` characters.
+fn pack_to(symbols: &[String], max: usize, url_len: impl Fn(&[&str]) -> usize) -> Vec<Vec<String>> {
     let mut out: Vec<Vec<String>> = Vec::new();
     let mut current: Vec<&str> = Vec::new();
     for s in symbols {
         current.push(s);
-        if current.len() > 1 && url_len(&current) > RECORD_KEY_MAX {
+        if current.len() > 1 && url_len(&current) > max {
             current.pop();
             out.push(current.iter().map(|s| (*s).to_owned()).collect());
             current = vec![s];
@@ -445,21 +498,29 @@ async fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: undrly-collect seed [curated.json] | run [--once] | universe fetch | universe build | fx build | history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N] | onchain";
+const USAGE: &str = "usage: undrly-collect seed [curated.json] | run [--once] | universe fetch | universe pools | universe build | fx build | history [bars|reference|calendar|corporate-actions|economic|earnings|all] [--days-1h N] [--days-1d N] [--source ID] | onchain";
 
 async fn run(args: &[String]) -> Result<ExitCode, Error> {
     let command: Vec<&str> = args.iter().map(String::as_str).collect();
     match command.as_slice() {
         ["universe", "fetch"] => return universe_fetch(Path::new(UNIVERSE_DIR)).await,
         ["universe", "build"] => return universe_build(Path::new(UNIVERSE_DIR)),
+        ["universe", "pools"] => {
+            let user_agent = std::env::var("UNDRLY_USER_AGENT")
+                .unwrap_or_else(|_| DEFAULT_USER_AGENT.to_owned());
+            let client = HttpClient::new(&user_agent)?;
+            return universe_pools(Path::new(UNIVERSE_DIR), &client).await;
+        }
         ["fx", "build"] => return fx_build(),
         ["seed", ..] | ["run", ..] | ["history", ..] | ["onchain"] => {}
         _ => return Err(Error::Usage(USAGE.into())),
     }
     let url = std::env::var("DATABASE_URL")
         .map_err(|_| Error::Usage("DATABASE_URL is not set".into()))?;
+    // `run` refreshes bars on a second connection (V1.10).
+    let live = command[0] == "run" && !command.contains(&"--once");
     let pool = PgPoolOptions::new()
-        .max_connections(1)
+        .max_connections(if live { 2 } else { 1 })
         .connect(&url)
         .await?;
     if command[0] == "seed" {
@@ -474,7 +535,12 @@ async fn run(args: &[String]) -> Result<ExitCode, Error> {
             seed(&mut conn, rest.first().copied()).await?;
             Ok(ExitCode::SUCCESS)
         }
-        ["run", rest @ ..] => collect(&mut conn, rest.contains(&"--once")).await,
+        ["run", rest @ ..] => {
+            if live {
+                tokio::spawn(history::live_bars(pool.clone()));
+            }
+            collect(&mut conn, rest.contains(&"--once")).await
+        }
         ["history", rest @ ..] => history::run(&mut conn, rest).await,
         ["onchain"] => {
             register_sources(&mut conn).await?;
@@ -534,8 +600,9 @@ async fn seed(conn: &mut PgConnection, path: Option<&str>) -> Result<(), Error> 
     seed_curated(conn, CuratedProvider::new(), DEFAULT_UNIVERSE).await?;
     seed_curated(conn, CuratedProvider::new(), COMMODITIES).await?;
     seed_fx(conn).await?;
-    seed_universe(conn).await?;
-    seed_stablecoin_fx(conn).await
+    // Before the snapshot, which reuses its EURC (STABLECOIN_PINS).
+    seed_stablecoin_fx(conn).await?;
+    seed_universe(conn).await
 }
 
 /// The V1.1 universe snapshot, its raw upstream files first.
@@ -588,7 +655,7 @@ async fn seed_universe(conn: &mut PgConnection) -> Result<(), Error> {
 }
 
 /// Stablecoin/fiat markets and derived FX crosses (docs/v1.9-live-fx.md),
-/// after the FX file and the universe snapshot it references.
+/// after the FX file it references.
 async fn seed_stablecoin_fx(conn: &mut PgConnection) -> Result<(), Error> {
     if !Path::new(STABLECOIN_FX).exists() {
         println!("seed: no {STABLECOIN_FX} (run `undrly-collect fx build`)");
@@ -704,6 +771,22 @@ impl Paced {
     }
 }
 
+/// A GeckoTerminal GET within its free tier: on HTTP 429, a minute's wait
+/// before trying again, at most five times. Callers space requests
+/// [`geckoterminal::REQUEST_SPACING_MS`] apart.
+async fn gecko_get(client: &HttpClient, url: &str) -> Result<FetchedRecord, Error> {
+    for attempt in 0..6 {
+        match client.get(url, &[]).await {
+            Err(FetchError::Status { status: 429, .. }) if attempt < 5 => {
+                println!("  geckoterminal: HTTP 429, waiting 60 s");
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            }
+            other => return Ok(other?),
+        }
+    }
+    unreachable!("the last attempt returns")
+}
+
 struct Fetcher {
     raw: PathBuf,
     files: Vec<ManifestFile>,
@@ -747,13 +830,16 @@ async fn universe_fetch(root: &Path) -> Result<ExitCode, Error> {
     let mut cg = Paced { last: None };
     println!("universe fetch → {}", root.display());
 
-    let f = cg.get(&client, &coingecko::markets_url()).await?;
+    let f = cg.get(&client, &coingecko::markets_url(1)).await?;
     out.keep(paths::MARKETS, coingecko::SOURCE_ID, &f)?;
+    let f = cg.get(&client, &coingecko::markets_url(2)).await?;
+    out.keep(paths::MARKETS_PAGE2, coingecko::SOURCE_ID, &f)?;
     let f = cg.get(&client, &coingecko::coins_list_url()).await?;
     out.keep(paths::COINS_LIST, coingecko::SOURCE_ID, &f)?;
     for (exchange, prefix) in [
         ("kraken", paths::KRAKEN_TICKERS),
         ("gdax", paths::COINBASE_TICKERS),
+        ("binance", paths::BINANCE_TICKERS),
     ] {
         for page in 1..=100u32 {
             let f = cg
@@ -782,13 +868,26 @@ async fn universe_fetch(root: &Path) -> Result<ExitCode, Error> {
     out.keep(paths::HYPERLIQUID_META, hyperliquid::SOURCE_ID, &f)?;
     let f = client.get(ssga::SPY_HOLDINGS_URL, &[]).await?;
     out.keep(paths::SPY_HOLDINGS, ssga::SOURCE_ID, &f)?;
-    // Nasdaq-100: universe support is modeled, but live membership import is
-    // deferred pending an approved machine-readable source. nasdaq.com
-    // refuses non-browser clients, and we don't work around that.
-    println!(
-        "  {}: not fetched (Nasdaq-100 live import deferred pending an approved machine-readable source)",
-        paths::NASDAQ100
-    );
+    let f = client.get(ssga::MDY_HOLDINGS_URL, &[]).await?;
+    out.keep(paths::MDY_HOLDINGS, ssga::SOURCE_ID, &f)?;
+    let f = client.get(ssga::SPSM_HOLDINGS_URL, &[]).await?;
+    out.keep(paths::SPSM_HOLDINGS, ssga::SOURCE_ID, &f)?;
+    // Nasdaq-100 through QQQ's holdings (V1.10).
+    let f = client.get(invesco::QQQ_HOLDINGS_URL, &[]).await?;
+    out.keep(paths::QQQ_HOLDINGS, invesco::SOURCE_ID, &f)?;
+    // Tokenized stocks: each issuer's own registry (V1.10).
+    let f = client.get(backed::TOKENS_URL, &[]).await?;
+    out.keep(paths::BACKED_TOKENS, backed::SOURCE_ID, &f)?;
+    let f = client.get(backpack::SECURITIES_URL, &[]).await?;
+    out.keep(paths::BACKPACK_SECURITIES, backpack::SOURCE_ID, &f)?;
+    let f = client.get(backpack::ASSETS_URL, &[]).await?;
+    out.keep(paths::BACKPACK_ASSETS, backpack::SOURCE_ID, &f)?;
+    let f = rhj::fetch_assets(&client).await?;
+    out.keep(paths::RHJ_ASSETS, rhj::API_SOURCE_ID, &f)?;
+    let f = client.get(binance_bstocks::LIST_URL, &[]).await?;
+    out.keep(paths::BSTOCKS, binance_bstocks::SOURCE_ID, &f)?;
+    let f = client.get(binance::EXCHANGE_INFO_URL, &[]).await?;
+    out.keep(paths::BINANCE_EXCHANGE_INFO, binance::SOURCE_ID, &f)?;
     let f = sec.fetch_company_tickers_exchange().await?;
     out.keep(paths::SEC_TICKERS, sec::SOURCE_ID, &f)?;
 
@@ -797,12 +896,36 @@ async fn universe_fetch(root: &Path) -> Result<ExitCode, Error> {
         root.join("manifest.json"),
         &to_json(&Manifest { files: out.files }),
     )?;
+    // Onchain pools of the Solana tokens this fetch prices (V1.10).
+    universe_pools(root, &client).await?;
     println!("universe fetch: done; next: undrly-collect universe build");
     Ok(ExitCode::SUCCESS)
 }
 
 fn universe_build(root: &Path) -> Result<ExitCode, Error> {
     let manifest: Manifest = json(root.join("manifest.json"))?;
+    let build = build_in_memory(root, &manifest)?;
+    let ids_path = root.join("ids.json");
+    write(&ids_path, &to_json(&build.ids))?;
+    write(root.join("snapshot.json"), &to_json(&build.snapshot))?;
+    write(root.join("deployments.json"), &to_json(&build.deployments))?;
+    write(root.join("report.md"), build.report.as_bytes())?;
+    let c = &build.coverage;
+    println!(
+        "universe build: {} new instruments, {} issuer entities, {} new feeds, {} deployments; members {:?}; exclusions {:?}",
+        c.instruments_new,
+        c.entities_new,
+        c.feeds_new,
+        build.deployments.deployments.len(),
+        c.members,
+        c.excluded
+    );
+    println!("  report: {}", root.join("report.md").display());
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The universe build of `manifest`'s raw files, nothing written.
+fn build_in_memory(root: &Path, manifest: &Manifest) -> Result<undrly_universe::Build, Error> {
     let mut files = BTreeMap::new();
     for f in &manifest.files {
         files.insert(f.path.clone(), read(root.join("raw").join(&f.path))?);
@@ -815,24 +938,95 @@ fn universe_build(root: &Path) -> Result<ExitCode, Error> {
     } else {
         IdMap::default()
     };
-    let build = undrly_universe::build(
+    let bound = onchain::bound_underlyings()?;
+    // Crypto assets the stablecoin FX file declared first (V1.9).
+    let stable_ids: IdMap = if Path::new(STABLECOIN_FX_IDS).exists() {
+        json(STABLECOIN_FX_IDS)?
+    } else {
+        IdMap::default()
+    };
+    let external: BTreeMap<String, String> = undrly_universe::STABLECOIN_PINS
+        .iter()
+        .filter_map(|(key, theirs)| Some(((*key).to_owned(), stable_ids.ids.get(*theirs)?.clone())))
+        .collect();
+    Ok(undrly_universe::build(
         &Inputs {
-            manifest: &manifest,
+            manifest,
             files: &files,
             v1: &v1,
             ids,
+            bound_underlyings: &bound,
+            external: &external,
         },
         &mut undrly_universe::mint,
-    )?;
-    write(&ids_path, &to_json(&build.ids))?;
-    write(root.join("snapshot.json"), &to_json(&build.snapshot))?;
-    write(root.join("report.md"), build.report.as_bytes())?;
-    let c = &build.coverage;
+    )?)
+}
+
+/// GeckoTerminal's top pools for every Solana token the build prices
+/// through Jupiter, and the DEX names (V1.10, docs/v1.10-tokenized-stocks.md
+/// §13). Replaces the manifest's earlier GeckoTerminal files; the next
+/// `universe build` declares one pool feed per token.
+async fn universe_pools(root: &Path, client: &HttpClient) -> Result<ExitCode, Error> {
+    let mut manifest: Manifest = json(root.join("manifest.json"))?;
+    manifest
+        .files
+        .retain(|f| f.source != geckoterminal::SOURCE_ID);
+    let build = build_in_memory(root, &manifest)?;
+    let mut mints: Vec<&str> = build
+        .snapshot
+        .quote_feeds
+        .iter()
+        .filter(|f| f.source == jupiter::SOURCE_ID)
+        .map(|f| f.symbol.as_str())
+        .collect();
+    mints.sort_unstable();
+    mints.dedup();
+    let mut out = Fetcher {
+        raw: root.join("raw"),
+        files: manifest.files,
+    };
+    let dir = out.raw.join("geckoterminal");
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| Error::Io(dir.display().to_string(), e))?;
+    }
+    // Only tokens Jupiter prices now are charted: the price is the filter,
+    // not stored (the collector stores prices).
+    let mut priced: Vec<&str> = Vec::new();
+    for batch in mints.chunks(jupiter::MAX_IDS) {
+        let f = jupiter::fetch_prices(client, batch).await?;
+        let prices = undrly_provider::QuoteProvider::decode_quote(&JupiterProvider::new(), &f.body)
+            .map_err(|e| Error::Usage(e.to_string()))?;
+        priced.extend(
+            batch
+                .iter()
+                .filter(|m| prices.0.get(**m).is_some_and(|p| p.usd_price.is_some())),
+        );
+        tokio::time::sleep(Duration::from_millis(1_000)).await;
+    }
     println!(
-        "universe build: {} new instruments, {} issuer entities, {} new feeds; members {:?}; exclusions {:?}",
-        c.instruments_new, c.entities_new, c.feeds_new, c.members, c.excluded
+        "universe pools: {} Solana tokens, {} priced by Jupiter now; {} requests",
+        mints.len(),
+        priced.len(),
+        priced.len() + 1
     );
-    println!("  report: {}", root.join("report.md").display());
+    let pace = Duration::from_millis(geckoterminal::REQUEST_SPACING_MS);
+    for mint in &priced {
+        let f = gecko_get(client, &geckoterminal::pools_url(mint)).await?;
+        out.keep(
+            &format!("{}{mint}.json", paths::GECKOTERMINAL_POOLS),
+            geckoterminal::SOURCE_ID,
+            &f,
+        )?;
+        tokio::time::sleep(pace).await;
+    }
+    let f = gecko_get(client, &geckoterminal::dexes_url(1)).await?;
+    out.keep(paths::GECKOTERMINAL_DEXES, geckoterminal::SOURCE_ID, &f)?;
+    out.files.sort_by(|a, b| a.path.cmp(&b.path));
+    write(
+        root.join("manifest.json"),
+        &to_json(&Manifest { files: out.files }),
+    )?;
+    println!("universe pools: done; next: undrly-collect universe build");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -936,7 +1130,7 @@ async fn once_pass(
     keys: &Keys<'_>,
     feeds: &[Feed],
 ) -> Result<ExitCode, Error> {
-    const ORDER: [Feed; 22] = [
+    const ORDER: [Feed; 23] = [
         Feed::WorldBank,
         Feed::Eia,
         Feed::FedH10,
@@ -948,6 +1142,7 @@ async fn once_pass(
         Feed::GoldApi,
         Feed::GoldApiOhlc,
         Feed::Alpaca,
+        Feed::Jupiter,
         // Books first, then the marks they are attached to (within 60 s).
         Feed::HyperliquidBook,
         Feed::Hyperliquid,
@@ -1137,6 +1332,7 @@ async fn poll_batch(
         Feed::Bitkub => bitkub::fetch_ticker(client, refs[0]).await?,
         Feed::CoinsPh => coins_ph::fetch_book_ticker(client, refs[0]).await?,
         Feed::HashKey => hashkey::fetch_book_ticker(client, refs[0]).await?,
+        Feed::Jupiter => jupiter::fetch_prices(client, &refs).await?,
     };
     let raw = RawRecord {
         record_key: fetched.record_key.clone(),
@@ -1336,6 +1532,16 @@ async fn poll_batch(
                 conn,
                 &HashKeyProvider::new(),
                 &HashKeyNormalizer,
+                &raw,
+                requested,
+            )
+            .await?
+        }
+        Feed::Jupiter => {
+            ingest_quotes_for(
+                conn,
+                &JupiterProvider::new(),
+                &JupiterNormalizer,
                 &raw,
                 requested,
             )

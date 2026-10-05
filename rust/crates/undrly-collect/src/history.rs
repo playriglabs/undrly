@@ -2,7 +2,10 @@
 //!
 //! ```text
 //! history bars       venue OHLC bars (1h, 1d): Kraken (crypto spot + Kraken FX),
-//!                    Hyperliquid (perpetuals), Alpaca IEX (equities)
+//!                    Hyperliquid (perpetuals), Alpaca IEX (equities), stablecoin
+//!                    and bStock venues, Coinbase (markets Kraken does not quote)
+//!                    and GeckoTerminal pools (Solana tokens, V1.10);
+//!                    `--source <id>` backfills one source only
 //! history reference  reference-series history: ECB (90 days), Bank of Canada,
 //!                    Fed H.10, Bank Indonesia, BNM (3 months), CBM (60 days),
 //!                    EIA (90 values), World Bank (every month)
@@ -40,8 +43,9 @@ use undrly_normalize::fx::{
     EcbNormalizer, FedH10Normalizer,
 };
 use undrly_normalize::market_data::{
-    AlpacaBarNormalizer, BitkubBarNormalizer, HyperliquidBarNormalizer, IndodaxBarNormalizer,
-    KlineBarNormalizer, KrakenBarNormalizer, OkxBarNormalizer,
+    AlpacaBarNormalizer, BitkubBarNormalizer, CoinbaseBarNormalizer, GeckoTerminalBarNormalizer,
+    HyperliquidBarNormalizer, IndodaxBarNormalizer, KlineBarNormalizer, KrakenBarNormalizer,
+    OkxBarNormalizer,
 };
 use undrly_normalize::worldbank::WorldBankNormalizer;
 use undrly_provider::alpaca::{self, AlpacaProvider, Credentials};
@@ -51,10 +55,12 @@ use undrly_provider::binance::{self, BinanceProvider};
 use undrly_provider::bitkub::{self, BitkubProvider};
 use undrly_provider::bnm::{self, BnmMonthProvider};
 use undrly_provider::cbm::{self, CbmProvider};
+use undrly_provider::coinbase::{self, CoinbaseProvider};
 use undrly_provider::coins_ph::{self, CoinsPhProvider};
 use undrly_provider::ecb::{self, EcbProvider};
 use undrly_provider::eia::{self, EiaProvider};
 use undrly_provider::fed_h10::{self, FedH10Provider};
+use undrly_provider::geckoterminal::{self, GeckoTerminalProvider};
 use undrly_provider::hashkey::{self, HashKeyProvider};
 use undrly_provider::http::{FetchedRecord, HttpClient};
 use undrly_provider::hyperliquid::{self, HyperliquidProvider};
@@ -65,11 +71,24 @@ use undrly_provider::worldbank::{self, WorldBankProvider};
 use undrly_provider::{finnhub, fred};
 use undrly_store::market::quote_feeds_of_source;
 
-use super::{DEFAULT_USER_AGENT, Error, RECORD_KEY_MAX, pack};
+use super::{DEFAULT_USER_AGENT, Error, RECORD_KEY_MAX, gecko_get, pack};
 
 struct Options {
     days_1h: i64,
     days_1d: i64,
+    /// `--source <id>`: backfill bars of that source only.
+    source: Option<String>,
+    /// Added after every bar request (the live refresh shares rate limits
+    /// with the quote collector).
+    extra_pause: Duration,
+    /// Daily bars too (Alpaca's always: equities' statistics are daily).
+    daily: bool,
+}
+
+impl Options {
+    fn wants(&self, source: &str) -> bool {
+        self.source.as_deref().is_none_or(|s| s == source)
+    }
 }
 
 fn parse(args: &[&str]) -> Result<(Vec<&'static str>, Options), Error> {
@@ -77,6 +96,9 @@ fn parse(args: &[&str]) -> Result<(Vec<&'static str>, Options), Error> {
     let mut o = Options {
         days_1h: 30,
         days_1d: 365,
+        source: None,
+        extra_pause: Duration::ZERO,
+        daily: true,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -95,6 +117,12 @@ fn parse(args: &[&str]) -> Result<(Vec<&'static str>, Options), Error> {
                 "reference",
                 "bars",
             ]),
+            "--source" => {
+                let s = it
+                    .next()
+                    .ok_or_else(|| Error::Usage("--source needs a source id".into()))?;
+                o.source = Some((*s).to_owned());
+            }
             "--days-1h" | "--days-1d" => {
                 let n: i64 = it
                     .next()
@@ -210,6 +238,69 @@ async fn symbols(
     Ok((out, venue))
 }
 
+/// Waits `base` plus the options' extra pause.
+async fn pause(o: &Options, base: Duration) {
+    tokio::time::sleep(base + o.extra_pause).await;
+}
+
+/// Bars refreshed while `run` collects (V1.10): one minute after start and
+/// then every hour, the last 2 days of hourly bars of every bar source (and
+/// 3 days of daily bars: Alpaca's every run, the others' every 24th run,
+/// the first included), on a connection of its own, two seconds added after
+/// each request so the quote collector keeps its rate limits. A run longer
+/// than an hour starts the next at once. Failures are logged; the next run
+/// tries again.
+pub(super) async fn live_bars(pool: sqlx::PgPool) {
+    let mut o = Options {
+        days_1h: 2,
+        days_1d: 3,
+        source: None,
+        extra_pause: Duration::from_secs(2),
+        daily: true,
+    };
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    for run in 0u64.. {
+        o.daily = run % 24 == 0;
+        let started = Instant::now();
+        let result = async {
+            let user_agent = std::env::var("UNDRLY_USER_AGENT")
+                .unwrap_or_else(|_| DEFAULT_USER_AGENT.to_owned());
+            let client = HttpClient::new(&user_agent)?;
+            let alpaca = match (
+                std::env::var("APCA_API_KEY_ID"),
+                std::env::var("APCA_API_SECRET_KEY"),
+            ) {
+                (Ok(key_id), Ok(secret_key)) => Some(Credentials { key_id, secret_key }),
+                _ => None,
+            };
+            let mut conn = pool.acquire().await?;
+            bars(&mut conn, &client, alpaca.as_ref(), &o).await
+        }
+        .await;
+        match result {
+            Ok(failed) => println!(
+                "bars refresh: done in {} s; {failed} failed requests",
+                started.elapsed().as_secs()
+            ),
+            Err(e) => eprintln!("bars refresh: {e}"),
+        }
+        tokio::time::sleep_until((started + Duration::from_secs(3600)).into()).await;
+    }
+}
+
+/// [`symbols`] of a bar source (venue feeds), none when `--source` names
+/// another.
+async fn bar_symbols(
+    conn: &mut PgConnection,
+    source: &str,
+    o: &Options,
+) -> Result<Vec<String>, Error> {
+    if !o.wants(source) {
+        return Ok(Vec::new());
+    }
+    Ok(symbols(conn, source, true).await?.0)
+}
+
 pub(super) async fn run(conn: &mut PgConnection, args: &[&str]) -> Result<ExitCode, Error> {
     let (what, o) = parse(args)?;
     let user_agent =
@@ -268,7 +359,7 @@ async fn bars(
     let mut failures = 0;
 
     // Kraken: one pair and interval per request (at most 720 bars), 1 req/s.
-    let (pairs, _) = symbols(conn, kraken::SOURCE_ID, true).await?;
+    let pairs = bar_symbols(conn, kraken::SOURCE_ID, o).await?;
     let started = Instant::now();
     let mut t = Tally::default();
     for pair in &pairs {
@@ -276,6 +367,9 @@ async fn bars(
             (BarInterval::OneHour, 60, o.days_1h),
             (BarInterval::OneDay, 1440, o.days_1d),
         ] {
+            if interval == BarInterval::OneDay && !o.daily {
+                continue;
+            }
             let since = (now - TimeDelta::days(days)).timestamp();
             step!(t, format!("kraken {pair} {}", interval.as_str()), {
                 let f = kraken::fetch_ohlc(client, pair, minutes, Some(since)).await?;
@@ -290,20 +384,25 @@ async fn bars(
                 t.bars(&f, &r);
                 Ok::<(), Error>(())
             });
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            pause(o, Duration::from_secs(1)).await;
         }
     }
     t.print("bars kraken", started);
     failures += t.failures;
 
+    failures += coinbase_bars(conn, client, o).await?;
+
     // Hyperliquid: one coin and interval per request; spaced for the info
     // endpoint's weight limit.
-    let (coins, _) = symbols(conn, hyperliquid::SOURCE_ID, true).await?;
+    let coins = bar_symbols(conn, hyperliquid::SOURCE_ID, o).await?;
     let started = Instant::now();
     let mut t = Tally::default();
     let end = now.timestamp_millis();
     for coin in &coins {
         for (interval, days) in [("1h", o.days_1h), ("1d", o.days_1d)] {
+            if interval == "1d" && !o.daily {
+                continue;
+            }
             let start = (now - TimeDelta::days(days)).timestamp_millis();
             step!(t, format!("hyperliquid {coin} {interval}"), {
                 let f = hyperliquid::fetch_candles(client, coin, interval, start, end).await?;
@@ -318,20 +417,21 @@ async fn bars(
                 t.bars(&f, &r);
                 Ok::<(), Error>(())
             });
-            tokio::time::sleep(Duration::from_millis(1500)).await;
+            pause(o, Duration::from_millis(1500)).await;
         }
     }
     t.print("bars hyperliquid", started);
     failures += t.failures;
 
     failures += stablecoin_venue_bars(conn, client, o).await?;
+    failures += pool_bars(conn, client, o).await?;
 
     // Alpaca IEX: batches of symbols per URL, every page followed.
     let Some(credentials) = alpaca else {
         println!("history bars alpaca: skipped (APCA_API_KEY_ID / APCA_API_SECRET_KEY not set)");
         return Ok(failures);
     };
-    let (stocks, _) = symbols(conn, alpaca::SOURCE_ID, true).await?;
+    let stocks = bar_symbols(conn, alpaca::SOURCE_ID, o).await?;
     let started = Instant::now();
     let mut t = Tally::default();
     for (interval, timeframe, days) in [
@@ -375,7 +475,7 @@ async fn bars(
                     next = decoded.next_page_token;
                     Ok::<(), Error>(())
                 });
-                tokio::time::sleep(Duration::from_millis(350)).await;
+                pause(o, Duration::from_millis(350)).await;
                 match next {
                     Some(p) => page = Some(p),
                     None => break,
@@ -769,6 +869,111 @@ async fn reference(
 /// V1.9 stablecoin/fiat venues (docs/v1.9-live-fx.md): each venue's 1h and
 /// 1d bars for its declared markets, one market and interval per request
 /// (OKX pages back 100 bars at a time). Returns the failed requests.
+/// Coinbase Exchange candles (V1.10) for the markets only Coinbase quotes in
+/// their unit (no Kraken feed for the pair): the newest 300 hours and 300
+/// days, one request each, at most 3 a second.
+async fn coinbase_bars(
+    conn: &mut PgConnection,
+    client: &HttpClient,
+    o: &Options,
+) -> Result<usize, Error> {
+    if !o.wants(coinbase::SOURCE_ID) {
+        return Ok(0);
+    }
+    let products: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT f.symbol FROM quote_feeds f
+         WHERE f.feed_source_id = $1 AND NOT EXISTS (
+           SELECT 1 FROM quote_feeds k WHERE k.feed_source_id = $2
+             AND k.subject_id = f.subject_id AND k.unit_id = f.unit_id)
+         ORDER BY f.symbol",
+    )
+    .bind(coinbase::SOURCE_ID)
+    .bind(kraken::SOURCE_ID)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(undrly_store::StoreError::from)?;
+    let started = Instant::now();
+    let mut t = Tally::default();
+    for product in &products {
+        for (interval, granularity) in [(BarInterval::OneHour, 3600), (BarInterval::OneDay, 86_400)]
+        {
+            if interval == BarInterval::OneDay && !o.daily {
+                continue;
+            }
+            step!(t, format!("coinbase {product} {granularity}"), {
+                let f = coinbase::fetch_candles(client, product, granularity).await?;
+                let r = ingest_bars(
+                    conn,
+                    &CoinbaseProvider::new(),
+                    &CoinbaseBarNormalizer(interval),
+                    &raw(&f),
+                    &sym(product),
+                )
+                .await?;
+                t.bars(&f, &r);
+                Ok::<(), Error>(())
+            });
+            pause(o, Duration::from_millis(350)).await;
+        }
+    }
+    t.print("bars coinbase", started);
+    Ok(t.failures)
+}
+
+/// GeckoTerminal pool bars (V1.10, docs/v1.10-tokenized-stocks.md §13): the
+/// pool feed of each Solana token that has a quote, newest `limit` hours
+/// and days in one request each, 10 requests a minute.
+async fn pool_bars(
+    conn: &mut PgConnection,
+    client: &HttpClient,
+    o: &Options,
+) -> Result<usize, Error> {
+    if !o.wants(geckoterminal::SOURCE_ID) {
+        return Ok(0);
+    }
+    let pools: Vec<String> = sqlx::query_scalar(
+        "SELECT f.symbol FROM quote_feeds f
+         WHERE f.feed_source_id = $1 AND EXISTS (
+           SELECT 1 FROM canonical_quotes q
+           WHERE q.subject_id = f.subject_id AND q.unit_id = f.unit_id)
+         ORDER BY f.symbol",
+    )
+    .bind(geckoterminal::SOURCE_ID)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(undrly_store::StoreError::from)?;
+    let started = Instant::now();
+    let mut t = Tally::default();
+    for pool in &pools {
+        for (interval, timeframe, n) in [
+            (BarInterval::OneHour, "hour", o.days_1h * 24),
+            (BarInterval::OneDay, "day", o.days_1d),
+        ] {
+            if interval == BarInterval::OneDay && !o.daily {
+                continue;
+            }
+            step!(t, format!("geckoterminal {pool} {timeframe}"), {
+                let url = geckoterminal::ohlcv_url(pool, timeframe, n.clamp(1, 1000) as u32, None)
+                    .ok_or_else(|| Error::Usage(format!("{pool}: not a pool feed symbol")))?;
+                let f = gecko_get(client, &url).await?;
+                let r = ingest_bars(
+                    conn,
+                    &GeckoTerminalProvider::new(),
+                    &GeckoTerminalBarNormalizer(interval),
+                    &raw(&f),
+                    &sym(pool),
+                )
+                .await?;
+                t.bars(&f, &r);
+                Ok::<(), Error>(())
+            });
+            pause(o, Duration::from_millis(geckoterminal::REQUEST_SPACING_MS)).await;
+        }
+    }
+    t.print("bars geckoterminal", started);
+    Ok(t.failures)
+}
+
 async fn stablecoin_venue_bars(
     conn: &mut PgConnection,
     client: &HttpClient,
@@ -785,11 +990,14 @@ async fn stablecoin_venue_bars(
     // Binance-layout klines (Binance, Coins.ph, HashKey): up to 1,000 bars
     // from the window's start, which covers 30 days of hours or a year of days.
     for source in [binance::SOURCE_ID, coins_ph::SOURCE_ID, hashkey::SOURCE_ID] {
-        let (markets, _) = symbols(conn, source, true).await?;
+        let markets = bar_symbols(conn, source, o).await?;
         let started = Instant::now();
         let mut t = Tally::default();
         for market in &markets {
             for (interval, days) in windows {
+                if interval == BarInterval::OneDay && !o.daily {
+                    continue;
+                }
                 let tf = if interval == BarInterval::OneHour {
                     "1h"
                 } else {
@@ -839,7 +1047,7 @@ async fn stablecoin_venue_bars(
                     t.bars(&f, &r);
                     Ok::<(), Error>(())
                 });
-                tokio::time::sleep(Duration::from_millis(300)).await;
+                pause(o, Duration::from_millis(300)).await;
             }
         }
         t.print(&format!("bars {source}"), started);
@@ -847,11 +1055,14 @@ async fn stablecoin_venue_bars(
     }
 
     // OKX: newest first, 100 bars per page, paged back with `after`.
-    let (markets, _) = symbols(conn, okx::SOURCE_ID, true).await?;
+    let markets = bar_symbols(conn, okx::SOURCE_ID, o).await?;
     let started = Instant::now();
     let mut t = Tally::default();
     for market in &markets {
         for (interval, days) in windows {
+            if interval == BarInterval::OneDay && !o.daily {
+                continue;
+            }
             let bar = if interval == BarInterval::OneHour {
                 "1H"
             } else {
@@ -880,7 +1091,7 @@ async fn stablecoin_venue_bars(
                     t.bars(&f, &r);
                     Ok::<(), Error>(())
                 });
-                tokio::time::sleep(Duration::from_millis(250)).await;
+                pause(o, Duration::from_millis(250)).await;
                 match next {
                     Some(ts) => after = Some(ts),
                     None => break,
@@ -894,11 +1105,14 @@ async fn stablecoin_venue_bars(
     // Indodax and Bitkub chart history: one window per request.
     let to = now.timestamp();
     for source in [indodax::SOURCE_ID, bitkub::SOURCE_ID] {
-        let (markets, _) = symbols(conn, source, true).await?;
+        let markets = bar_symbols(conn, source, o).await?;
         let started = Instant::now();
         let mut t = Tally::default();
         for market in &markets {
             for (interval, days) in windows {
+                if interval == BarInterval::OneDay && !o.daily {
+                    continue;
+                }
                 let tf = if interval == BarInterval::OneHour {
                     "60"
                 } else {
@@ -932,7 +1146,7 @@ async fn stablecoin_venue_bars(
                     t.bars(&f, &r);
                     Ok::<(), Error>(())
                 });
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                pause(o, Duration::from_millis(500)).await;
             }
         }
         t.print(&format!("bars {source}"), started);

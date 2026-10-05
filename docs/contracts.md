@@ -236,6 +236,43 @@ V1.4 additions (cross-ecosystem identity,
   else the id form. Readable queries are for people and examples; store ids.
 - Universe key `fx-global`. Details: [`docs/v1.9-live-fx.md`](v1.9-live-fx.md).
 
+
+### USD conversion (V1.10)
+
+- `convert-via-stablecoin-v1` (`AggregationMethod`): a `DerivedQuoteV1`
+  (`basis: derived`, `priceType: mid`) for a market quoted only in USDT,
+  restated in US dollars: `X/USD = X/USDT × USDT/USD`, rounded to the fewer
+  significant digits of the two (`v1.convertRate`); bid and ask are the
+  legs' products, rounded outward. Inputs and `asOf` as for a cross.
+- `MarketsV1` lists one row per asset: a market in any unit other than USD
+  is left out when the asset has a USD market. `counts` follow the same
+  rule. The hidden market stays reachable by its own query (`BTC/USDT`).
+- `MarketsV1` takes `sort=price|changePercent|change` and `order=asc|desc`
+  (default `asc`) and echoes them as `sort` (`null` without). Values are
+  those `/v1/market` serves, computed for every listed market and reused for
+  a minute (recomputed in the background; warmed when the API starts).
+  Markets without the value come last, by name.
+- A `mean-venue-mid-v1` aggregate is fresh for 120 s after its `asOf`
+  (was 30 s): the method still picks inputs within 30 s of computing, but
+  one sweep of its venues takes longer than that with the top-500 crypto
+  universe. Older, `/v1/quote` answers `no_quote` as before.
+- `MarketStatisticsV1` `rolling_24h` / `rolling_24h_closes`: when hours have
+  no bar (an onchain pool without trades, a bStock outside its session),
+  the window opens at the last close at or before 24 hours before the latest
+  bar instead of returning no statistics.
+
+### Tokenized stocks (V1.10)
+
+- Universe keys `crypto-top250`, `crypto-top500`, `sp400`, `sp600`;
+  `crypto-top100` is the first 100 ranks; `nasdaq100` now comes from QQQ's
+  holdings.
+- Query syntax `Crypto.BASE/QUOTE` resolves as the pair `BASE/QUOTE`
+  (`Crypto.AAPLX/USD`).
+- Tokenized products are `tokenized_security` instruments with `TRACKS` or
+  `TOKENIZES` to the share. Jupiter prices them per Solana mint
+  (`basis: aggregated`, `priceType: last`, source `jupiter`).
+  Details: [`docs/v1.10-tokenized-stocks.md`](v1.10-tokenized-stocks.md).
+
 ## Changing the API contract
 
 - Adding a key is breaking, because readers reject unknown keys. Any shape

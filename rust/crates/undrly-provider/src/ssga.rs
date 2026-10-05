@@ -18,6 +18,11 @@ pub const SOURCE_ID: &str = "ssga";
 /// The direct file URL (the `/us/en/intermediary/...` path redirects here).
 pub const SPY_HOLDINGS_URL: &str =
     "https://www.ssga.com/library-content/products/fund-data/etfs/us/holdings-daily-us-en-spy.xlsx";
+/// S&P MidCap 400 and S&P SmallCap 600 proxies (V1.10): the SPDR MDY and
+/// SPSM ETFs' holdings, in the same workbook layout.
+pub const MDY_HOLDINGS_URL: &str =
+    "https://www.ssga.com/library-content/products/fund-data/etfs/us/holdings-daily-us-en-mdy.xlsx";
+pub const SPSM_HOLDINGS_URL: &str = "https://www.ssga.com/library-content/products/fund-data/etfs/us/holdings-daily-us-en-spsm.xlsx";
 pub const SHEET: &str = "holdings";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

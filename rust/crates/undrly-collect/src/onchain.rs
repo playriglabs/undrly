@@ -9,16 +9,25 @@
 //!    page), store it raw, and ingest a deployment per bound row, each
 //!    `REPRESENTS` the bound instrument.
 //!
+//! 3. Tokenized products' deployments from the universe build
+//!    (`data/universe/deployments.json`, V1.10): each `REPRESENTS` its
+//!    product, asserted by the issuer registry record seeded with the
+//!    snapshot. Deployments on chains not stored yet are skipped.
+//!
 //! Sequential, one request per step, no retries. A fetch failure writes
 //! nothing; a record that does not match its binding is rejected whole.
+
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use sqlx::PgConnection;
 use undrly_core::{
-    AssetNamespace, Caip2, ChainAsset, CurrencyCode, DisplayName, InstrumentId, Isin, Lei,
+    AssetNamespace, Caip2, ChainAsset, CurrencyCode, DeploymentId, DisplayName, InstrumentId, Isin,
+    Lei,
 };
 use undrly_ingest::onchain::{
-    ChainBinding, IssuerBinding, IssuerRow, Tip20Binding, ingest_circle_usdc, ingest_evm_chain,
+    ChainBinding, IssuerBinding, IssuerRow, RegistryDeployment, RegistryDeploymentOutcome,
+    Tip20Binding, ingest_circle_usdc, ingest_evm_chain, ingest_registry_deployment,
     ingest_solana_chain, ingest_tip20_asset,
 };
 use undrly_ingest::tracker::{
@@ -32,6 +41,18 @@ use crate::Error;
 
 pub const BINDINGS: &str = "data/reference/onchain.json";
 pub const TOKENIZED: &str = "data/reference/tokenized-securities.json";
+pub const DEPLOYMENTS: &str = "data/universe/deployments.json";
+
+/// Underlying ISINs of the products bound by reviewed Final Terms: the
+/// universe build leaves their registry rows to this command.
+pub fn bound_underlyings() -> Result<std::collections::BTreeSet<String>, Error> {
+    let tokenized: Tokenized = crate::json(TOKENIZED)?;
+    Ok(tokenized
+        .products
+        .into_iter()
+        .map(|p| p.underlying_isin)
+        .collect())
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -175,7 +196,8 @@ pub async fn run(conn: &mut PgConnection, client: &HttpClient) -> Result<(), Err
                 ingest_solana_chain(conn, &raw(&fetched), &binding).await?
             }
             (evm_rpc::ROBINHOOD_CHAIN_SOURCE_ID, evm_rpc::ROBINHOOD_CHAIN_MAINNET_RPC)
-            | (evm_rpc::TEMPO_SOURCE_ID, evm_rpc::TEMPO_MAINNET_RPC) => {
+            | (evm_rpc::TEMPO_SOURCE_ID, evm_rpc::TEMPO_MAINNET_RPC)
+            | (evm_rpc::BNB_CHAIN_SOURCE_ID, evm_rpc::BNB_CHAIN_MAINNET_RPC) => {
                 let fetched = evm_rpc::fetch_chain_id(client, &c.rpc_url).await?;
                 ingest_evm_chain(conn, &raw(&fetched), &c.source, &binding).await?
             }
@@ -279,7 +301,73 @@ pub async fn run(conn: &mut PgConnection, client: &HttpClient) -> Result<(), Err
             name = t.instrument_name,
         );
     }
+    deployments(conn).await?;
     products(conn, client).await
+}
+
+/// Tokenized products' deployments (V1.10), when the universe was built.
+async fn deployments(conn: &mut PgConnection) -> Result<(), Error> {
+    if !std::path::Path::new(DEPLOYMENTS).exists() {
+        println!("onchain: no {DEPLOYMENTS} (run `universe build`)");
+        return Ok(());
+    }
+    let file: undrly_universe::tokenized::Deployments = crate::json(DEPLOYMENTS)?;
+    let bad =
+        |what: &str, e: &dyn std::fmt::Display| Error::Usage(format!("{DEPLOYMENTS}: {what}: {e}"));
+    let (mut written, mut unchanged, mut no_chain) = (0, 0, BTreeMap::<String, usize>::new());
+    for d in &file.deployments {
+        let chain = Caip2::parse(&d.chain).map_err(|e| bad("chain", &e))?;
+        let namespace =
+            AssetNamespace::parse(&d.asset_namespace).map_err(|e| bad("namespace", &e))?;
+        let mut sha256 = [0u8; 32];
+        if d.sha256.len() != 64 {
+            return Err(bad("sha256", &d.sha256));
+        }
+        for (i, byte) in sha256.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&d.sha256[2 * i..2 * i + 2], 16)
+                .map_err(|e| bad("sha256", &e))?;
+        }
+        let row = RegistryDeployment {
+            id: DeploymentId::parse(&d.id).map_err(|e| bad("id", &e))?,
+            asset: ChainAsset::new(chain.namespace(), namespace, &d.asset_reference)
+                .map_err(|e| bad("asset", &e))?,
+            chain,
+            product: InstrumentId::parse(&d.represents).map_err(|e| bad("represents", &e))?,
+            source: undrly_core::SourceId::parse(&d.source).map_err(|e| bad("source", &e))?,
+            record_key: d.record_key.clone(),
+            sha256,
+        };
+        match ingest_registry_deployment(conn, &row).await? {
+            RegistryDeploymentOutcome::Written {
+                deployment,
+                represents,
+            } => {
+                if deployment == undrly_store::Write::Inserted
+                    || represents == undrly_store::Write::Inserted
+                {
+                    written += 1;
+                } else {
+                    unchanged += 1;
+                }
+            }
+            RegistryDeploymentOutcome::NoChain => {
+                *no_chain.entry(d.chain.clone()).or_default() += 1;
+            }
+            RegistryDeploymentOutcome::Conflict(other) => println!(
+                "onchain: REVIEW: {} is already deployment {other}, not {}",
+                d.key, d.id
+            ),
+        }
+    }
+    println!(
+        "onchain: tokenized deployments: {written} written, {unchanged} unchanged{}",
+        if no_chain.is_empty() {
+            String::new()
+        } else {
+            format!("; skipped (chain not stored) {no_chain:?}")
+        }
+    );
+    Ok(())
 }
 
 fn resolution<T>(r: &Resolution<T>) -> &'static str {

@@ -20,7 +20,7 @@
 
 use chrono::{NaiveDate, TimeZone, Utc};
 use undrly_core::quote::mid_price;
-use undrly_core::{BidAsk, Decimal, PriceType, Timestamp, VenueSymbol};
+use undrly_core::{BidAsk, Decimal, PriceType, Timestamp, VenueSymbol, cross_rate};
 use undrly_provider::{bank_indonesia, bank_of_canada, bitstamp, bnm, cbm, ecb, fed_h10};
 
 use crate::{NormalizeError, NormalizedQuote, QuoteNormalizer, decimal, invalid, timestamp};
@@ -421,13 +421,45 @@ impl crate::HistoryNormalizer for BnmMonthNormalizer {
 
 // ---------------------------------------------------------------- CBM
 
-/// Central Bank of Myanmar: symbol = ISO code, MMK per one unit. The
-/// payload states no units, so only currencies whose unit is known are
-/// accepted (USD, per 1 USD); any other requested symbol is an error.
+/// Central Bank of Myanmar reference rates, MMK per unit of each currency.
+///
+/// - symbol `XXX`: MMK per one XXX;
+/// - symbol `BASE/QUOTE` (V1.10): QUOTE per one BASE, the ratio of two rates
+///   of the same table (`MMK per BASE ÷ MMK per QUOTE`), rounded to the fewer
+///   significant digits of the two ([`cross_rate`]). CBM sets USD/MMK and
+///   derives every other rate from it with Thomson Reuters cross rates, so
+///   the ratio is that cross rate, free of the kyat rate.
+///
+/// The payload states no units, so only currencies whose unit is known are
+/// accepted (CBM's own table, [`CBM_UNITS`]); any other is an error.
 pub struct CbmNormalizer;
 
-/// Currencies whose CBM rate is known to be per one unit.
-const CBM_PER_ONE: [&str; 1] = ["USD"];
+/// Units CBM quotes each currency per, from its reference-rate table
+/// (forex.cbm.gov.mm/index.php/fxrate, reviewed 2026-10-05).
+const CBM_UNITS: [(&str, u32); 7] = [
+    ("USD", 1),
+    ("SAR", 1),
+    ("BND", 1),
+    ("CNY", 1),
+    ("KHR", 100),
+    ("LAK", 100),
+    ("VND", 100),
+];
+
+/// MMK per one unit of `code`, if the table has it.
+fn cbm_rate(l: &cbm::Latest, code: &str) -> Result<Option<Decimal>, NormalizeError> {
+    let Some((_, units)) = CBM_UNITS.iter().find(|(c, _)| *c == code) else {
+        return Err(invalid(
+            "rates",
+            format!("{code}: CBM states no unit for this currency"),
+        ));
+    };
+    let Some(rate) = l.rates.get(code) else {
+        return Ok(None);
+    };
+    let rate = positive("rate", decimal("rate", rate)?)?;
+    per_unit("unit", rate, Decimal::from(*units)).map(Some)
+}
 
 impl QuoteNormalizer for CbmNormalizer {
     type Quote = cbm::Latest;
@@ -440,14 +472,16 @@ impl QuoteNormalizer for CbmNormalizer {
         let at = unix_seconds("timestamp", &l.timestamp)?;
         let mut out = Vec::new();
         for symbol in symbols {
-            if !CBM_PER_ONE.contains(&symbol.as_str()) {
-                return Err(invalid(
-                    "rates",
-                    format!("{symbol}: CBM states no unit for this currency"),
-                ));
-            }
-            if let Some(rate) = l.rates.get(symbol.as_str()) {
-                let price = positive("rate", decimal("rate", rate)?)?;
+            let price = match symbol.as_str().split_once('/') {
+                Some((base, quote)) => match (cbm_rate(l, base)?, cbm_rate(l, quote)?) {
+                    (Some(b), Some(q)) => {
+                        Some(cross_rate(b, q).ok_or_else(|| invalid("rates", "cannot cross"))?)
+                    }
+                    _ => None,
+                },
+                None => cbm_rate(l, symbol.as_str())?,
+            };
+            if let Some(price) = price {
                 out.push(reference(symbol, price, at));
             }
         }
@@ -686,6 +720,43 @@ mod tests {
         assert!(
             BnmNormalizer
                 .normalize_quotes(&fx, &syms(&["USD"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn cbm_crosses_two_rates_of_one_table_per_unit() {
+        let l = cbm::CbmProvider::new()
+            .decode_quote(
+                br#"{"info":"Central Bank of Myanmar","description":"Official Website of Central Bank of Myanmar","timestamp":"1790928000",
+                     "rates":{"USD":"2100.00","KHR":"51.76","LAK":"9.35","VND":"8.08","SAR":"559.33","BND":"1642.23","CNY":"313.22"}}"#,
+            )
+            .unwrap();
+        let q = CbmNormalizer
+            .normalize_quotes(
+                &l,
+                &syms(&["USD/VND", "USD/KHR", "USD/LAK", "USD/SAR", "USD/BND", "VND"]),
+            )
+            .unwrap();
+        let got: Vec<(&str, String)> = q
+            .iter()
+            .map(|x| (x.symbol.as_str(), x.price.to_string()))
+            .collect();
+        // VND, KHR, LAK are quoted per 100: 2100.00 / 0.0808 at 3 digits.
+        assert_eq!(
+            got,
+            [
+                ("USD/VND", "26000".into()),
+                ("USD/KHR", "4057".into()),
+                ("USD/LAK", "22500".into()),
+                ("USD/SAR", "3.7545".into()),
+                ("USD/BND", "1.27875".into()),
+                ("VND", "0.0808".into()),
+            ]
+        );
+        assert!(
+            CbmNormalizer
+                .normalize_quotes(&l, &syms(&["USD/IDR"]))
                 .is_err()
         );
     }

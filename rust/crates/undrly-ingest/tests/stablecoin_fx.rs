@@ -9,7 +9,7 @@ use std::path::Path;
 
 use undrly_core::{
     AggregationMethod, CanonicalId, DisplayName, ObservationBasis, PriceSubject, PriceType,
-    PriceUnit, Redistribution, Source, SourceId, Timestamp, VenueSymbol, cross_rate,
+    PriceUnit, Redistribution, Source, SourceId, Timestamp, VenueSymbol, convert_rate, cross_rate,
 };
 use undrly_ingest::curated::ingest_universe;
 use undrly_ingest::quotes::{ingest_quotes_for, refresh_canonical_quotes, refresh_cross_quotes};
@@ -309,6 +309,111 @@ async fn usd_idr_is_the_cross_of_two_venue_legs_with_their_provenance() {
             .await
             .unwrap()
             .is_none()
+    );
+    drop(conn);
+    db.teardown().await;
+}
+
+/// V1.10 (docs/v1.10-tokenized-stocks.md §12): a market quoted only in USDT
+/// restated in US dollars, `X/USD = X/USDT × USDT/USD`. BTC stands in for a
+/// USDT-only coin; the declaration prices BTC/USD by its legs alone.
+#[tokio::test]
+async fn a_usdt_market_is_converted_to_usd_through_usdt_usd() {
+    let Some((db, mut conn)) = seeded().await else {
+        return;
+    };
+    let fx: serde_json::Value =
+        serde_json::from_slice(&repo("data/reference/stablecoin-fx.json")).unwrap();
+    let binance = fx["venues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["key"] == "venue:binance")
+        .unwrap()["id"]
+        .clone();
+    let btc = id("btc").to_string();
+    let usdt_id = id("usdt").to_string();
+    let usd_id = id("iso4217:USD").to_string();
+    let declared = serde_json::json!({
+        "dataset": "test-convert",
+        "version": 1,
+        "description": "BTC/USDT on Binance, restated in USD",
+        "currencies": [], "entities": [], "venues": [], "instruments": [], "listings": [],
+        "relationships": [], "aliases": [],
+        "quoteFeeds": [{
+            "source": "binance", "symbol": "BTCUSDT", "subject": btc, "unit": usdt_id,
+            "basis": "venue", "venue": binance, "priceType": "mid"
+        }],
+        "quoteDerivations": [{
+            "subject": btc, "unit": usd_id, "method": "convert-via-stablecoin-v1", "via": usdt_id
+        }]
+    });
+    ingest_universe(
+        &mut conn,
+        &raw(
+            "test/convert.json",
+            serde_json::to_vec(&declared).unwrap(),
+            AT,
+        ),
+    )
+    .await
+    .unwrap();
+    legs_and_cross(&mut conn).await;
+    let book = br#"[{"symbol":"BTCUSDT","bidPrice":"62000.00","bidQty":"1","askPrice":"62001.00","askQty":"1"}]"#;
+    let report = ingest_quotes_for(
+        &mut conn,
+        &BinanceProvider::new(),
+        &BookTickerNormalizer,
+        &raw(
+            "https://api.binance.com/api/v3/ticker/bookTicker?symbols=BTCUSDT",
+            book.to_vec(),
+            AT,
+        ),
+        Some(&[VenueSymbol::new("BTCUSDT").unwrap()]),
+    )
+    .await
+    .unwrap();
+    refresh_canonical_quotes(&mut conn, &report.pairs, Timestamp::parse(AT).unwrap())
+        .await
+        .unwrap();
+
+    let btc_subject = PriceSubject::Instrument(id("btc").try_into().unwrap());
+    let in_usdt = get_canonical_quote(
+        &mut conn,
+        btc_subject,
+        PriceUnit::Asset(id("usdt").try_into().unwrap()),
+    )
+    .await
+    .unwrap()
+    .expect("BTC/USDT is its own market");
+    let usdt_usd = get_canonical_quote(&mut conn, usdt(), currency("USD"))
+        .await
+        .unwrap()
+        .unwrap();
+    let q = get_canonical_quote(&mut conn, btc_subject, currency("USD"))
+        .await
+        .unwrap()
+        .expect("BTC/USD is derived once both legs exist");
+    assert_eq!(q.method, AggregationMethod::ConvertViaStablecoinV1);
+    assert_eq!(q.basis, ObservationBasis::Derived);
+    assert_eq!(
+        q.price,
+        convert_rate(in_usdt.price, usdt_usd.price).unwrap()
+    );
+    assert_eq!(q.as_of, in_usdt.as_of.min(usdt_usd.as_of));
+    let legs: Vec<(String,)> = sqlx::query_as(
+        "SELECT o.source_id FROM canonical_quote_legs l
+         JOIN market_observations o ON o.id = l.observation_id
+         WHERE l.subject_id = $1 AND l.unit_id = $2 ORDER BY o.source_id",
+    )
+    .bind(btc_subject.canonical().uuid())
+    .bind(currency("USD").canonical().uuid())
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        legs.iter().map(|(s,)| s.as_str()).collect::<Vec<_>>(),
+        ["binance", "kraken"]
     );
     drop(conn);
     db.teardown().await;

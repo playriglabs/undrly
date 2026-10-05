@@ -415,3 +415,78 @@ pub async fn ingest_tip20_asset(
         writes,
     })
 }
+
+/// A tokenized product's deployment as its issuer's registry states it
+/// (V1.10, docs/v1.10-tokenized-stocks.md), with its pinned id. The registry
+/// record (stored raw when the universe snapshot was seeded) asserts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryDeployment {
+    pub id: DeploymentId,
+    pub chain: Caip2,
+    pub asset: ChainAsset,
+    /// The product, already stored from the universe snapshot.
+    pub product: InstrumentId,
+    pub source: undrly_core::SourceId,
+    pub record_key: String,
+    pub sha256: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegistryDeploymentOutcome {
+    /// The deployment and its `REPRESENTS` edge.
+    Written {
+        deployment: Write,
+        represents: Write,
+    },
+    /// The chain is not stored (run its chain binding first): nothing written.
+    NoChain,
+    /// Another deployment already holds this (chain, address): nothing
+    /// written, reported for review.
+    Conflict(DeploymentId),
+}
+
+/// Ingests one [`RegistryDeployment`] in its own transaction. The product
+/// must be a stored tokenized security and the registry record must be
+/// stored; anything else is an error and writes nothing.
+pub async fn ingest_registry_deployment(
+    conn: &mut PgConnection,
+    d: &RegistryDeployment,
+) -> Result<RegistryDeploymentOutcome, IngestError> {
+    let mut tx = conn.begin().await?;
+    let Some(chain) = reference::chain_by_caip2(&mut tx, &d.chain).await? else {
+        return Ok(RegistryDeploymentOutcome::NoChain);
+    };
+    let record =
+        undrly_store::sources::find_source_record(&mut tx, &d.source, &d.record_key, &d.sha256)
+            .await?
+            .ok_or_else(|| {
+                IngestError::CuratedDisagrees(format!(
+                    "registry record `{}` of `{}` is not stored (run `seed` first)",
+                    d.record_key, d.source
+                ))
+            })?;
+    match reference::get_instrument(&mut tx, d.product).await? {
+        Some(i) if i.class == InstrumentClass::TokenizedSecurity => {}
+        _ => return Err(IngestError::MissingObject(d.product.canonical())),
+    }
+    if let Some(existing) = reference::deployment_by_asset(&mut tx, chain.id, &d.asset).await?
+        && existing.id != d.id
+    {
+        return Ok(RegistryDeploymentOutcome::Conflict(existing.id));
+    }
+    let deployment = Deployment::on(&chain, d.id, d.asset.clone())
+        .map_err(|e| IngestError::CuratedDisagrees(e.to_string()))?;
+    let written = reference::insert_deployment(&mut tx, &deployment, record.id).await?;
+    let edge = Relationship::new(
+        d.id.into(),
+        RelationshipType::Represents,
+        d.product.into(),
+        record.provenance.clone(),
+    )?;
+    let represents = graph::insert_relationship(&mut tx, &edge, record.id).await?;
+    tx.commit().await?;
+    Ok(RegistryDeploymentOutcome::Written {
+        deployment: written,
+        represents,
+    })
+}

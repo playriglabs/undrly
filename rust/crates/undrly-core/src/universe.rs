@@ -17,9 +17,18 @@ use crate::time::Timestamp;
 pub enum UniverseKey {
     /// Top 100 crypto assets by market capitalisation (CoinGecko).
     CryptoTop100,
+    /// Top 250 crypto assets by market capitalisation (CoinGecko, V1.10).
+    CryptoTop250,
+    /// Top 500 crypto assets by market capitalisation (CoinGecko, V1.10).
+    CryptoTop500,
     /// S&P 500, via the SPY ETF's holdings (not the official S&P file).
     Sp500,
-    /// Nasdaq-100 (nasdaq.com), members with a trustworthy identifier.
+    /// S&P MidCap 400, via the MDY ETF's holdings (V1.10).
+    Sp400,
+    /// S&P SmallCap 600, via the SPSM ETF's holdings (V1.10).
+    Sp600,
+    /// Nasdaq-100, via the QQQ ETF's holdings (V1.10; not the official
+    /// Nasdaq constituent file).
     Nasdaq100,
     /// Hyperliquid's live perpetual markets.
     HyperliquidPerps,
@@ -34,9 +43,13 @@ pub enum UniverseKey {
 }
 
 impl UniverseKey {
-    pub const ALL: [UniverseKey; 7] = [
+    pub const ALL: [UniverseKey; 11] = [
         UniverseKey::CryptoTop100,
+        UniverseKey::CryptoTop250,
+        UniverseKey::CryptoTop500,
         UniverseKey::Sp500,
+        UniverseKey::Sp400,
+        UniverseKey::Sp600,
         UniverseKey::Nasdaq100,
         UniverseKey::HyperliquidPerps,
         UniverseKey::FxMajor,
@@ -47,7 +60,11 @@ impl UniverseKey {
     pub const fn as_str(self) -> &'static str {
         match self {
             UniverseKey::CryptoTop100 => "crypto-top100",
+            UniverseKey::CryptoTop250 => "crypto-top250",
+            UniverseKey::CryptoTop500 => "crypto-top500",
             UniverseKey::Sp500 => "sp500",
+            UniverseKey::Sp400 => "sp400",
+            UniverseKey::Sp600 => "sp600",
             UniverseKey::Nasdaq100 => "nasdaq100",
             UniverseKey::HyperliquidPerps => "hyperliquid-perps",
             UniverseKey::FxMajor => "fx-major",
@@ -108,6 +125,6 @@ mod tests {
         for k in UniverseKey::ALL {
             assert_eq!(k.as_str().parse::<UniverseKey>(), Ok(k));
         }
-        assert!("sp400".parse::<UniverseKey>().is_err());
+        assert!("russell1000".parse::<UniverseKey>().is_err());
     }
 }

@@ -647,7 +647,8 @@ pub async fn get_canonical_quote(
 
 // --- derived quotes (V1.9) -------------------------------------------------------
 
-/// Declares a pair as a cross of two other pairs, asserted by
+/// Declares a pair as derived from two other pairs (a cross or a
+/// conversion, [`QuoteDerivation`]), asserted by
 /// `source_record`. The same declaration again is [`Write::Unchanged`]; a
 /// different one for the pair is an error (never overwritten).
 pub async fn insert_quote_derivation(
@@ -675,7 +676,7 @@ pub async fn insert_quote_derivation(
     .bind(subject_category)
     .bind(unit)
     .bind(unit_category)
-    .bind(AggregationMethod::CrossViaStablecoinV1.as_str())
+    .bind(d.method.as_str())
     .bind(ns)
     .bind(ns_c)
     .bind(nu)
@@ -696,7 +697,9 @@ pub async fn insert_quote_derivation(
     }
     let same = derivation_of(conn, d.subject, d.unit)
         .await?
-        .is_some_and(|x| x.numerator == d.numerator && x.denominator == d.denominator);
+        .is_some_and(|x| {
+            x.method == d.method && x.numerator == d.numerator && x.denominator == d.denominator
+        });
     if same {
         Ok(Write::Unchanged)
     } else {
@@ -707,11 +710,12 @@ pub async fn insert_quote_derivation(
     }
 }
 
-/// A declared cross, without provenance.
+/// A declared derivation, without provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoredDerivation {
     pub subject: PriceSubject,
     pub unit: PriceUnit,
+    pub method: AggregationMethod,
     pub numerator: (PriceSubject, PriceUnit),
     pub denominator: (PriceSubject, PriceUnit),
 }
@@ -720,6 +724,7 @@ type DerivationRow = (
     Uuid,
     String,
     Uuid,
+    String,
     String,
     Uuid,
     String,
@@ -731,7 +736,8 @@ type DerivationRow = (
     String,
 );
 
-const DERIVATION_SELECT: &str = "SELECT subject_id, subject_category, unit_id, unit_category,
+const DERIVATION_SELECT: &str =
+    "SELECT subject_id, subject_category, unit_id, unit_category, method,
     numerator_subject_id, numerator_subject_category, numerator_unit_id, numerator_unit_category,
     denominator_subject_id, denominator_subject_category, denominator_unit_id,
     denominator_unit_category FROM quote_derivations";
@@ -740,13 +746,17 @@ fn derivation_from_row(r: DerivationRow) -> Result<StoredDerivation, StoreError>
     Ok(StoredDerivation {
         subject: price_subject_from_sql(r.0, &r.1)?,
         unit: price_unit_from_sql(r.2, &r.3)?,
+        method: AggregationMethod::ALL
+            .into_iter()
+            .find(|m| m.is_derived() && m.as_str() == r.4)
+            .ok_or_else(|| corrupt("quote derivation method", &r.4))?,
         numerator: (
-            price_subject_from_sql(r.4, &r.5)?,
-            price_unit_from_sql(r.6, &r.7)?,
+            price_subject_from_sql(r.5, &r.6)?,
+            price_unit_from_sql(r.7, &r.8)?,
         ),
         denominator: (
-            price_subject_from_sql(r.8, &r.9)?,
-            price_unit_from_sql(r.10, &r.11)?,
+            price_subject_from_sql(r.9, &r.10)?,
+            price_unit_from_sql(r.11, &r.12)?,
         ),
     })
 }
@@ -795,7 +805,7 @@ pub async fn upsert_cross_quote(
     quote: &StoredCanonicalQuote,
     legs: &[(ObservationId, PriceSubject, PriceUnit)],
 ) -> Result<Write, StoreError> {
-    if quote.method != AggregationMethod::CrossViaStablecoinV1 {
+    if !quote.method.is_derived() {
         return Err(corrupt("cross quote", quote.method.as_str()));
     }
     if quote.inputs.is_empty() {

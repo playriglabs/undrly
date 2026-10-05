@@ -597,29 +597,81 @@
         "fx-global"
       ],
       "feeds": []
-    }
-  ],
-  "excluded": [
+    },
+    {
+      "pair": "USD/CNY",
+      "universes": [
+        "fx-global"
+      ],
+      "feeds": [
+        {
+          "source": "fed-h10",
+          "symbol": "RXI_N.B.CH"
+        }
+      ]
+    },
+    {
+      "pair": "USD/SAR",
+      "universes": [
+        "fx-global"
+      ],
+      "feeds": [
+        {
+          "source": "cbm",
+          "symbol": "USD/SAR"
+        }
+      ]
+    },
     {
       "pair": "USD/VND",
-      "universe": "fx-southeast-asia",
-      "reason": "no approved machine-readable source: the State Bank of Vietnam publishes its central rate only as HTML; the Bank of Canada's VND series ended in 2019; ExchangeRate-API's terms forbid this use; only cross rates exist"
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "cbm",
+          "symbol": "USD/VND"
+        }
+      ]
     },
     {
       "pair": "USD/BND",
-      "universe": "fx-southeast-asia",
-      "reason": "no source publishes USD/BND directly; BND is pegged at par to SGD, but substituting USD/SGD would be a derived rate, not BND data"
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "cbm",
+          "symbol": "USD/BND"
+        }
+      ]
     },
     {
       "pair": "USD/KHR",
-      "universe": "fx-southeast-asia",
-      "reason": "no approved machine-readable source: the National Bank of Cambodia publishes HTML only (its API path is blocked to non-browser clients); only cross rates exist"
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "cbm",
+          "symbol": "USD/KHR"
+        }
+      ]
     },
     {
       "pair": "USD/LAK",
-      "universe": "fx-southeast-asia",
-      "reason": "no approved machine-readable source: the Bank of the Lao PDR publishes HTML only; only cross rates exist"
-    },
+      "universes": [
+        "fx-southeast-asia"
+      ],
+      "feeds": [
+        {
+          "source": "cbm",
+          "symbol": "USD/LAK"
+        }
+      ]
+    }
+  ],
+  "excluded": [
     {
       "pair": "SGD/THB",
       "universe": "fx-southeast-asia",
@@ -649,16 +701,6 @@
       "pair": "JPY/SGD",
       "universe": "fx-southeast-asia",
       "reason": "no direct source: MAS's API gateway requires a registered key; derived cross rates are out of scope"
-    },
-    {
-      "pair": "USD/CNY",
-      "universe": "fx-global",
-      "reason": "no approved source: no public venue lists a stablecoin or USD book in onshore CNY (checked 2026-10-01: Binance, OKX, Kraken, Coinbase, Bybit, Gate, HashKey), and the PBOC central parity is published only on its website"
-    },
-    {
-      "pair": "USD/SAR",
-      "universe": "fx-global",
-      "reason": "no approved source: no public venue lists a stablecoin or USD book in SAR (checked 2026-10-01: Binance, OKX, Kraken, Coinbase, Bybit, Gate); SAMA publishes no machine-readable rate, and the USD peg is not a substitute for a quote"
     }
   ]
 }

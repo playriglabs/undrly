@@ -23,6 +23,7 @@ use crate::{NormalizeError, invalid};
 pub struct Derivation {
     pub subject: PriceSubject,
     pub unit: PriceUnit,
+    pub method: AggregationMethod,
     pub numerator: (PriceSubject, PriceUnit),
     pub denominator: (PriceSubject, PriceUnit),
 }
@@ -482,25 +483,47 @@ pub fn normalize_universe(u: &Universe) -> Result<NormalizedUniverse, NormalizeE
         .quote_derivations
         .iter()
         .map(|d| {
-            if d.method != AggregationMethod::CrossViaStablecoinV1.as_str() {
-                return Err(unsupported("quoteDerivations.method", &d.method));
-            }
+            let method = AggregationMethod::ALL
+                .into_iter()
+                .find(|m| m.is_derived() && m.as_str() == d.method)
+                .ok_or_else(|| unsupported("quoteDerivations.method", &d.method))?;
             let subject = subject_of("quoteDerivations.subject", &d.subject)?;
             let unit = unit_of("quoteDerivations.unit", &d.unit)?;
             let via = subject_of("quoteDerivations.via", &d.via)?;
-            let base = unit_of("quoteDerivations.base", &d.base)?;
-            if !matches!(via, PriceSubject::Instrument(_)) {
+            let PriceSubject::Instrument(via_id) = via else {
                 return Err(invalid(
                     "quoteDerivations.via",
-                    "a cross goes through an instrument",
+                    "a derivation goes through an instrument",
                 ));
+            };
+            if method == AggregationMethod::ConvertViaStablecoinV1 {
+                // X in U = (X in S) × (S in U): no base currency.
+                if d.base.is_some() {
+                    return Err(invalid("quoteDerivations.base", "a conversion has none"));
+                }
+                if subject == via {
+                    return Err(invalid("quoteDerivations.via", "differs from the subject"));
+                }
+                return Ok(Derivation {
+                    subject,
+                    unit,
+                    method,
+                    numerator: (subject, PriceUnit::Asset(via_id)),
+                    denominator: (via, unit),
+                });
             }
+            let base = d
+                .base
+                .as_deref()
+                .ok_or_else(|| invalid("quoteDerivations.base", "a cross needs one"))?;
+            let base = unit_of("quoteDerivations.base", base)?;
             if base == unit {
                 return Err(invalid("quoteDerivations.base", "differs from the unit"));
             }
             Ok(Derivation {
                 subject,
                 unit,
+                method,
                 numerator: (via, unit),
                 denominator: (via, base),
             })

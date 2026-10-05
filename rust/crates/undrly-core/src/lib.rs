@@ -52,7 +52,8 @@ pub use onchain::{
 pub use quote::{
     Aggregate, AggregationMethod, CrossLeg, DEFAULT_STALE_AFTER_SECONDS, FreshnessClock,
     MARK_BOOK_MAX_SKEW_SECONDS, MEAN_VENUE_MID_MAX_AGE_SECONDS, QuoteAggregation, QuoteDerivation,
-    QuoteFeed, aggregate, cross_quote, cross_rate, invert_quote, invert_rate, select_latest,
+    QuoteFeed, aggregate, convert_quote, convert_rate, cross_quote, cross_rate, derive_quote,
+    invert_quote, invert_rate, select_latest,
 };
 pub use reference::{
     Alias, AliasKind, Currency, DisplayName, Entity, EntityKind, FxPair, FxPairError, Instrument,

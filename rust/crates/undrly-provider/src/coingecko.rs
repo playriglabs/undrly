@@ -3,7 +3,8 @@
 //! CoinGecko is **not** a quote source for Undrly. It is used at universe
 //! build time only:
 //!
-//! - `coins/markets`: the top 100 by market capitalisation (the universe);
+//! - `coins/markets`: the top 500 by market capitalisation, two pages of
+//!   250 (the universe; the top 100 and 250 are its first ranks);
 //! - `coins/list`: id → symbol and name for any coin id (perp underlyings);
 //! - `exchanges/{id}/tickers`: which CoinGecko coin each venue market trades,
 //!   as the venue spells it (`XBT`/`USD` on Kraken). This is the crosswalk
@@ -22,8 +23,11 @@ pub const API: &str = "https://api.coingecko.com/api/v3";
 /// Tickers per page of `exchanges/{id}/tickers`.
 pub const TICKERS_PER_PAGE: usize = 100;
 
-pub fn markets_url() -> String {
-    format!("{API}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1")
+/// Rows per `coins/markets` page (CoinGecko's maximum).
+pub const MARKETS_PER_PAGE: usize = 250;
+
+pub fn markets_url(page: u32) -> String {
+    format!("{API}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page={page}")
 }
 
 pub fn coins_list_url() -> String {

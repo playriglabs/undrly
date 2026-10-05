@@ -213,6 +213,7 @@ pub async fn ingest_universe_as(
         let declared = QuoteDerivation {
             subject: d.subject,
             unit: d.unit,
+            method: d.method,
             numerator: d.numerator,
             denominator: d.denominator,
             provenance: record.provenance.clone(),

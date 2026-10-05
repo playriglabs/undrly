@@ -61,6 +61,10 @@ impl EvmRpcProvider {
 }
 
 /// Tempo Mainnet's public RPC (tempo.xyz/developers/docs/quickstart/connection-details).
+pub const BNB_CHAIN_SOURCE_ID: &str = "bnb-chain-rpc";
+/// BNB Chain's public mainnet RPC (docs.bnbchain.org, JSON-RPC endpoints).
+pub const BNB_CHAIN_MAINNET_RPC: &str = "https://bsc-dataseed.bnbchain.org";
+
 pub const TEMPO_SOURCE_ID: &str = "tempo-rpc";
 pub const TEMPO_MAINNET_RPC: &str = "https://rpc.tempo.xyz";
 

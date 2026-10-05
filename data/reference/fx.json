@@ -472,6 +472,54 @@
       "name": "USD/MXN",
       "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
       "quote": "iso4217:MXN"
+    },
+    {
+      "key": "fx:USD/CNY",
+      "id": "undrly:instrument:01m454e7kee5t9szkt29ngrsee",
+      "class": "fx",
+      "name": "USD/CNY",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:CNY"
+    },
+    {
+      "key": "fx:USD/SAR",
+      "id": "undrly:instrument:01m454e7kee5t9szkt2dddp8x8",
+      "class": "fx",
+      "name": "USD/SAR",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:SAR"
+    },
+    {
+      "key": "fx:USD/VND",
+      "id": "undrly:instrument:01m454e7kee5t9szkt2k2ecbfv",
+      "class": "fx",
+      "name": "USD/VND",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:VND"
+    },
+    {
+      "key": "fx:USD/BND",
+      "id": "undrly:instrument:01m454e7kee5t9szkt2qcr5829",
+      "class": "fx",
+      "name": "USD/BND",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:BND"
+    },
+    {
+      "key": "fx:USD/KHR",
+      "id": "undrly:instrument:01m454e7kee5t9szkt2ra6bbta",
+      "class": "fx",
+      "name": "USD/KHR",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:KHR"
+    },
+    {
+      "key": "fx:USD/LAK",
+      "id": "undrly:instrument:01m454e7kee5t9szkt2wbvqavs",
+      "class": "fx",
+      "name": "USD/LAK",
+      "base": "undrly:currency:01m3bbjhmre6jssafkav1er355",
+      "quote": "iso4217:LAK"
     }
   ],
   "listings": [],
@@ -623,6 +671,11 @@
       "kind": "symbol"
     },
     {
+      "node": "fx:USD/BND",
+      "alias": "USDBND",
+      "kind": "symbol"
+    },
+    {
       "node": "fx:USD/BRL",
       "alias": "USDBRL",
       "kind": "symbol"
@@ -638,6 +691,11 @@
       "kind": "symbol"
     },
     {
+      "node": "fx:USD/CNY",
+      "alias": "USDCNY",
+      "kind": "symbol"
+    },
+    {
       "node": "fx:USD/HKD",
       "alias": "USDHKD",
       "kind": "symbol"
@@ -650,6 +708,16 @@
     {
       "node": "fx:USD/JPY",
       "alias": "USDJPY",
+      "kind": "symbol"
+    },
+    {
+      "node": "fx:USD/KHR",
+      "alias": "USDKHR",
+      "kind": "symbol"
+    },
+    {
+      "node": "fx:USD/LAK",
+      "alias": "USDLAK",
       "kind": "symbol"
     },
     {
@@ -673,6 +741,11 @@
       "kind": "symbol"
     },
     {
+      "node": "fx:USD/SAR",
+      "alias": "USDSAR",
+      "kind": "symbol"
+    },
+    {
       "node": "fx:USD/SGD",
       "alias": "USDSGD",
       "kind": "symbol"
@@ -680,6 +753,11 @@
     {
       "node": "fx:USD/THB",
       "alias": "USDTHB",
+      "kind": "symbol"
+    },
+    {
+      "node": "fx:USD/VND",
+      "alias": "USDVND",
       "kind": "symbol"
     },
     {
@@ -1100,6 +1178,66 @@
       "priceType": "reference",
       "staleAfterSeconds": 259200,
       "freshnessClock": "weekdays"
+    },
+    {
+      "source": "fed-h10",
+      "symbol": "RXI_N.B.CH",
+      "subject": "fx:USD/CNY",
+      "unit": "iso4217:CNY",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 691200,
+      "freshnessClock": "weekdays"
+    },
+    {
+      "source": "cbm",
+      "symbol": "USD/SAR",
+      "subject": "fx:USD/SAR",
+      "unit": "iso4217:SAR",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    },
+    {
+      "source": "cbm",
+      "symbol": "USD/VND",
+      "subject": "fx:USD/VND",
+      "unit": "iso4217:VND",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    },
+    {
+      "source": "cbm",
+      "symbol": "USD/BND",
+      "subject": "fx:USD/BND",
+      "unit": "iso4217:BND",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    },
+    {
+      "source": "cbm",
+      "symbol": "USD/KHR",
+      "subject": "fx:USD/KHR",
+      "unit": "iso4217:KHR",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
+    },
+    {
+      "source": "cbm",
+      "symbol": "USD/LAK",
+      "subject": "fx:USD/LAK",
+      "unit": "iso4217:LAK",
+      "basis": "aggregated",
+      "priceType": "reference",
+      "staleAfterSeconds": 259200,
+      "freshnessClock": "weekdays"
     }
   ],
   "quoteAggregations": [
@@ -1119,7 +1257,7 @@
       "key": "fx-major",
       "source": "undrly-curated",
       "recordKey": "data/reference/fx-spec.json",
-      "sha256": "d4b72fe701bf07ce1b9a22c42a7cb13eff26819bfed4b0aa3193391779195cc2",
+      "sha256": "1dcf4457a2fba5e1b22ec1b0ff5e66fdb057031d698baddb93f0fd403f67323a",
       "asOf": "2026-10-01T00:00:00Z",
       "members": [
         {
@@ -1244,7 +1382,7 @@
       "key": "fx-southeast-asia",
       "source": "undrly-curated",
       "recordKey": "data/reference/fx-spec.json",
-      "sha256": "d4b72fe701bf07ce1b9a22c42a7cb13eff26819bfed4b0aa3193391779195cc2",
+      "sha256": "1dcf4457a2fba5e1b22ec1b0ff5e66fdb057031d698baddb93f0fd403f67323a",
       "asOf": "2026-10-01T00:00:00Z",
       "members": [
         {
@@ -1286,6 +1424,22 @@
         {
           "node": "fx:USD/PHP",
           "sourceSymbol": "USD/PHP"
+        },
+        {
+          "node": "fx:USD/VND",
+          "sourceSymbol": "USD/VND"
+        },
+        {
+          "node": "fx:USD/BND",
+          "sourceSymbol": "USD/BND"
+        },
+        {
+          "node": "fx:USD/KHR",
+          "sourceSymbol": "USD/KHR"
+        },
+        {
+          "node": "fx:USD/LAK",
+          "sourceSymbol": "USD/LAK"
         }
       ]
     },
@@ -1293,7 +1447,7 @@
       "key": "fx-global",
       "source": "undrly-curated",
       "recordKey": "data/reference/fx-spec.json",
-      "sha256": "d4b72fe701bf07ce1b9a22c42a7cb13eff26819bfed4b0aa3193391779195cc2",
+      "sha256": "1dcf4457a2fba5e1b22ec1b0ff5e66fdb057031d698baddb93f0fd403f67323a",
       "asOf": "2026-10-01T00:00:00Z",
       "members": [
         {
@@ -1311,6 +1465,14 @@
         {
           "node": "fx:USD/MXN",
           "sourceSymbol": "USD/MXN"
+        },
+        {
+          "node": "fx:USD/CNY",
+          "sourceSymbol": "USD/CNY"
+        },
+        {
+          "node": "fx:USD/SAR",
+          "sourceSymbol": "USD/SAR"
         }
       ]
     }

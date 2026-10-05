@@ -76,7 +76,9 @@ pub struct QuoteAggregationRecord {
 }
 
 /// `subject` in `unit` = (`via` in `unit`) / (`via` in `base`), e.g. USD/IDR
-/// = USDT/IDR / USDT/USD (V1.9, `cross-via-stablecoin-v1`).
+/// = USDT/IDR / USDT/USD (V1.9, `cross-via-stablecoin-v1`), or `subject` in
+/// `unit` = (`subject` in `via`) × (`via` in `unit`), e.g. PEPE/USD =
+/// PEPE/USDT × USDT/USD (V1.10, `convert-via-stablecoin-v1`, no `base`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QuoteDerivationRecord {
@@ -85,8 +87,9 @@ pub struct QuoteDerivationRecord {
     pub method: String,
     /// The stablecoin both legs price.
     pub via: String,
-    /// The currency the denominator leg prices `via` in.
-    pub base: String,
+    /// The currency the denominator leg prices `via` in (a cross only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

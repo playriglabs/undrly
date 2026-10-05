@@ -1,7 +1,7 @@
 {
   "dataset": "undrly-onchain-bindings",
   "version": 1,
-  "description": "Which chain each chain source must describe, and which existing Undrly instrument each issuer address list is about (docs/v1.5-solana.md). No address or mint is stated here: those come only from the issuer's own published list, stored raw first. Reviewed 2026-09-28 (Robinhood Chain added in V1.6; Tempo and pathUSD in V1.7). TIP-20 assets are bound by protocol-constant addresses and verified against the chain.",
+  "description": "Which chain each chain source must describe, and which existing Undrly instrument each issuer address list is about (docs/v1.5-solana.md). No address or mint is stated here: those come only from the issuer's own published list, stored raw first. Reviewed 2026-09-28 (Robinhood Chain added in V1.6; Tempo and pathUSD in V1.7; BNB Smart Chain in V1.10). TIP-20 assets are bound by protocol-constant addresses and verified against the chain.",
   "chains": [
     {
       "name": "Solana",
@@ -23,6 +23,13 @@
       "source": "tempo-rpc",
       "rpcUrl": "https://rpc.tempo.xyz",
       "authority": "The chain's own eth_chainId (0x1079 = 4217) at its public mainnet RPC; Tempo docs: 'Tempo Mainnet has been live since March 18, 2026 ... chain ID 4217'; Moderato testnet is 42431 (https://tempo.xyz/developers/docs/quickstart/connection-details). Any other chain id is rejected."
+    },
+    {
+      "name": "BNB Smart Chain",
+      "caip2": "eip155:56",
+      "source": "bnb-chain-rpc",
+      "rpcUrl": "https://bsc-dataseed.bnbchain.org",
+      "authority": "The chain's own eth_chainId (0x38 = 56) at BNB Chain's public mainnet RPC (docs.bnbchain.org: JSON-RPC endpoints; chain ID 56). CAIP-2 eip155 reference = EIP-155 chain id. Any other chain id is rejected. Added in V1.10 for Binance bStocks."
     }
   ],
   "issuers": [

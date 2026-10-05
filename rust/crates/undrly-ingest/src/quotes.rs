@@ -15,7 +15,7 @@
 use sqlx::{Acquire, PgConnection};
 use undrly_core::{
     AggregationMethod, CrossLeg, MarketObservation, ObservationError, PriceSubject, PriceType,
-    PriceUnit, Timestamp, VenueSymbol, aggregate, cross_quote, invert_quote,
+    PriceUnit, Timestamp, VenueSymbol, aggregate, derive_quote, invert_quote,
 };
 use undrly_normalize::{HistoryNormalizer, NormalizeError, NormalizedQuote, QuoteNormalizer};
 use undrly_provider::QuoteProvider;
@@ -281,9 +281,9 @@ pub async fn refresh_canonical_quotes(
     Ok(out)
 }
 
-/// Recomputes each declared cross from its legs' current canonical quotes
-/// ([`cross_quote`]), or removes it when a leg has none or is not
-/// venue-based. Each cross is its own transaction.
+/// Recomputes each declared derivation (a cross or a conversion) from its
+/// legs' current canonical quotes ([`derive_quote`]), or removes it when a
+/// leg has none or is not venue-based. Each is its own transaction.
 pub async fn refresh_cross_quotes(
     conn: &mut PgConnection,
     pairs: &[(PriceSubject, PriceUnit)],
@@ -313,7 +313,7 @@ pub async fn refresh_cross_quotes(
             }
         }
         let cross = match (numerator, denominator) {
-            (Some(n), Some(den)) => cross_quote(&leg(n), &leg(den)),
+            (Some(n), Some(den)) => derive_quote(d.method, &leg(n), &leg(den)),
             _ => None,
         };
         let (inputs, write) = match cross {
@@ -345,7 +345,7 @@ pub async fn refresh_cross_quotes(
         out.push(CanonicalRefresh {
             subject,
             unit,
-            method: AggregationMethod::CrossViaStablecoinV1,
+            method: d.method,
             inputs,
             write,
         });

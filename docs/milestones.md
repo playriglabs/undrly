@@ -20,6 +20,7 @@ committed and verified locally; V1.2 and V1.3 are not yet pushed or tagged.
 | V1.6: Robinhood Chain | A tokenized security distinct from its underlying: RHJ's NVIDIA tracker on Robinhood Chain | local, branch `worldsfair` |
 | V1.7: Tempo | A payment stablecoin distinct from its fiat: pathUSD on Tempo `TRACKS` USD | local, branch `worldsfair` |
 | V1.8: Agent / MCP discovery | Nine read-only MCP tools over the same API code; four ecosystem journeys | local, branch `worldsfair` |
+| V1.10: tokenized stocks | xStocks, Backpack Securities and Robinhood tokens tied to their shares by identifier; Nasdaq-100 via QQQ, S&P 400/600; crypto top 500 (Binance USDT); 566 Binance USDⓈ-M perpetuals; Jupiter prices | local, branch `worldsfair` |
 
 **Today:**
 - 951 canonical instruments (503 equities, 219 crypto assets, 178
@@ -278,7 +279,7 @@ one production asset.
 - **Coinbase sweep timing.** The sequential Coinbase sweep (about 25 s)
   can leave a two-venue crypto aggregate on one venue.
 - **No retention policy** for raw records and observations.
-- **Nasdaq-100 import deferred** (no approved machine-readable source).
+- **Ondo tokens** need an Ondo API key (onboarding); not integrated (V1.10).
 - **Weekly FX data.** Some FX pairs (USD/JPY, NZD/USD, USD/SGD, USD/THB)
   rely on the weekly Fed H.10.
 - **Unavailable data.** No spot/perp basis (USD vs. USDT units, plus USDC

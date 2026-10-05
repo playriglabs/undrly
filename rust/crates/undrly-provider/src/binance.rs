@@ -18,6 +18,31 @@ use serde::Deserialize;
 
 pub const SOURCE_ID: &str = "binance";
 pub const BASE_URL: &str = "https://api.binance.com";
+/// Every trading spot market (V1.10: confirms bStock markets).
+pub const EXCHANGE_INFO_URL: &str =
+    "https://api.binance.com/api/v3/exchangeInfo?permissions=SPOT&symbolStatus=TRADING";
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ExchangeInfo {
+    pub symbols: Vec<Market>,
+}
+
+/// One spot market's identity fields.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Market {
+    pub symbol: String,
+    pub status: String,
+    pub base_asset: String,
+    pub quote_asset: String,
+}
+
+pub fn decode_exchange_info(payload: &[u8]) -> Result<ExchangeInfo, crate::DecodeError> {
+    serde_json::from_slice(payload).map_err(|e| crate::DecodeError {
+        source_id: undrly_core::SourceId::parse(SOURCE_ID).expect("valid source id"),
+        reason: format!("exchangeInfo: {e}"),
+    })
+}
 
 /// One market's best bid and ask.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

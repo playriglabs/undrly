@@ -132,6 +132,29 @@ pub fn cross_rate(numerator: Decimal, denominator: Decimal) -> Option<Decimal> {
         .round_sf_with_strategy(digits, RoundingStrategy::MidpointNearestEven)
 }
 
+/// A cross's bid (`numerator.bid / denominator.ask`) or ask
+/// (`numerator.ask / denominator.bid`): rounded to the fewer significant
+/// digits of its two inputs and of the cross's price, **outward** (a bid
+/// down, an ask up), so it never moves inside the price. Rounding each side
+/// to its own digits to the nearest value could put an ask below the mid
+/// (USD/PHP: price 62.507, ask 62.5).
+fn cross_side(
+    numerator: Decimal,
+    denominator: Decimal,
+    price: Decimal,
+    strategy: RoundingStrategy,
+) -> Option<Decimal> {
+    if numerator <= Decimal::ZERO || denominator <= Decimal::ZERO {
+        return None;
+    }
+    let digits = significant_digits(numerator)
+        .min(significant_digits(denominator))
+        .min(significant_digits(price));
+    numerator
+        .checked_div(denominator)?
+        .round_sf_with_strategy(digits, strategy)
+}
+
 /// One leg of [`AggregationMethod::CrossViaStablecoinV1`]: a pair's
 /// canonical quote, reduced to what the cross needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,8 +184,8 @@ pub fn cross_quote<K: Ord + Clone>(
     let price = cross_rate(numerator.price, denominator.price)?;
     let bid_ask = match (numerator.bid_ask, denominator.bid_ask) {
         (Some(n), Some(d)) => Some(BidAsk {
-            bid: cross_rate(n.bid, d.ask)?,
-            ask: cross_rate(n.ask, d.bid)?,
+            bid: cross_side(n.bid, d.ask, price, RoundingStrategy::ToNegativeInfinity)?,
+            ask: cross_side(n.ask, d.bid, price, RoundingStrategy::ToPositiveInfinity)?,
         }),
         _ => None,
     };
@@ -185,6 +208,92 @@ pub fn cross_quote<K: Ord + Clone>(
     })
 }
 
+/// `first × second`, rounded half to even to the fewer significant digits
+/// of the two (as stated). `None` unless both are positive.
+pub fn convert_rate(first: Decimal, second: Decimal) -> Option<Decimal> {
+    convert_side(first, second, None, RoundingStrategy::MidpointNearestEven)
+}
+
+/// A product rounded to the fewer significant digits of its inputs (and of
+/// `price`, for a bid or ask), with `strategy`.
+fn convert_side(
+    first: Decimal,
+    second: Decimal,
+    price: Option<Decimal>,
+    strategy: RoundingStrategy,
+) -> Option<Decimal> {
+    if first <= Decimal::ZERO || second <= Decimal::ZERO {
+        return None;
+    }
+    let digits = significant_digits(first)
+        .min(significant_digits(second))
+        .min(price.map_or(u32::MAX, significant_digits));
+    first
+        .checked_mul(second)?
+        .round_sf_with_strategy(digits, strategy)
+}
+
+/// The conversion of two legs ([`AggregationMethod::ConvertViaStablecoinV1`]):
+/// `first × second`. `None` when a leg is not venue-based or a price is not
+/// positive.
+pub fn convert_quote<K: Ord + Clone>(
+    first: &CrossLeg<K>,
+    second: &CrossLeg<K>,
+) -> Option<Aggregate<K>> {
+    let venue_based = |b: ObservationBasis| {
+        matches!(b, ObservationBasis::Venue(_) | ObservationBasis::Aggregated)
+    };
+    if !venue_based(first.basis) || !venue_based(second.basis) {
+        return None;
+    }
+    let price = convert_rate(first.price, second.price)?;
+    let bid_ask = match (first.bid_ask, second.bid_ask) {
+        (Some(a), Some(b)) => Some(BidAsk {
+            bid: convert_side(
+                a.bid,
+                b.bid,
+                Some(price),
+                RoundingStrategy::ToNegativeInfinity,
+            )?,
+            ask: convert_side(
+                a.ask,
+                b.ask,
+                Some(price),
+                RoundingStrategy::ToPositiveInfinity,
+            )?,
+        }),
+        _ => None,
+    };
+    let mut inputs: Vec<(K, Decimal)> =
+        first.inputs.iter().chain(&second.inputs).cloned().collect();
+    inputs.sort_by(|a, b| a.0.cmp(&b.0));
+    inputs.dedup_by(|a, b| a.0 == b.0);
+    Some(Aggregate {
+        method: AggregationMethod::ConvertViaStablecoinV1,
+        price,
+        price_type: PriceType::Mid,
+        basis: ObservationBasis::Derived,
+        bid_ask,
+        as_of: first.as_of.min(second.as_of),
+        inputs,
+    })
+}
+
+/// A derived pair's quote from its two legs, by `method`
+/// ([`cross_quote`] or [`convert_quote`]). `None` for a method that is not
+/// derived.
+pub fn derive_quote<K: Ord + Clone>(
+    method: AggregationMethod,
+    numerator: &CrossLeg<K>,
+    denominator: &CrossLeg<K>,
+) -> Option<Aggregate<K>> {
+    match method {
+        AggregationMethod::CrossViaStablecoinV1 => cross_quote(numerator, denominator),
+        AggregationMethod::ConvertViaStablecoinV1 => convert_quote(numerator, denominator),
+        _ => None,
+    }
+}
+
 /// Default freshness window of a feed (V1 behaviour).
 pub const DEFAULT_STALE_AFTER_SECONDS: u32 = 300;
 
@@ -198,15 +307,20 @@ pub struct QuoteAggregation {
     pub provenance: Provenance,
 }
 
-/// A pair priced as a cross of two other pairs (V1.9,
-/// [`AggregationMethod::CrossViaStablecoinV1`]): `price(subject in unit) =
-/// price(numerator) / price(denominator)`, with provenance. The numerator is
-/// the stablecoin in `unit`, the denominator the same stablecoin in the
-/// subject's base currency.
+/// A pair derived from two other pairs, with provenance:
+///
+/// - [`AggregationMethod::CrossViaStablecoinV1`] (V1.9): `price(subject in
+///   unit) = price(numerator) / price(denominator)`. The numerator is the
+///   stablecoin in `unit`, the denominator the same stablecoin in the
+///   subject's base currency.
+/// - [`AggregationMethod::ConvertViaStablecoinV1`] (V1.10): `price(subject in
+///   unit) = price(numerator) × price(denominator)`. The numerator is the
+///   subject in the stablecoin, the denominator the stablecoin in `unit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuoteDerivation {
     pub subject: PriceSubject,
     pub unit: PriceUnit,
+    pub method: AggregationMethod,
     pub numerator: (PriceSubject, PriceUnit),
     pub denominator: (PriceSubject, PriceUnit),
     pub provenance: Provenance,
@@ -268,6 +382,24 @@ pub enum AggregationMethod {
     /// de-peg against one fiat moves the cross. That is why the basis says
     /// `derived` and the legs stay inspectable.
     CrossViaStablecoinV1,
+    /// A conversion through a stablecoin (V1.10, docs/v1.10-tokenized-stocks.md
+    /// §12): a market quoted only in stablecoin `S` restated in the currency
+    /// `S` tracks. For `X` in `U` via `S`:
+    ///
+    /// 1. first leg = the canonical quote of `X` in `S`, second leg = the
+    ///    canonical quote of `S` in `U`; both must exist and be
+    ///    **venue-based**;
+    /// 2. `price = first × second`, exact decimal multiplication rounded half
+    ///    to even to the fewer significant digits of the two prices
+    ///    ([`convert_rate`]);
+    /// 3. when both legs carry a bid and ask, `bid = first.bid × second.bid`
+    ///    and `ask = first.ask × second.ask`, rounded outward;
+    /// 4. `basis = derived`, price type `mid`, as of the older leg. The
+    ///    inputs are both legs' own inputs, kept in `canonical_quote_legs`.
+    ///
+    /// Like a cross, it assumes `S` trades at one price everywhere; the
+    /// second leg is that price, inspectable.
+    ConvertViaStablecoinV1,
 }
 
 /// Freshness window of [`AggregationMethod::MeanVenueMidV1`], in seconds.
@@ -278,11 +410,12 @@ pub const MEAN_VENUE_MID_MAX_AGE_SECONDS: i64 = 30;
 pub const MARK_BOOK_MAX_SKEW_SECONDS: i64 = 60;
 
 impl AggregationMethod {
-    pub const ALL: [AggregationMethod; 4] = [
+    pub const ALL: [AggregationMethod; 5] = [
         AggregationMethod::LatestObservationV1,
         AggregationMethod::MeanVenueMidV1,
         AggregationMethod::MarkWithVenueBookV1,
         AggregationMethod::CrossViaStablecoinV1,
+        AggregationMethod::ConvertViaStablecoinV1,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -291,7 +424,17 @@ impl AggregationMethod {
             AggregationMethod::MeanVenueMidV1 => "mean-venue-mid-v1",
             AggregationMethod::MarkWithVenueBookV1 => "mark-with-venue-book-v1",
             AggregationMethod::CrossViaStablecoinV1 => "cross-via-stablecoin-v1",
+            AggregationMethod::ConvertViaStablecoinV1 => "convert-via-stablecoin-v1",
         }
+    }
+
+    /// Whether the method derives a pair from two other pairs' canonical
+    /// quotes ([`derive_quote`]) instead of aggregating its observations.
+    pub const fn is_derived(self) -> bool {
+        matches!(
+            self,
+            AggregationMethod::CrossViaStablecoinV1 | AggregationMethod::ConvertViaStablecoinV1
+        )
     }
 
     /// The freshness window observations must satisfy, if the method has one.
@@ -299,7 +442,8 @@ impl AggregationMethod {
         match self {
             AggregationMethod::LatestObservationV1
             | AggregationMethod::MarkWithVenueBookV1
-            | AggregationMethod::CrossViaStablecoinV1 => None,
+            | AggregationMethod::CrossViaStablecoinV1
+            | AggregationMethod::ConvertViaStablecoinV1 => None,
             AggregationMethod::MeanVenueMidV1 => Some(MEAN_VENUE_MID_MAX_AGE_SECONDS),
         }
     }
@@ -391,7 +535,7 @@ pub fn aggregate<K: Ord + Clone>(
         }
         // Computed from other pairs' canonical quotes ([`cross_quote`]),
         // never from the pair's own observations.
-        AggregationMethod::CrossViaStablecoinV1 => None,
+        AggregationMethod::CrossViaStablecoinV1 | AggregationMethod::ConvertViaStablecoinV1 => None,
         AggregationMethod::MarkWithVenueBookV1 => {
             let marks: Vec<(K, MarketObservation)> = candidates
                 .iter()
@@ -750,6 +894,79 @@ mod tests {
     }
 
     #[test]
+    fn convert_quote_multiplies_two_venue_legs() {
+        let d = |s| parse_canonical(s).unwrap();
+        let t = |s| Timestamp::parse(s).unwrap();
+        // X/USD = X/USDT × USDT/USD.
+        let first = CrossLeg {
+            price: d("62000.5"),
+            bid_ask: Some(BidAsk {
+                bid: d("62000"),
+                ask: d("62001"),
+            }),
+            basis: ObservationBasis::Venue(crate::id::VenueId::generate()),
+            as_of: t("2026-10-04T15:00:03Z"),
+            inputs: vec![(5, d("62000.5"))],
+        };
+        let second = CrossLeg {
+            price: d("0.99950"),
+            bid_ask: Some(BidAsk {
+                bid: d("0.9994"),
+                ask: d("0.9996"),
+            }),
+            basis: ObservationBasis::Aggregated,
+            as_of: t("2026-10-04T15:00:01Z"),
+            inputs: vec![(2, d("0.9995")), (7, d("0.9995"))],
+        };
+        let c = derive_quote(AggregationMethod::ConvertViaStablecoinV1, &first, &second).unwrap();
+        assert_eq!(c.method, AggregationMethod::ConvertViaStablecoinV1);
+        assert_eq!(c.basis, ObservationBasis::Derived);
+        assert_eq!(c.price_type, PriceType::Mid);
+        // 61969.49975 at 5 significant digits.
+        assert_eq!(c.price.to_string(), "61969");
+        // bid = first.bid × second.bid, ask = first.ask × second.ask, outward.
+        let ba = c.bid_ask.unwrap();
+        assert_eq!(
+            (ba.bid.to_string(), ba.ask.to_string()),
+            ("61960".into(), "61980".into())
+        );
+        assert!(ba.bid <= c.price && c.price <= ba.ask);
+        assert_eq!(c.as_of, t("2026-10-04T15:00:01Z"), "the older leg");
+        assert_eq!(
+            c.inputs.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            [2, 5, 7]
+        );
+        // The same cases as the TypeScript `convertRate` test.
+        for (x, y, want) in [
+            ("62000.5", "0.99950", "61969"),
+            ("0.00001234", "1.00012", "0.00001234"),
+            ("1.5", "1.0", "1.5"),
+            ("2.5", "0.5", "1"),
+            ("123456", "1.00", "123000"),
+        ] {
+            assert_eq!(
+                convert_rate(d(x), d(y)).unwrap().to_string(),
+                want,
+                "{x} × {y}"
+            );
+        }
+        assert!(convert_rate(d("0"), d("1")).is_none());
+        // A derived leg never enters; a non-derived method derives nothing.
+        let derived = CrossLeg {
+            basis: ObservationBasis::Derived,
+            ..second.clone()
+        };
+        assert!(convert_quote(&first, &derived).is_none());
+        assert!(derive_quote(AggregationMethod::MeanVenueMidV1, &first, &second).is_none());
+        assert_eq!(
+            derive_quote(AggregationMethod::CrossViaStablecoinV1, &first, &second)
+                .unwrap()
+                .method,
+            AggregationMethod::CrossViaStablecoinV1
+        );
+    }
+
+    #[test]
     fn cross_quote_is_derived_from_two_venue_legs() {
         let d = |s| parse_canonical(s).unwrap();
         let t = |s| Timestamp::parse(s).unwrap();
@@ -804,6 +1021,40 @@ mod tests {
             ..den
         };
         assert!(cross_quote(&num, &no_book).unwrap().bid_ask.is_none());
+        // A side with fewer digits than the price rounds outward, never
+        // across the mid (USD/PHP, 2026-10-04: price 62.507, ask was 62.5).
+        let php = CrossLeg {
+            price: d("62.5070"),
+            bid_ask: Some(BidAsk {
+                bid: d("62.500"),
+                ask: d("62.51"),
+            }),
+            basis: venue,
+            as_of: t("2026-10-01T05:00:10Z"),
+            inputs: vec![(4, d("62.5070"))],
+        };
+        let usd = CrossLeg {
+            price: d("1.0000"),
+            bid_ask: Some(BidAsk {
+                bid: d("0.9999"),
+                ask: d("1.0001"),
+            }),
+            basis: venue,
+            as_of: t("2026-10-01T05:00:10Z"),
+            inputs: vec![(5, d("1.0000"))],
+        };
+        let c = cross_quote(&php, &usd).unwrap();
+        let ba = c.bid_ask.unwrap();
+        assert_eq!(c.price.to_string(), "62.507");
+        assert!(
+            ba.bid <= c.price && c.price <= ba.ask,
+            "{ba:?} around {}",
+            c.price
+        );
+        assert_eq!(
+            (ba.bid.to_string(), ba.ask.to_string()),
+            ("62.493".into(), "62.52".into())
+        );
         // Derived pairs are never aggregated from their own observations.
         assert!(
             aggregate::<i64>(

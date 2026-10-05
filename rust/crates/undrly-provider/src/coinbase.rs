@@ -4,11 +4,15 @@
 //!
 //! The response does not name its product, so one request covers exactly one
 //! product; the normalizer attributes it to the single requested symbol.
+//!
+//! Bars (V1.10, `history bars`): `GET /products/{product}/candles?granularity=`
+//! (3600 or 86400 s), at most 300 candles, newest first, each
+//! `[time, low, high, open, close, volume]` with JSON numbers.
 
 use serde::Deserialize;
 use undrly_core::SourceId;
 
-use crate::{DecodeError, Provider, QuoteProvider};
+use crate::{DecodeError, JsonNumber, Provider, QuoteProvider};
 
 pub const SOURCE_ID: &str = "coinbase";
 pub const BASE_URL: &str = "https://api.exchange.coinbase.com/products";
@@ -55,7 +59,53 @@ impl CoinbaseProvider {
     pub fn book_url(product: &str) -> String {
         format!("{BASE_URL}/{product}/book?level=1")
     }
+
+    /// The newest 300 candles of `granularity` seconds (3600 or 86400).
+    pub fn candles_url(product: &str, granularity: u32) -> String {
+        format!("{BASE_URL}/{product}/candles?granularity={granularity}")
+    }
 }
+
+/// One candle: start (Unix seconds), then prices and base-asset volume as
+/// written in the payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candle {
+    pub time: i64,
+    pub low: JsonNumber,
+    pub high: JsonNumber,
+    pub open: JsonNumber,
+    pub close: JsonNumber,
+    pub volume: JsonNumber,
+}
+
+/// One product's candles, newest first as served.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candles(pub Vec<Candle>);
+
+pub fn decode_candles(payload: &[u8]) -> Result<Candles, String> {
+    let rows: Vec<(
+        i64,
+        JsonNumber,
+        JsonNumber,
+        JsonNumber,
+        JsonNumber,
+        JsonNumber,
+    )> = serde_json::from_slice(payload).map_err(|e| format!("candles: {e}"))?;
+    Ok(Candles(
+        rows.into_iter()
+            .map(|(time, low, high, open, close, volume)| Candle {
+                time,
+                low,
+                high,
+                open,
+                close,
+                volume,
+            })
+            .collect(),
+    ))
+}
+
+crate::bars_provider!(CoinbaseProvider, Candles, decode_candles);
 
 impl Default for CoinbaseProvider {
     fn default() -> Self {
@@ -78,6 +128,18 @@ impl QuoteProvider for CoinbaseProvider {
             reason: e.to_string(),
         })
     }
+}
+
+/// Fetches the newest candles of `product` (feature `http`).
+#[cfg(feature = "http")]
+pub async fn fetch_candles(
+    client: &crate::http::HttpClient,
+    product: &str,
+    granularity: u32,
+) -> Result<crate::http::FetchedRecord, crate::http::FetchError> {
+    client
+        .get(&CoinbaseProvider::candles_url(product, granularity), &[])
+        .await
 }
 
 /// Fetches the level-1 book of `product` (feature `http`).
