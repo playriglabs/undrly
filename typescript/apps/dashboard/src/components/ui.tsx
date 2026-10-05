@@ -46,7 +46,7 @@ export function Change({
   percent: string | null | undefined;
   className?: string;
 }) {
-  if (!percent) return <span className={clsx("text-faint", className)}>—</span>;
+  if (!percent) return <span className={clsx("text-faint", className)}>No data</span>;
   const dir = direction(percent);
   return (
     <span

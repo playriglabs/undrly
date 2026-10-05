@@ -2,7 +2,9 @@
 export function Sparkline({ values }: { values: string[] }) {
   if (values.length < 2) {
     return (
-      <span className="block h-7 w-28 border-b border-dashed border-line" aria-hidden="true" />
+      <span className="flex h-7 w-28 items-center justify-center text-[12px] text-faint">
+        No data
+      </span>
     );
   }
   const nums = values.map(Number);

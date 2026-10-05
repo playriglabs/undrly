@@ -779,8 +779,16 @@ function freshness(asOf: string, now: Date, window: Window): "fresh" | "stale" {
   return elapsed / 1000 <= window.seconds ? "fresh" : "stale";
 }
 
-const CONTINUOUS_30S: Window = {
-  seconds: MEAN_VENUE_MID_MAX_AGE_SECONDS,
+/**
+ * How long a `mean-venue-mid-v1` aggregate stays fresh (V1.10): one sweep of
+ * its venues. The method picks inputs within 30 s of computing; the result
+ * ages until the next sweep recomputes it, which with the top-500 crypto
+ * universe takes Kraken about 40–55 s and Coinbase about 90 s.
+ */
+export const AGGREGATE_STALE_AFTER_SECONDS = 120;
+
+const AGGREGATE_WINDOW: Window = {
+  seconds: AGGREGATE_STALE_AFTER_SECONDS,
   clock: "continuous",
 };
 
@@ -846,7 +854,7 @@ export async function canonicalQuote(
   );
   const row = rows[0];
   if (row === undefined) return { kind: "none" };
-  if (row.method === "cross-via-stablecoin-v1") {
+  if (row.method === "cross-via-stablecoin-v1" || row.method === "convert-via-stablecoin-v1") {
     return crossQuote(sql, pair, row, now, staleAfterSeconds);
   }
   const inputRows = await sql.unsafe<ObservationRow[]>(
@@ -952,7 +960,7 @@ export async function canonicalQuote(
   }
 
   const asOf = canonicalTimestamp(row.as_of);
-  if (freshness(asOf, now, CONTINUOUS_30S) === "stale") {
+  if (freshness(asOf, now, AGGREGATE_WINDOW) === "stale") {
     return { kind: "stale", asOf };
   }
   const latestReceipt = inputRows
@@ -962,7 +970,7 @@ export async function canonicalQuote(
   const subject = await subjectOf(sql, pair.subject);
   // The mean bid and mean ask of the same inputs (not a best bid/offer).
   const q = { priceType: row.price_type, price: row.price, bid: row.bid, ask: row.ask };
-  const derived = priced(q, asOf, CONTINUOUS_30S);
+  const derived = priced(q, asOf, AGGREGATE_WINDOW);
   return {
     kind: "quote",
     quote: v1.QuoteV1.parse({
@@ -983,8 +991,9 @@ export async function canonicalQuote(
 }
 
 /**
- * A derived cross (V1.9, `cross-via-stablecoin-v1`): the ratio of two
- * pairs' canonical quotes, computed by the collector. Its inputs are the
+ * A derived quote: a cross (V1.9, `cross-via-stablecoin-v1`, the ratio of
+ * two pairs' canonical quotes) or a conversion (V1.10,
+ * `convert-via-stablecoin-v1`, their product), computed by the collector. Its inputs are the
  * legs' observations (`canonical_quote_legs`); `receivedAt` is the latest of
  * their receipts. Fresh while `asOf` (the older leg) is within the API's
  * default window, on the continuous clock: both legs are live venue books.
@@ -1212,16 +1221,35 @@ const UNIVERSE_TEXT: Record<v1.UniverseKey, { name: string; description: string 
   "crypto-top100": {
     name: "Crypto top 100 by market cap",
     description:
-      "CoinGecko's top 100 assets by market capitalisation. Membership only: prices come from the Kraken and Coinbase feeds mapped through CoinGecko's exchange tickers.",
+      "CoinGecko's top 100 assets by market capitalisation: the first 100 ranks of the top-250 snapshot. Membership only: prices come from the Kraken and Coinbase feeds mapped through CoinGecko's exchange tickers.",
+  },
+  "crypto-top250": {
+    name: "Crypto top 250 by market cap",
+    description:
+      "CoinGecko's top 250 assets by market capitalisation. Membership only: prices come from the Kraken and Coinbase feeds mapped through CoinGecko's exchange tickers; assets without a crosswalked USD market have no quote.",
+  },
+  "crypto-top500": {
+    name: "Crypto top 500 by market cap",
+    description:
+      "CoinGecko's top 500 assets by market capitalisation (two pages of 250). Membership only: prices come from Kraken and Coinbase (USD) and Binance (USDT) markets mapped through CoinGecko's exchange tickers; assets without a crosswalked market have no quote.",
   },
   sp500: {
     name: "S&P 500 (via SPY holdings)",
     description: "SSGA SPY ETF holdings: a practical proxy, not the official S&P constituent file.",
   },
-  nasdaq100: {
-    name: "Nasdaq-100 (imported members)",
+  sp400: {
+    name: "S&P MidCap 400 (via MDY holdings)",
+    description: "SSGA MDY ETF holdings: a practical proxy, not the official S&P constituent file.",
+  },
+  sp600: {
+    name: "S&P SmallCap 600 (via SPSM holdings)",
     description:
-      "Nasdaq.com's Nasdaq-100 list, limited to members that are imported S&P 500 securities listed on Nasdaq; the others are skipped and reported by the importer.",
+      "SSGA SPSM ETF holdings: a practical proxy, not the official S&P constituent file.",
+  },
+  nasdaq100: {
+    name: "Nasdaq-100 (via QQQ holdings)",
+    description:
+      "Invesco QQQ ETF holdings: a practical proxy, not the official Nasdaq-100 constituent file. Securities also in the S&P 500 are the same instruments.",
   },
   "hyperliquid-perps": {
     name: "Hyperliquid perpetuals",

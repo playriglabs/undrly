@@ -7,6 +7,8 @@
  * - `caip2:eip155:1`                          a chain by CAIP-2 id (V1.4)
  * - `caip19:eip155:1/erc20:0x…`               a deployment by CAIP-19 asset type (V1.4)
  * - `EUR/USD`, `BTC/USD`, `XAU/USD`           `BASE/QUOTE` pairs
+ * - `Crypto.AAPLX/USD`                        the same pair (`AAPLX/USD`), in the
+ *                                              `Crypto.` spelling oracles use (V1.10)
  * - anything else                              an exact alias (`BTC`, `Gold`)
  */
 import { v1 } from "@undrly/contracts";
@@ -88,6 +90,14 @@ export function parseQuery(raw: string): ParsedQuery | null {
       return { kind: "identifier", scheme: s, value: normalizeIdentifier(s, rest) };
     }
     return { kind: "venue_symbol", venue: prefix, symbol: rest };
+  }
+
+  // `Crypto.AAPLX/USD`: the pair `AAPLX/USD`. One explicit prefix; the
+  // pair is then resolved exactly like any other.
+  const prefixed = /^crypto\.([^/\s]+)\/([^/\s]+)$/i.exec(q);
+  if (prefixed !== null) {
+    const [, base = "", quote = ""] = prefixed;
+    return { kind: "pair", base, quote };
   }
 
   const pair = /^([^/\s]+)\/([^/\s]+)$/.exec(q);

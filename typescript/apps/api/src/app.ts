@@ -335,6 +335,14 @@ export function createApp(sql: Sql, options: AppOptions) {
     }
     const offset = int("offset", 0, 0, 999_999);
     if (offset === null) return fail("bad_request", "offset must be a non-negative integer");
+    const sortKey = c.req.query("sort");
+    const order = c.req.query("order") ?? "asc";
+    if (sortKey !== undefined && !(v1.MARKETS_SORT_KEYS as readonly string[]).includes(sortKey)) {
+      return fail("bad_request", `sort is one of ${v1.MARKETS_SORT_KEYS.join(", ")}`);
+    }
+    if (!(v1.MARKETS_SORT_ORDERS as readonly string[]).includes(order)) {
+      return fail("bad_request", "order is asc or desc");
+    }
     const body = await markets(
       sql,
       [...new Set(classes)] as v1.InstrumentClass[],
@@ -343,6 +351,9 @@ export function createApp(sql: Sql, options: AppOptions) {
       offset,
       now(),
       options.staleAfterSeconds,
+      sortKey === undefined
+        ? null
+        : { key: sortKey as v1.MarketsSortKey, order: order as "asc" | "desc" },
     );
     return Response.json(body);
   });

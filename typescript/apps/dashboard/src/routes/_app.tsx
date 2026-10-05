@@ -55,14 +55,16 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
   const counts: v1.MarketsV1["counts"] = data?.ok ? data.data : [];
   const count = (cls: v1.InstrumentClass) => counts.find((c) => c.class === cls)?.count ?? 0;
   const total = counts.reduce((n, c) => n + c.count, 0);
-  const search = useRouterState({ select: (s) => s.location.search as { class?: string } });
+  const search = useRouterState({
+    select: (s) => s.location.search as { class?: string },
+  });
   const path = useRouterState({ select: (s) => s.location.pathname });
   const activeClass = path === "/" ? (search.class ?? "") : null;
 
   return (
     <aside
       className={clsx(
-        "sticky top-0 flex h-screen w-[300px] shrink-0 flex-col border-r border-line bg-panel max-lg:hidden",
+        "sticky top-0 flex h-screen w-75 shrink-0 flex-col border-r border-line bg-panel max-lg:hidden",
         collapsed && "hidden!",
       )}
     >
@@ -133,7 +135,7 @@ function SideLink(props: {
         props.active ? "bg-card text-ink" : "text-muted hover:bg-card hover:text-ink",
       )}
     >
-      <ClassGlyph cls={props.icon} className="size-[18px] shrink-0" />
+      <ClassGlyph cls={props.icon} className="size-4.5 shrink-0" />
       <span className="flex-1">{props.label}</span>
       <span className="text-[13px] text-faint tabular">{props.n.toLocaleString("en-US")}</span>
     </Link>
@@ -151,7 +153,7 @@ function UserBlock({ email }: { email: string }) {
   };
   return (
     <div className="border-t border-line px-5 pt-4 pb-5">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5">
         <UserAvatar seed={email} />
         <span className="min-w-0">
           <span className="block truncate text-[14px] text-ink" title={email}>
@@ -163,14 +165,18 @@ function UserBlock({ email }: { email: string }) {
       <div className="mt-4 grid grid-cols-2 gap-2">
         <Link
           to="/api-keys"
-          className="flex items-center justify-center gap-2 bg-[#dbe4d3] px-3 py-2 text-[13px] text-[#1a2317] transition-colors hover:bg-[#eff5e9]"
+          className="grid h-10 grid-cols-[1fr_auto_1fr] items-center bg-[#dbe4d3] px-3 text-[13px] text-[#1a2317] transition-colors hover:bg-[#eff5e9]"
         >
-          <KeyIcon /> API keys
+          <span className="mr-2 justify-self-end">
+            <KeyIcon />
+          </span>
+          <span>API keys</span>
+          <span aria-hidden="true" />
         </Link>
         <button
           type="button"
           onClick={signOut}
-          className="border border-line-strong px-3 py-2 text-[13px] text-ink transition-colors hover:bg-card"
+          className="flex h-10 items-center justify-center border border-line-strong px-3 text-[13px] text-ink transition-colors hover:bg-card"
         >
           Sign out
         </button>
@@ -242,7 +248,7 @@ function SearchBox() {
   return (
     <form
       aria-label="Search markets"
-      className="flex w-[300px] items-center gap-2.5 border border-line-strong bg-panel px-3 py-2 focus-within:border-forest max-md:w-auto max-md:flex-1"
+      className="flex w-75 items-center gap-2.5 border border-line-strong bg-panel px-3 py-2 focus-within:border-forest max-md:w-auto max-md:flex-1"
       onSubmit={(e) => {
         e.preventDefault();
         const q = input.current?.value.trim() ?? "";

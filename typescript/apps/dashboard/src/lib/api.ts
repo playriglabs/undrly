@@ -38,7 +38,17 @@ async function get<S extends z.ZodType>(path: string, schema: S): Promise<ApiRes
 
 export const PAGE_SIZE = 50;
 
-export type MarketsFilter = { classes: v1.InstrumentClass[]; q: string; page: number };
+/** A table column the markets can be ordered by (`trend` orders by the 24h percent). */
+export const SORT_COLUMNS = ["price", "changePercent", "change", "trend"] as const;
+export type SortColumn = (typeof SORT_COLUMNS)[number];
+export type MarketsSort = { column: SortColumn; order: "asc" | "desc" } | null;
+
+export type MarketsFilter = {
+  classes: v1.InstrumentClass[];
+  q: string;
+  sort: MarketsSort;
+  page: number;
+};
 
 export const getMarkets = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
@@ -50,6 +60,10 @@ export const getMarkets = createServerFn({ method: "GET" })
     });
     if (data.classes.length > 0) params.set("class", data.classes.join(","));
     if (data.q.trim()) params.set("q", data.q.trim());
+    if (data.sort) {
+      params.set("sort", data.sort.column === "trend" ? "changePercent" : data.sort.column);
+      params.set("order", data.sort.order);
+    }
     return get(`/v1/markets?${params}`, v1.MarketsV1);
   });
 

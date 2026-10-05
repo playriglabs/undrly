@@ -8,6 +8,24 @@ export function formatDecimal(value: string): string {
   return `${negative ? "-" : ""}${grouped}${frac === undefined ? "" : `.${frac}`}`;
 }
 
+/**
+ * A price for display: two decimals (half up) when its magnitude is at
+ * least 1 (`332.47579840803337` → `332.48`), the exact value otherwise
+ * (`0.00001234`). Rounds the decimal string itself, never through a float.
+ * The API value is unchanged.
+ */
+export function formatPrice(value: string): string {
+  const negative = value.startsWith("-");
+  const [int = "0", frac = ""] = (negative ? value.slice(1) : value).split(".");
+  if (!/^\d+$/.test(int) || !/^\d*$/.test(frac) || /^0*$/.test(int)) {
+    return formatDecimal(value);
+  }
+  let cents = BigInt(int + frac.padEnd(2, "0").slice(0, 2));
+  if ((frac[2] ?? "0") >= "5") cents += 1n;
+  const text = cents.toString().padStart(3, "0");
+  return formatDecimal(`${negative ? "-" : ""}${text.slice(0, -2)}.${text.slice(-2)}`);
+}
+
 /** A percent string from the API (`"0.5990"`) for display, with sign. Display only. */
 export function formatPercent(value: string): string {
   const n = Number(value);

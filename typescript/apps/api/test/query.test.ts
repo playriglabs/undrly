@@ -26,6 +26,25 @@ describe("query syntax", () => {
     expect(parseQuery("BTC perpetual")).toStrictEqual({ kind: "alias", text: "BTC perpetual" });
   });
 
+  it("reads `Crypto.BASE/QUOTE` as the pair BASE/QUOTE (V1.10)", () => {
+    expect(parseQuery("Crypto.AAPLX/USD")).toStrictEqual({
+      kind: "pair",
+      base: "AAPLX",
+      quote: "USD",
+    });
+    expect(parseQuery("crypto.AAPL.US/USD")).toStrictEqual({
+      kind: "pair",
+      base: "AAPL.US",
+      quote: "USD",
+    });
+    // Only the one prefix; anything else with a dot stays as it was.
+    expect(parseQuery("Equity.AAPL/USD")).toStrictEqual({
+      kind: "pair",
+      base: "Equity.AAPL",
+      quote: "USD",
+    });
+  });
+
   it("parses CAIP-2 chains and CAIP-19 deployments (V1.4)", () => {
     expect(parseQuery("caip2:eip155:8453")).toStrictEqual({
       kind: "chain",

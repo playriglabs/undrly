@@ -100,7 +100,9 @@ export type CandlesV1 = z.infer<typeof CandlesV1>;
  * cross of its legs' bar closes at the same bar times (`?interval=1h|1d`,
  * default `1d`): `priceType` `mid`, `basis` `derived`, each value
  * `crossRate(numerator close, denominator close)`, `asOf` the bars' close
- * time. `?series=reference` asks for the pair's reference feed instead.
+ * time. A conversion (V1.10, `convert-via-stablecoin-v1`) is the same with
+ * `convertRate` (the legs' product). `?series=reference` asks for the
+ * pair's reference feed instead.
  */
 export const HistoryV1 = z
   .strictObject({
@@ -152,14 +154,18 @@ export const MARKET_STATUSES = [
  * Statistics from the venue's own bars:
  * - `rolling_24h` (continuous markets): the 24 consecutive `1h` bars ending
  *   with the latest; `open` of the first, max `high`, min `low`, `close` of
- *   the latest, sum of `volume`; `change = close - open`.
+ *   the latest, sum of `volume`; `change = close - open`. When hours have no
+ *   bar (no trades: an onchain pool, a venue's session; V1.10), `open` is
+ *   the last close at or before 24 hours before the latest bar opened, and
+ *   `from` that bar's close time.
  * - `session` (equities): the venue's latest `1d` bar (its New York trading
  *   day) and the one before; `previousClose` is that earlier bar's close;
  *   `change = close - previousClose`.
  * - `rolling_24h_closes` (derived crosses, V1.9): the cross of the legs'
  *   hourly closes at the 25 consecutive hours ending with the latest; `open`
  *   is the close 24 hours before, `high`/`low` the max/min **of those
- *   closes** (not an intrabar range), `volume` `null`.
+ *   closes** (not an intrabar range), `volume` `null`. With hours missing,
+ *   from the last close at or before 24 hours earlier (V1.10).
  * - `rolling_24h` for a published series: the source's own open/high/low/
  *   close over the 24 hours before its poll (gold-api metals), `volume` `null`.
  * - Published series (reference rates and averages; `marketStatus` `null`),
@@ -446,6 +452,11 @@ export type EconomicCalendarV1 = z.infer<typeof EconomicCalendarV1>;
 export const MARKETS_MAX_LIMIT = 100;
 export const MARKETS_DEFAULT_LIMIT = 50;
 
+/** `sort=` of `/v1/markets` (V1.10): the market's price, 24-hour change or percent. */
+export const MARKETS_SORT_KEYS = ["price", "changePercent", "change"] as const;
+export type MarketsSortKey = (typeof MARKETS_SORT_KEYS)[number];
+export const MARKETS_SORT_ORDERS = ["asc", "desc"] as const;
+
 /**
  * One market (subject, unit) with a canonical quote. `market` is exactly
  * `/v1/market`'s body, `null` when no quote is servable now (an aggregate
@@ -462,8 +473,12 @@ export const MarketsRowV1 = z.strictObject({
 export type MarketsRowV1 = z.infer<typeof MarketsRowV1>;
 
 /**
- * `GET /v1/markets?class=&q=&limit=&offset=`: every market with a canonical
- * quote, one page at a time, ordered by subject name then unit.
+ * `GET /v1/markets?class=&q=&limit=&offset=&sort=&order=`: every market with a
+ * canonical quote, one page at a time, ordered by subject name then unit.
+ * - `sort` (`sort=price|changePercent|change`, `order=asc|desc`, default
+ *   `asc`; V1.10): ordered by that value of the market as `/v1/market`
+ *   serves it, as of at most a minute ago; markets without one come last,
+ *   by name. Prices in different units are compared as numbers.
  * - `classes` (`class=crypto_asset,fx`): only instrument subjects of those
  *   classes; empty means all markets, currency subjects included.
  * - `query` (`q=`): subjects whose name or an alias (symbol or name)
@@ -477,6 +492,9 @@ export const MarketsV1 = z
     schemaVersion: z.literal(1),
     classes: z.array(z.enum(INSTRUMENT_CLASSES)),
     query: z.string().min(1).nullable(),
+    sort: z
+      .strictObject({ key: z.enum(MARKETS_SORT_KEYS), order: z.enum(MARKETS_SORT_ORDERS) })
+      .nullable(),
     total: z.number().int().nonnegative(),
     offset: z.number().int().nonnegative(),
     limit: z.number().int().min(1).max(MARKETS_MAX_LIMIT),

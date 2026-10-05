@@ -72,15 +72,26 @@ async function bars(
   return rows.reverse();
 }
 
-/** The legs of a derived cross (V1.9), or `null` for any other pair. */
+/**
+ * The legs of a derived pair (V1.9 cross, V1.10 conversion) and how they
+ * combine, or `null` for any other pair.
+ */
 export async function crossLegs(
   sql: Sql,
   pair: Pair,
-): Promise<{ numerator: Pair; denominator: Pair } | null> {
+): Promise<{ numerator: Pair; denominator: Pair; combine: typeof v1.crossRate } | null> {
   const rows = await sql<
-    { ns: string; nu: string; nuc: string; ds: string; du: string; duc: string }[]
+    {
+      method: string;
+      ns: string;
+      nu: string;
+      nuc: string;
+      ds: string;
+      du: string;
+      duc: string;
+    }[]
   >`
-    SELECT numerator_subject_id::text AS ns, numerator_unit_id::text AS nu,
+    SELECT method, numerator_subject_id::text AS ns, numerator_unit_id::text AS nu,
            numerator_unit_category AS nuc, denominator_subject_id::text AS ds,
            denominator_unit_id::text AS du, denominator_unit_category AS duc
     FROM quote_derivations WHERE subject_id = ${pair.subject} AND unit_id = ${pair.unit}`;
@@ -89,10 +100,11 @@ export async function crossLegs(
   return {
     numerator: { subject: r.ns, unit: r.nu, unitCategory: r.nuc },
     denominator: { subject: r.ds, unit: r.du, unitCategory: r.duc },
+    combine: r.method === "convert-via-stablecoin-v1" ? v1.convertRate : v1.crossRate,
   };
 }
 
-/** One bar time of a cross: the ratio of its legs' closes. */
+/** One bar time of a derived pair: its legs' closes combined. */
 export type CrossClose = {
   openTime: string;
   closeTime: string;
@@ -102,10 +114,11 @@ export type CrossClose = {
 };
 
 /**
- * A derived cross's closes at the bar times both legs have (newest `limit`
+ * A derived pair's closes at the bar times both legs have (newest `limit`
  * of each leg, within bounds), oldest first: `crossRate(numerator close,
- * denominator close)`. Empty when a leg has no bars; `null` for a pair that
- * is not a cross.
+ * denominator close)` for a cross, `convertRate` (their product) for a
+ * conversion. Empty when a leg has no bars; `null` for a pair that is not
+ * derived.
  */
 export async function crossCloses(
   sql: Sql,
@@ -128,7 +141,7 @@ export async function crossCloses(
   const out: CrossClose[] = [];
   for (const n of nBars) {
     const d = byOpen.get(ms(n.open_time));
-    const close = d === undefined ? null : v1.crossRate(n.close, d.close);
+    const close = d === undefined ? null : legs.combine(n.close, d.close);
     if (d === undefined || close === null) continue;
     out.push({
       openTime: canonicalTimestamp(n.open_time),
@@ -321,19 +334,40 @@ async function sessionStatus(sql: Sql, venue: string, now: Date): Promise<Status
 }
 
 /**
- * A derived cross's `rolling_24h_closes`: the 25 consecutive hourly cross
- * closes ending with the latest (24 hours apart end to end), or `null`.
+ * The closes a 24-hour window spans when hours are missing (no trades in
+ * them, or a venue session): the last close at or before 24 hours before the
+ * latest bar opened, and every close since. `null` without such a close
+ * among `rows`.
  */
-async function crossStatistics(closes: CrossClose[]): Promise<v1.MarketStatisticsV1 | null> {
+function sparseWindow<T>(rows: T[], openTime: (r: T) => number): T[] | null {
+  const last = rows.at(-1);
+  if (last === undefined) return null;
+  const cutoff = openTime(last) - 24 * HOUR_MS;
+  let from = -1;
+  rows.forEach((r, i) => {
+    if (openTime(r) <= cutoff) from = i;
+  });
+  return from < 0 ? null : rows.slice(from);
+}
+
+/**
+ * A derived pair's `rolling_24h_closes`: the 25 consecutive hourly closes
+ * ending with the latest (24 hours apart end to end), or, when hours are
+ * missing, the last close at or before 24 hours earlier and every close
+ * since ([`sparseWindow`]). `null` otherwise.
+ */
+async function crossStatistics(all: CrossClose[]): Promise<v1.MarketStatisticsV1 | null> {
+  const recent = all.slice(-25);
   const contiguous =
-    closes.length === 25 &&
-    closes.every(
+    recent.length === 25 &&
+    recent.every(
       (c, i) =>
-        i === 0 || Date.parse(c.openTime) === Date.parse(closes[i - 1]?.openTime ?? "") + HOUR_MS,
+        i === 0 || Date.parse(c.openTime) === Date.parse(recent[i - 1]?.openTime ?? "") + HOUR_MS,
     );
-  if (!contiguous) return null;
+  const closes = contiguous ? recent : sparseWindow(all, (c) => Date.parse(c.openTime));
+  if (closes === null || closes.length < 2) return null;
   const first = closes[0] as CrossClose;
-  const last = closes[24] as CrossClose;
+  const last = closes[closes.length - 1] as CrossClose;
   const c = v1.changeOf(last.close, first.close);
   if (c === null) return null;
   return v1.MarketStatisticsV1.parse({
@@ -357,12 +391,13 @@ async function statistics(
   pair: Pair,
   session: boolean,
 ): Promise<v1.MarketStatisticsV1 | null> {
-  const cross = await crossCloses(sql, pair, "1h", { limit: 25, start: null, end: null });
+  const cross = await crossCloses(sql, pair, "1h", { limit: 72, start: null, end: null });
   if (cross !== null) return crossStatistics(cross);
   const interval = session ? "1d" : "1h";
   const from = await barSource(sql, pair, interval);
   if (from === null) return null;
-  const rows = await bars(sql, pair, interval, from, session ? 2 : 24, null, null);
+  const fetched = await bars(sql, pair, interval, from, session ? 2 : 72, null, null);
+  const rows = session ? fetched : fetched.slice(-24);
   const last = rows[rows.length - 1];
   if (last === undefined) return null;
   const to = last.complete ? last.close_time : last.received_at;
@@ -386,11 +421,35 @@ async function statistics(
       complete: today.complete,
     });
   }
-  // 24 consecutive hourly bars ending with the latest, or nothing.
+  // 24 consecutive hourly bars ending with the latest.
   const contiguous =
     rows.length === 24 &&
     rows.every((r, i) => i === 0 || ms(r.open_time) === ms(rows[i - 1]?.open_time ?? "") + HOUR_MS);
-  if (!contiguous) return null;
+  if (!contiguous) {
+    // Hours without a bar (no trades: an onchain pool, a venue session):
+    // from the last close at or before 24 hours before the latest bar.
+    const span = sparseWindow(fetched, (r) => ms(r.open_time));
+    const base = span?.[0];
+    const since = span?.slice(1) ?? [];
+    if (base === undefined || since.length === 0) return null;
+    const w = merge(since);
+    const c = v1.changeOf(w.close, base.close);
+    if (c === null) return null;
+    return v1.MarketStatisticsV1.parse({
+      window: "rolling_24h",
+      from: canonicalTimestamp(base.close_time),
+      to: canonicalTimestamp(to),
+      open: base.close,
+      high: max(w.high, base.close),
+      low: min(w.low, base.close),
+      close: w.close,
+      previousClose: null,
+      change: c.absolute,
+      changePercent: c.percent,
+      volume: w.volume,
+      complete: w.complete,
+    });
+  }
   const w = merge(rows);
   const c = v1.changeOf(w.close, w.open);
   if (c === null) return null;
@@ -600,7 +659,105 @@ export async function market(
  * `MarketsV1`: one page of the markets with a canonical quote, each as
  * `/v1/market` serves it plus a 24-hour sparkline, filtered by subject
  * class and by a name or alias search.
+ *
+ * One row per asset, in US dollars (V1.10): a market in any other unit
+ * (BTC in USDT, USDT in IDR) is left out when the same subject has a USD
+ * market, venue-quoted or converted (`convert-via-stablecoin-v1`). It stays
+ * reachable by its own query (`BTC/USDT`); FX rates keep their own rows.
+ * Only markets with a canonical quote are listed: a token Jupiter does not
+ * price is not.
  */
+/** A market's sortable values, as `/v1/market` serves them (numbers, for ordering only). */
+type Summary = Record<v1.MarketsSortKey, number | null>;
+
+/** How long sort values are reused before they are recomputed (in the background). */
+const SUMMARY_TTL_MS = 60_000;
+
+const summaryCache = new WeakMap<
+  Sql,
+  { at: number; values: Map<string, Summary>; refreshing: Promise<void> | null }
+>();
+
+/** Markets in the list: one row per asset, in USD when it has a USD market. */
+const listedClause = (sql: Sql) => sql`
+    NOT EXISTS (
+      SELECT 1 FROM canonical_quotes usd
+      JOIN identifiers x ON x.node_id = usd.unit_id AND x.scheme = 'iso4217'
+        AND x.value = 'USD' AND x.valid_during @> now()
+      WHERE usd.subject_id = q.subject_id AND usd.unit_id <> q.unit_id)`;
+
+/** Every listed market's sortable values at `now`, 16 markets at a time. */
+async function computeSummaries(
+  sql: Sql,
+  now: Date,
+  staleAfterSeconds: number,
+): Promise<Map<string, Summary>> {
+  const pairs = await sql<{ subject: string; unit: string; unit_category: string }[]>`
+    SELECT q.subject_id::text AS subject, q.unit_id::text AS unit, q.unit_category
+    FROM canonical_quotes q WHERE ${listedClause(sql)}`;
+  const out = new Map<string, Summary>();
+  const num = (s: string | null | undefined) => (s == null ? null : Number(s));
+  for (let i = 0; i < pairs.length; i += 16) {
+    await Promise.all(
+      pairs.slice(i, i + 16).map(async (row) => {
+        const pair: Pair = {
+          subject: row.subject,
+          unit: row.unit,
+          unitCategory: row.unit_category,
+        };
+        const quote = await canonicalQuote(sql, pair, now, staleAfterSeconds);
+        if (quote.kind !== "quote") return;
+        const m = await market(sql, pair, quote.quote, now);
+        out.set(`${row.subject}:${row.unit}`, {
+          price: num(m.price),
+          change: num(m.statistics?.change),
+          changePercent: num(m.statistics?.changePercent),
+        });
+      }),
+    );
+  }
+  return out;
+}
+
+/**
+ * The listed markets' sortable values, reused for a minute: older ones are
+ * served while they are recomputed in the background, so a sort never waits
+ * on more than the first computation.
+ */
+async function summaries(
+  sql: Sql,
+  now: Date,
+  staleAfterSeconds: number,
+): Promise<Map<string, Summary>> {
+  const cached = summaryCache.get(sql);
+  const refresh = () => {
+    const entry = summaryCache.get(sql) ?? { at: 0, values: new Map(), refreshing: null };
+    entry.refreshing ??= computeSummaries(sql, now, staleAfterSeconds)
+      .then((values) => {
+        summaryCache.set(sql, { at: now.getTime(), values, refreshing: null });
+      })
+      .finally(() => {
+        const e = summaryCache.get(sql);
+        if (e) e.refreshing = null;
+      });
+    summaryCache.set(sql, entry);
+    return entry.refreshing;
+  };
+  if (cached === undefined || cached.at === 0) {
+    await refresh();
+    return summaryCache.get(sql)?.values ?? new Map();
+  }
+  if (Math.abs(now.getTime() - cached.at) > SUMMARY_TTL_MS) void refresh().catch(() => {});
+  return cached.values;
+}
+
+/** Computes the sort values in the background, so the first sorted list is fast. */
+export function warmMarketSummaries(sql: Sql, staleAfterSeconds: number): void {
+  summaries(sql, new Date(), staleAfterSeconds).catch((e: unknown) => {
+    console.error(`market summaries: ${e instanceof Error ? e.message : String(e)}`);
+  });
+}
+
 export async function markets(
   sql: Sql,
   classes: v1.InstrumentClass[],
@@ -609,10 +766,13 @@ export async function markets(
   offset: number,
   now: Date,
   staleAfterSeconds: number,
+  sort: { key: v1.MarketsSortKey; order: "asc" | "desc" } | null = null,
 ): Promise<v1.MarketsV1> {
+  const listed = listedClause(sql);
   const counts = await sql<{ class: v1.InstrumentClass | null; count: number }[]>`
     SELECT i.instrument_class AS class, count(*)::int AS count
     FROM canonical_quotes q LEFT JOIN instruments i ON i.id = q.subject_id
+    WHERE ${listed}
     GROUP BY i.instrument_class ORDER BY i.instrument_class NULLS LAST`;
   // `%`, `_` and `\` in the text match themselves.
   const like = query === null ? null : `%${query.toLowerCase().replace(/[\\%_]/g, "\\$&")}%`;
@@ -620,17 +780,39 @@ export async function markets(
     FROM canonical_quotes q
     LEFT JOIN instruments i ON i.id = q.subject_id
     LEFT JOIN currencies c ON c.id = q.subject_id
-    WHERE (cardinality(${classes}::text[]) = 0 OR i.instrument_class = ANY(${classes}::text[]))
+    WHERE ${listed}
+      AND (cardinality(${classes}::text[]) = 0 OR i.instrument_class = ANY(${classes}::text[]))
       AND (${like}::text IS NULL
         OR lower(coalesce(i.name, c.name)) LIKE ${like}
         OR EXISTS (SELECT 1 FROM aliases a WHERE a.node_id = q.subject_id AND a.alias_key LIKE ${like}))`;
   const [{ total } = { total: 0 }] = await sql<{ total: number }[]>`
     SELECT count(*)::int AS total ${filtered}`;
-  const page = await sql<{ subject: string; unit: string; unit_category: string }[]>`
-    SELECT q.subject_id::text AS subject, q.unit_id::text AS unit, q.unit_category
-    ${filtered}
-    ORDER BY lower(coalesce(i.name, c.name)), q.subject_id, q.unit_id
-    LIMIT ${limit} OFFSET ${offset}`;
+  type PageRow = { subject: string; unit: string; unit_category: string };
+  let page: PageRow[];
+  if (sort === null) {
+    page = await sql<PageRow[]>`
+      SELECT q.subject_id::text AS subject, q.unit_id::text AS unit, q.unit_category
+      ${filtered}
+      ORDER BY lower(coalesce(i.name, c.name)), q.subject_id, q.unit_id
+      LIMIT ${limit} OFFSET ${offset}`;
+  } else {
+    // Every filtered market by name, then by its value (stable: ties keep
+    // the name order); markets without the value last.
+    const all = await sql<PageRow[]>`
+      SELECT q.subject_id::text AS subject, q.unit_id::text AS unit, q.unit_category
+      ${filtered}
+      ORDER BY lower(coalesce(i.name, c.name)), q.subject_id, q.unit_id`;
+    const values = await summaries(sql, now, staleAfterSeconds);
+    const sortValue = (r: PageRow) => values.get(`${r.subject}:${r.unit}`)?.[sort.key] ?? null;
+    const sign = sort.order === "asc" ? 1 : -1;
+    page = [...all]
+      .sort((a, b) => {
+        const [x, y] = [sortValue(a), sortValue(b)];
+        if (x === null || y === null) return x === null ? (y === null ? 0 : 1) : -1;
+        return sign * (x - y);
+      })
+      .slice(offset, offset + limit);
+  }
   const rows = await Promise.all(
     page.map(async (row) => {
       const pair: Pair = { subject: row.subject, unit: row.unit, unitCategory: row.unit_category };
@@ -658,6 +840,7 @@ export async function markets(
     schemaVersion: 1,
     classes,
     query,
+    sort,
     total,
     offset,
     limit,

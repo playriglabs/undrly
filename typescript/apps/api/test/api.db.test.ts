@@ -271,7 +271,11 @@ describe.skipIf(url === undefined)("API with a database", () => {
   });
 
   it("an aggregate older than its window is not served; observations stay visible", async () => {
-    const later = app("2026-09-25T07:29:00Z"); // as_of + 53.6 s > 30 s
+    // Within one venue sweep (120 s, V1.10) the aggregate is still served.
+    const sweep = app("2026-09-25T07:29:00Z"); // as_of + 53.6 s
+    const fresh = v1.QuoteV1.parse(await (await sweep.request("/v1/quote/BTC/USD")).json());
+    expect(fresh.freshness).toBe("fresh");
+    const later = app("2026-09-25T07:30:30Z"); // as_of + 143.6 s > 120 s
     const res = await later.request("/v1/quote/BTC/USD");
     expect(res.status).toBe(404);
     expect(v1.ErrorV1.parse(await res.json()).error.code).toBe("no_quote");

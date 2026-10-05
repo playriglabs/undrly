@@ -152,3 +152,27 @@ export function crossRate(numerator: string, denominator: string): string | null
   const q = divide(n, d, Math.max(0, digits - e));
   return q === null ? null : formatDecimal(q);
 }
+
+/**
+ * `first × second`, rounded half to even to the fewer significant digits of
+ * the two (one rounding of the exact product). Mirrors
+ * `undrly_core::quote::convert_rate` (V1.10, `convert-via-stablecoin-v1`).
+ * `null` unless both are positive decimals.
+ */
+export function convertRate(first: string, second: string): string | null {
+  const [a, b] = [parseDecimal(first), parseDecimal(second)];
+  if (a === null || b === null || a.mantissa <= 0n || b.mantissa <= 0n) return null;
+  const digits = Math.min(significantDigits(a), significantDigits(b));
+  const mantissa = a.mantissa * b.mantissa;
+  const scale = a.scale + b.scale;
+  const drop = mantissa.toString().length - digits;
+  if (drop <= 0) return formatDecimal({ mantissa, scale });
+  const unit = 10n ** BigInt(drop);
+  let q = mantissa / unit;
+  const twice = (mantissa % unit) * 2n;
+  if (twice > unit || (twice === unit && q % 2n === 1n)) q += 1n;
+  const kept = scale - drop;
+  return formatDecimal(
+    kept >= 0 ? { mantissa: q, scale: kept } : { mantissa: q * 10n ** BigInt(-kept), scale: 0 },
+  );
+}

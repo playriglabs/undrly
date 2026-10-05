@@ -221,6 +221,19 @@ describe("exact quote arithmetic", () => {
     expect(v1.crossRate("x", "1")).toBeNull();
   });
 
+  it("convert rate: a product at the fewer significant digits (mirrors undrly_core)", () => {
+    // BTC/USD = BTC/USDT 62000.5 × USDT/USD 0.99950 = 61969.49975 (5 digits).
+    expect(v1.convertRate("62000.5", "0.99950")).toBe("61969");
+    expect(v1.convertRate("0.00001234", "1.00012")).toBe("0.00001234");
+    expect(v1.convertRate("1.5", "1.0")).toBe("1.5");
+    // Half to even: 2.5 × 0.5 = 1.25 at 1 digit.
+    expect(v1.convertRate("2.5", "0.5")).toBe("1");
+    // Rounding above the decimal point keeps the magnitude.
+    expect(v1.convertRate("123456", "1.00")).toBe("123000");
+    expect(v1.convertRate("0", "1")).toBeNull();
+    expect(v1.convertRate("x", "1")).toBeNull();
+  });
+
   it("24h change: positive, negative, zero, exact percent", () => {
     expect(v1.changeOf("84076.2025000", "82950.1150000")).toStrictEqual({
       absolute: "1126.0875000",

@@ -12,6 +12,7 @@ import {
   changeLabel,
   displayName,
   formatDecimal,
+  formatPrice,
   formatTimestamp,
   STATUS_LABEL,
   subjectClass,
@@ -93,7 +94,7 @@ function MarketPage() {
             </div>
           </div>
           <StatCard label="Price">
-            <span className="truncate text-[18px] text-ink tabular">{formatDecimal(m.price)}</span>
+            <span className="truncate text-[18px] text-ink tabular">{formatPrice(m.price)}</span>
             <CopyButton value={m.price} label="Copy price" />
           </StatCard>
           <StatCard label={changeLabel(m.statistics)}>
@@ -109,7 +110,12 @@ function MarketPage() {
           </StatCard>
         </div>
 
-        <ChartCard id={id} unit={unit} range={range} />
+        <ChartCard
+          id={id}
+          unit={unit}
+          range={range}
+          lineOnly={m.subject.kind === "instrument" && m.subject.class === "fx"}
+        />
       </div>
 
       <div className="space-y-4 xl:pt-13">
@@ -152,8 +158,8 @@ function MarketPage() {
               ["Age", <Age key="age" iso={m.asOf} />],
               ...(m.statistics
                 ? ([
-                    ["High", formatDecimal(m.statistics.high)],
-                    ["Low", formatDecimal(m.statistics.low)],
+                    ["High", formatPrice(m.statistics.high)],
+                    ["Low", formatPrice(m.statistics.low)],
                     ["Volume", m.statistics.volume ? formatDecimal(m.statistics.volume) : "—"],
                   ] as Row[])
                 : []),
@@ -293,17 +299,28 @@ function StatCard({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function ChartCard({ id, unit, range }: { id: string; unit: string | undefined; range: Range }) {
+/** `lineOnly`: FX is read as a rate, so its chart is a line with no candle toggle. */
+function ChartCard({
+  id,
+  unit,
+  range,
+  lineOnly = false,
+}: {
+  id: string;
+  unit: string | undefined;
+  range: Range;
+  lineOnly?: boolean;
+}) {
   const { data: series, isFetching } = useQuery(seriesQuery(id, unit, range));
   const [mode, setMode] = useState<ChartMode>("candles");
   const [now] = useState(() => new Date());
   const bars = series?.ok ? series.data.bars : [];
-  const candles = series?.ok && series.data.kind === "candles";
+  const candles = !lineOnly && series?.ok && series.data.kind === "candles";
   return (
     <section className="mt-5 border border-line bg-panel">
       <div className="flex items-center justify-between gap-4 px-4 pt-4">
         <div className="flex items-center gap-3">
-          <fieldset className="flex border border-line-strong">
+          <fieldset className={clsx("flex border border-line-strong", lineOnly && "hidden")}>
             <legend className="sr-only">Chart type</legend>
             {(["candles", "line"] as const).map((m) => (
               <button
@@ -503,8 +520,8 @@ function DerivativesSection({ d }: { d: v1.DerivativesV1 }) {
     <Section title="Perpetual" icon="perp">
       <Fields
         rows={[
-          ["Mark", formatDecimal(d.markPrice)],
-          ["Index", d.indexPrice ? formatDecimal(d.indexPrice) : "—"],
+          ["Mark", formatPrice(d.markPrice)],
+          ["Index", d.indexPrice ? formatPrice(d.indexPrice) : "—"],
           ["Funding", d.fundingRate ? `${d.fundingRate} / ${d.fundingIntervalHours ?? "?"}h` : "—"],
           ["Open interest", d.openInterest ? formatDecimal(d.openInterest) : "—"],
         ]}

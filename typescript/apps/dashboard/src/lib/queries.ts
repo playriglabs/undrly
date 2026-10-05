@@ -17,7 +17,7 @@ const LIVE_MS = 15_000;
  */
 export const marketsQuery = (filter: Omit<MarketsFilter, "page">) =>
   infiniteQueryOptions({
-    queryKey: ["markets", filter.classes, filter.q],
+    queryKey: ["markets", filter.classes, filter.q, filter.sort],
     queryFn: ({ pageParam }) => getMarkets({ data: { ...filter, page: pageParam } }),
     initialPageParam: 1,
     getNextPageParam: (last, all) =>

@@ -439,8 +439,22 @@ describe.skipIf(url === undefined)("market data with a database", () => {
   it("market: continuous crypto with rolling 24h statistics from the venue's bars", async () => {
     const m = v1.MarketV1.parse((await get("/v1/market/BTC/USD")).body);
     expect(m.marketStatus).toBe("continuous");
-    // The latest 24 hours (2026-09-25T03:00Z … 09-26T02:00Z) miss 05:00: no statistics.
-    expect(m.statistics).toBeNull();
+    // The latest 24 hours (2026-09-25T03:00Z … 09-26T02:00Z) miss 05:00 (no
+    // trades): the window opens at the last close 24 hours before the latest
+    // bar (02:00Z, closing 84003.0), not at a 24-bar run (V1.10).
+    expect(m.statistics).toMatchObject({
+      window: "rolling_24h",
+      from: "2026-09-25T03:00:00Z",
+      to: "2026-09-26T02:29:50Z",
+      open: "84003.0",
+      high: "84031.0",
+      low: "83998.0",
+      close: "84027.0",
+      change: "24.0",
+      changePercent: "0.0286",
+      volume: "34.5",
+      complete: false,
+    });
     expect(m).toMatchObject({
       price: "84010",
       priceType: "last",
@@ -528,6 +542,38 @@ describe.skipIf(url === undefined)("market data with a database", () => {
     const count = (cls: string) => all.counts.find((c) => c.class === cls)?.count ?? 0;
     expect(two.total).toBe(count("crypto_asset") + count("equity"));
     for (const bad of ["class=stock", "class=fx,stock", "limit=0", "limit=101", "offset=-1"]) {
+      const res = await get(`/v1/markets?${bad}`);
+      expect([res.status, errorCode(res.body)]).toEqual([400, "bad_request"]);
+    }
+  });
+
+  it("markets: sort by price or 24h change, either order, markets without a value last", async () => {
+    const all = v1.MarketsV1.parse((await get("/v1/markets?limit=100")).body);
+    expect(all.sort).toBeNull();
+    const num = (m: v1.MarketsRowV1, key: v1.MarketsSortKey) => {
+      const v = key === "price" ? m.market?.price : m.market?.statistics?.[key];
+      return v == null ? null : Number(v);
+    };
+    for (const key of v1.MARKETS_SORT_KEYS) {
+      for (const order of v1.MARKETS_SORT_ORDERS) {
+        const r = v1.MarketsV1.parse(
+          (await get(`/v1/markets?limit=100&sort=${key}&order=${order}`)).body,
+        );
+        expect(r.sort).toEqual({ key, order });
+        expect(r.total).toBe(all.total);
+        const values = r.markets.map((m) => num(m, key));
+        const known = values.filter((v): v is number => v !== null);
+        // Every market with the value first, in order; the rest after.
+        expect(values.slice(0, known.length)).toEqual(known);
+        expect(known).toEqual([...known].sort((x, y) => (order === "asc" ? x - y : y - x)));
+      }
+    }
+    // Default order is ascending; a page is a slice of the sorted list.
+    const asc = v1.MarketsV1.parse((await get("/v1/markets?limit=100&sort=price")).body);
+    expect(asc.sort).toEqual({ key: "price", order: "asc" });
+    const page = v1.MarketsV1.parse((await get("/v1/markets?limit=2&offset=1&sort=price")).body);
+    expect(page.markets).toEqual(asc.markets.slice(1, 3));
+    for (const bad of ["sort=name", "sort=price&order=up"]) {
       const res = await get(`/v1/markets?${bad}`);
       expect([res.status, errorCode(res.body)]).toEqual([400, "bad_request"]);
     }

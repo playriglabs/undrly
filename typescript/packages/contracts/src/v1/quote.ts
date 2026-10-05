@@ -32,6 +32,7 @@ export const AGGREGATION_METHODS = [
   "mean-venue-mid-v1",
   "mark-with-venue-book-v1",
   "cross-via-stablecoin-v1",
+  "convert-via-stablecoin-v1",
 ] as const;
 
 /** Mirrors `undrly_core::UnitOfMeasure`. */
@@ -214,7 +215,9 @@ export const AggregatedQuoteV1 = z.strictObject({
 /**
  * Derived from other prices; no venue or source. `cross-via-stablecoin-v1`
  * (V1.9): the ratio of two pairs' canonical quotes through a stablecoin
- * (`USD/IDR` = `USDT/IDR` ÷ `USDT/USD`), `priceType` `mid`, as of the older leg.
+ * (`USD/IDR` = `USDT/IDR` ÷ `USDT/USD`). `convert-via-stablecoin-v1`
+ * (V1.10): a USDT-only market restated in US dollars (`X/USD` = `X/USDT` ×
+ * `USDT/USD`). Both: `priceType` `mid`, as of the older leg.
  */
 export const DerivedQuoteV1 = z.strictObject({
   ...canonicalFields,
@@ -291,10 +294,11 @@ function quoteIssues(q: {
     issues.push({ message: "latest-observation-v1 is its single input" });
   }
   if (
-    q.aggregation.method === "cross-via-stablecoin-v1" &&
+    (q.aggregation.method === "cross-via-stablecoin-v1" ||
+      q.aggregation.method === "convert-via-stablecoin-v1") &&
     !(q.basis === "derived" && q.priceType === "mid")
   ) {
-    issues.push({ message: "cross-via-stablecoin-v1 is a derived mid" });
+    issues.push({ message: `${q.aggregation.method} is a derived mid` });
   }
   const bookTime = "bidAskAsOf" in q ? q.bidAskAsOf : undefined;
   const withBook = q.aggregation.method === "mark-with-venue-book-v1" && q.bid !== null;

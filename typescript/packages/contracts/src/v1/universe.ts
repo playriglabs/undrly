@@ -5,7 +5,11 @@ import { SourceId, TimestampString } from "./primitives.ts";
 /** Mirrors `undrly_core::UniverseKey`. */
 export const UNIVERSE_KEYS = [
   "crypto-top100",
+  "crypto-top250",
+  "crypto-top500",
   "sp500",
+  "sp400",
+  "sp600",
   "nasdaq100",
   "hyperliquid-perps",
   "fx-major",

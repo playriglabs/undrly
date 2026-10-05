@@ -6,19 +6,24 @@ import { useEffect, useRef, useState } from "react";
 import { ClassIcon } from "../../components/ClassIcon";
 import { Sparkline } from "../../components/Sparkline";
 import { Change, ErrorState } from "../../components/ui";
+import { type MarketsSort, SORT_COLUMNS, type SortColumn } from "../../lib/api";
 import {
   CLASS_LABEL,
   CLASS_ORDER,
   changeBasis,
   direction,
   displayName,
-  formatDecimal,
+  formatPrice,
   subjectClass,
   unitCode,
 } from "../../lib/format";
 import { marketCountsQuery, marketsQuery } from "../../lib/queries";
 
-type Search = { class?: string; q?: string };
+type Search = { class?: string; q?: string; sort?: SortColumn; order?: "asc" | "desc" };
+
+/** The table's order from the URL: none (by name), or a column and its direction. */
+const sortOf = (search: Search): MarketsSort =>
+  search.sort ? { column: search.sort, order: search.order ?? "asc" } : null;
 
 /** `class` in the URL is a comma-separated list, like the API's. */
 const classesOf = (value: string | undefined): v1.InstrumentClass[] =>
@@ -32,14 +37,19 @@ export const Route = createFileRoute("/_app/")({
   validateSearch: (search: Record<string, unknown>): Search => {
     const classes = classesOf(typeof search.class === "string" ? search.class : undefined);
     const q = typeof search.q === "string" ? search.q.trim().slice(0, 64) : "";
+    const sort = (SORT_COLUMNS as readonly unknown[]).includes(search.sort)
+      ? (search.sort as SortColumn)
+      : undefined;
     return {
       ...(classes.length ? { class: classes.join(",") } : {}),
       ...(q ? { q } : {}),
+      ...(sort ? { sort, ...(search.order === "desc" ? { order: "desc" as const } : {}) } : {}),
     };
   },
   loaderDeps: ({ search }) => ({
     classes: classesOf(search.class),
     q: search.q ?? "",
+    sort: sortOf(search),
   }),
   loader: ({ context, deps }) => context.queryClient.ensureInfiniteQueryData(marketsQuery(deps)),
   head: () => ({ meta: [{ title: "Explore — Undrly" }] }),
@@ -48,7 +58,7 @@ export const Route = createFileRoute("/_app/")({
 
 function Explore() {
   const search = Route.useSearch();
-  const filter = { classes: classesOf(search.class), q: search.q ?? "" };
+  const filter = { classes: classesOf(search.class), q: search.q ?? "", sort: sortOf(search) };
   const query = useInfiniteQuery(marketsQuery(filter));
   const pages = query.data?.pages ?? [];
   const failed = pages.find((p) => !p.ok);
@@ -63,6 +73,7 @@ function Explore() {
         <ErrorState title="Markets are unavailable" message={failed.message} />
       ) : first?.ok ? (
         <MarketTable
+          sort={filter.sort}
           rows={loaded}
           total={first.data.total}
           fetching={query.isFetching && !query.isFetchingNextPage}
@@ -214,7 +225,80 @@ function Filters({ classes, q }: { classes: v1.InstrumentClass[]; q: string }) {
 const th =
   "px-4 py-3.5 text-left text-[12px] font-normal tracking-[0.06em] whitespace-nowrap text-faint uppercase";
 
+/**
+ * A sortable column header: low to high, then high to low, then back to
+ * the name order. Markets without the value stay last either way.
+ */
+function SortHeader({
+  column,
+  label,
+  sort,
+  align,
+}: {
+  column: SortColumn;
+  label: string;
+  sort: MarketsSort;
+  align: "left" | "right";
+}) {
+  const navigate = useNavigate({ from: Route.fullPath });
+  const active = sort?.column === column ? sort.order : null;
+  const next: MarketsSort =
+    active === null
+      ? { column, order: "asc" }
+      : active === "asc"
+        ? { column, order: "desc" }
+        : null;
+  const title =
+    active === "asc" ? "Sorted low to high" : active === "desc" ? "Sorted high to low" : "Sort";
+  return (
+    <th
+      className={clsx(th, align === "right" ? "text-right" : "pl-6")}
+      aria-sort={active === "asc" ? "ascending" : active === "desc" ? "descending" : "none"}
+    >
+      <button
+        type="button"
+        title={title}
+        onClick={() =>
+          void navigate({
+            search: (prev) => ({
+              ...prev,
+              sort: next?.column,
+              order: next?.order === "desc" ? "desc" : undefined,
+            }),
+            replace: true,
+          })
+        }
+        className={clsx(
+          "inline-flex items-center gap-1.5 uppercase transition-colors hover:text-ink",
+          align === "right" && "flex-row-reverse",
+          active && "text-ink",
+        )}
+      >
+        {label}
+        <svg
+          className="size-3 shrink-0"
+          viewBox="0 0 12 12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          aria-hidden="true"
+        >
+          <path
+            d="M3.5 4.5 6 2l2.5 2.5"
+            className={active === "desc" ? "opacity-25" : active === "asc" ? "" : "opacity-50"}
+          />
+          <path
+            d="M3.5 7.5 6 10l2.5-2.5"
+            className={active === "asc" ? "opacity-25" : active === "desc" ? "" : "opacity-50"}
+          />
+        </svg>
+      </button>
+    </th>
+  );
+}
+
 function MarketTable({
+  sort,
   rows,
   total,
   fetching,
@@ -222,6 +306,7 @@ function MarketTable({
   loadingMore,
   loadMore,
 }: {
+  sort: MarketsSort;
   rows: v1.MarketsRowV1[];
   total: number;
   fetching: boolean;
@@ -261,10 +346,10 @@ function MarketTable({
               <th className={th}>Name</th>
               <th className={th}>Asset</th>
               <th className={th}>Quote</th>
-              <th className={clsx(th, "text-right")}>Price</th>
-              <th className={clsx(th, "text-right")}>24h %</th>
-              <th className={clsx(th, "text-right")}>24h change</th>
-              <th className={clsx(th, "pl-6")}>24h trend</th>
+              <SortHeader column="price" label="Price" sort={sort} align="right" />
+              <SortHeader column="changePercent" label="24h %" sort={sort} align="right" />
+              <SortHeader column="change" label="24h change" sort={sort} align="right" />
+              <SortHeader column="trend" label="24h trend" sort={sort} align="left" />
             </tr>
           </thead>
           <tbody>
@@ -326,7 +411,7 @@ function Row({ row }: { row: v1.MarketsRowV1 }) {
       <td className="px-4 py-3 text-[14px] text-muted">{subjectClass(row.subject)}</td>
       <td className="px-4 py-3 text-[14px] text-muted">{unit}</td>
       <td className="px-4 py-3 text-right text-[15px] tabular">
-        {m ? formatDecimal(m.price) : <span className="text-faint">—</span>}
+        {m ? formatPrice(m.price) : <span className="text-[14px] text-faint">No price</span>}
       </td>
       <td className="px-4 py-3 text-right text-[14px]">
         <Change percent={stats?.changePercent} />
@@ -345,7 +430,7 @@ function Row({ row }: { row: v1.MarketsRowV1 }) {
           dir === "up" ? "text-up" : dir === "down" ? "text-down" : "text-faint",
         )}
       >
-        {stats ? formatDecimal(stats.change) : "—"}
+        {stats ? formatPrice(stats.change) : "No data"}
       </td>
       <td className="py-3 pr-4 pl-6">
         <Sparkline values={row.sparkline} />
