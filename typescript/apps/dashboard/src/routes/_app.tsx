@@ -17,7 +17,8 @@ import { authClient } from "../lib/auth-client";
 import { CrumbContext } from "../lib/crumb";
 import { CLASS_LABEL, CLASS_ORDER } from "../lib/format";
 import { DOCS_URL } from "../lib/links";
-import { marketCountsQuery } from "../lib/queries";
+import { planById, trialDaysLeft } from "../lib/plans";
+import { billingQuery, marketCountsQuery } from "../lib/queries";
 import { getSessionUser } from "../server/session";
 
 /** Everything under this layout needs a session; the server functions enforce it too. */
@@ -107,6 +108,12 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
           <DocsIcon /> Documentation
         </a>
         <Link
+          to="/billing"
+          className="flex items-center gap-3 px-3 py-2.5 text-[15px] text-muted transition-colors hover:bg-card hover:text-ink data-[status=active]:bg-card data-[status=active]:text-ink"
+        >
+          <CardIcon /> Plans & billing
+        </Link>
+        <Link
           to="/api-keys"
           className="flex items-center gap-3 px-3 py-2.5 text-[15px] text-muted transition-colors hover:bg-card hover:text-ink data-[status=active]:bg-card data-[status=active]:text-ink"
         >
@@ -159,7 +166,7 @@ function UserBlock({ email }: { email: string }) {
           <span className="block truncate text-[14px] text-ink" title={email}>
             {email}
           </span>
-          <span className="block text-[12px] text-faint">7D Trial</span>
+          <PlanLabel />
         </span>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2">
@@ -185,9 +192,34 @@ function UserBlock({ email }: { email: string }) {
   );
 }
 
+/** The account's plan under the email; links to billing. Loads after the page, never blocks it. */
+function PlanLabel() {
+  const { data } = useQuery(billingQuery());
+  let label = "Free trial";
+  if (data?.subscription) {
+    label = `${planById(data.plan).name} plan${data.paid ? "" : " · unpaid"}`;
+  } else if (data) {
+    const days = trialDaysLeft(data.trialEndsAt);
+    label = days > 0 ? `Free trial · ${days}d left` : "Trial ended";
+  }
+  return (
+    <Link
+      to="/billing"
+      className="block text-[12px] text-faint hover:text-ink"
+      suppressHydrationWarning
+    >
+      {label}
+    </Link>
+  );
+}
+
 function AppHeader({ crumb, onToggle }: { crumb: string | null; onToggle: () => void }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
-  const section = path.startsWith("/api-keys") ? "API keys" : "Explore";
+  const section = path.startsWith("/api-keys")
+    ? "API keys"
+    : path.startsWith("/billing")
+      ? "Plans & billing"
+      : "Explore";
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-6 border-b border-line bg-[#090b0ad9] px-8 backdrop-blur-xl max-md:px-4">
       <div className="flex min-w-0 items-center gap-4">
@@ -293,6 +325,22 @@ function DocsIcon(): ReactNode {
     >
       <path d="M5 4.5h9.5L19 9v10.5H5z" />
       <path d="M14.5 4.5V9H19M8.5 13h7M8.5 16.5h5" />
+    </svg>
+  );
+}
+
+function CardIcon(): ReactNode {
+  return (
+    <svg
+      className="size-4 shrink-0"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <rect x="3.5" y="5.5" width="17" height="13" />
+      <path d="M3.5 9.5h17M7 15h4" />
     </svg>
   );
 }

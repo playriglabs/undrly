@@ -1,4 +1,5 @@
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
+import { getBilling } from "../server/billing";
 import {
   getMarketCounts,
   getMarketDetail,
@@ -48,4 +49,24 @@ export const seriesQuery = (id: string, unit: string | undefined, range: Range) 
     queryFn: () => getSeries({ data: unit ? { id, unit, range } : { id, range } }),
     placeholderData: keepPreviousData,
     staleTime: 60_000,
+  });
+
+/**
+ * The account's plan and what it owes. While a new crypto subscription waits
+ * for Mayarin to issue its first invoice (its billing run is once a minute),
+ * or an invoice waits for its payment to clear, it polls. Card plans change
+ * through Polar's webhooks and the checkout return, so they don't poll.
+ */
+export const billingQuery = () =>
+  queryOptions({
+    queryKey: ["billing"],
+    queryFn: () => getBilling(),
+    staleTime: 30_000,
+    refetchInterval: (query) => {
+      const billing = query.state.data;
+      const sub = billing?.subscription;
+      if (!billing || sub?.provider !== "mayarin" || sub.state !== "active") return false;
+      if (billing.due) return LIVE_MS;
+      return billing.paid ? false : 5_000;
+    },
   });

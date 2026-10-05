@@ -14,8 +14,10 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppApiKeysRouteImport } from './routes/_app/api-keys'
+import { Route as AppBillingRouteImport } from './routes/_app/billing'
 import { Route as AppMarketsIdRouteImport } from './routes/_app/markets.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiWebhooksMayarinRouteImport } from './routes/api/webhooks/mayarin'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -41,6 +43,11 @@ const AppApiKeysRoute = AppApiKeysRouteImport.update({
   path: '/api-keys',
   getParentRoute: () => AppRoute,
 } as any)
+const AppBillingRoute = AppBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppMarketsIdRoute = AppMarketsIdRouteImport.update({
   id: '/markets/$id',
   path: '/markets/$id',
@@ -51,22 +58,31 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWebhooksMayarinRoute = ApiWebhooksMayarinRouteImport.update({
+  id: '/api/webhooks/mayarin',
+  path: '/api/webhooks/mayarin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/api-keys': typeof AppApiKeysRoute
+  '/billing': typeof AppBillingRoute
   '/markets/$id': typeof AppMarketsIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/webhooks/mayarin': typeof ApiWebhooksMayarinRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/api-keys': typeof AppApiKeysRoute
+  '/billing': typeof AppBillingRoute
   '/': typeof AppIndexRoute
   '/markets/$id': typeof AppMarketsIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/webhooks/mayarin': typeof ApiWebhooksMayarinRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -74,26 +90,44 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
   '/_app/api-keys': typeof AppApiKeysRoute
+  '/_app/billing': typeof AppBillingRoute
   '/_app/': typeof AppIndexRoute
   '/_app/markets/$id': typeof AppMarketsIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/webhooks/mayarin': typeof ApiWebhooksMayarinRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/login' | '/register' | '/api-keys' | '/markets/$id' | '/api/auth/$'
+    | '/'
+    | '/login'
+    | '/register'
+    | '/api-keys'
+    | '/billing'
+    | '/markets/$id'
+    | '/api/auth/$'
+    | '/api/webhooks/mayarin'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/login' | '/register' | '/api-keys' | '/' | '/markets/$id' | '/api/auth/$'
+    | '/login'
+    | '/register'
+    | '/api-keys'
+    | '/billing'
+    | '/'
+    | '/markets/$id'
+    | '/api/auth/$'
+    | '/api/webhooks/mayarin'
   id:
     | '__root__'
     | '/_app'
     | '/login'
     | '/register'
     | '/_app/api-keys'
+    | '/_app/billing'
     | '/_app/'
     | '/_app/markets/$id'
     | '/api/auth/$'
+    | '/api/webhooks/mayarin'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -101,6 +135,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   RegisterRoute: typeof RegisterRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiWebhooksMayarinRoute: typeof ApiWebhooksMayarinRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -140,6 +175,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppApiKeysRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/billing': {
+      id: '/_app/billing'
+      path: '/billing'
+      fullPath: '/billing'
+      preLoaderRoute: typeof AppBillingRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/markets/$id': {
       id: '/_app/markets/$id'
       path: '/markets/$id'
@@ -154,17 +196,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/webhooks/mayarin': {
+      id: '/api/webhooks/mayarin'
+      path: '/api/webhooks/mayarin'
+      fullPath: '/api/webhooks/mayarin'
+      preLoaderRoute: typeof ApiWebhooksMayarinRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 interface AppRouteChildren {
   AppApiKeysRoute: typeof AppApiKeysRoute
+  AppBillingRoute: typeof AppBillingRoute
   AppIndexRoute: typeof AppIndexRoute
   AppMarketsIdRoute: typeof AppMarketsIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppApiKeysRoute: AppApiKeysRoute,
+  AppBillingRoute: AppBillingRoute,
   AppIndexRoute: AppIndexRoute,
   AppMarketsIdRoute: AppMarketsIdRoute,
 }
@@ -176,6 +227,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   RegisterRoute: RegisterRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiWebhooksMayarinRoute: ApiWebhooksMayarinRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -6,7 +6,8 @@
  */
 import { betterAuth } from "better-auth";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
-import { Pool } from "pg";
+import { getPool } from "./db";
+import { polarPlugins } from "./polar";
 
 const timestamps = { createdAt: "created_at", updatedAt: "updated_at" };
 
@@ -21,11 +22,7 @@ function createAuth() {
     secret: env("BETTER_AUTH_SECRET"),
     baseURL: env("BETTER_AUTH_URL"),
     trustedOrigins: trustedOrigins(env("BETTER_AUTH_URL")),
-    database: new Pool({
-      connectionString: env("DATABASE_URL"),
-      options: "-c search_path=dashboard",
-      max: 5,
-    }),
+    database: getPool(),
     emailAndPassword: { enabled: true, minPasswordLength: 10, autoSignIn: true },
     session: {
       expiresIn: 60 * 60 * 24 * 7,
@@ -73,8 +70,9 @@ function createAuth() {
       },
     },
     advanced: { useSecureCookies: env("BETTER_AUTH_URL").startsWith("https://") },
-    // Must be last: sets cookies through TanStack Start's response.
-    plugins: [tanstackStartCookies()],
+    // Polar card checkout, portal and webhooks when configured (./polar.ts).
+    // tanstackStartCookies must be last: it sets cookies through TanStack Start's response.
+    plugins: [...polarPlugins(env("BETTER_AUTH_URL")), tanstackStartCookies()],
   });
 }
 

@@ -19,3 +19,11 @@ bun run build && bun run start
   `/login` and `/register` needs a session: the `_app` layout redirects, and
   `authMiddleware` rejects data server functions called without one.
 - **API keys:** the page is UI only; the API does not issue or check keys yet.
+- **Billing:** `/billing` sells the landing page's plans in USD two ways.
+  Card through Polar, merchant of record (`src/server/polar.ts`, Better Auth
+  plugin: checkout, portal, webhook at `/api/auth/polar/webhooks`). Crypto
+  through Mayarin subscriptions (`src/server/mayarin.ts`, webhook at
+  `/api/webhooks/mayarin`), testnet until Mayarin provisions mainnet. Either
+  way one row per live plan in `dashboard.subscriptions`
+  (`database/migrations/0029`, `0030`); `paid_through` is how far access is
+  paid. Each provider shows up only when its keys are set (`.env.example`).
