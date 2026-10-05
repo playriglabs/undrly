@@ -61,7 +61,10 @@
           items: [
             ['code', 'REST API access with API key'],
             ['gauge', '250,000 requests / month'],
-            ['globe', 'Full universes: crypto top 100, S&P 500, FX majors, every Perp'],
+            [
+              'globe',
+              'Full universes: crypto top 500, S&P 1500, Nasdaq-100, tokenized stocks, every Perp',
+            ],
             ['candles', 'Candles, reference rates and perpetual funding'],
             ['agent', 'Read-only MCP server for AI agents'],
           ],
@@ -82,7 +85,7 @@
             ['gauge', '2,000,000 requests / month'],
             ['globe', 'Everything in Pro'],
             ['trail', 'Source provenance behind every quote'],
-            ['bank', 'Central-bank reference rates, including Asia, Southeast Asia, MENA FX'],
+            ['bank', 'Central-bank reference rates, including Asia, Southeast Asia, Gulf FX'],
           ],
         },
         { label: 'SUPPORT', items: [['chat', 'Priority support']] },

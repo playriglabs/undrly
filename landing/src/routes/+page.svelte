@@ -38,7 +38,7 @@
   <title>Undrly — Every market. One clear interface.</title>
   <meta
     name="description"
-    content="One normalized API for equities, crypto, FX, commodities, and perpetuals. Clear identities, traceable data, and tools for applications and AI agents."
+    content="One normalized API for equities, tokenized stocks, crypto, FX, commodities, and perpetuals. Clear identities, traceable data, and tools for applications and AI agents."
   />
   <meta property="og:title" content="Undrly — Every market. One clear interface." />
   <meta
@@ -72,15 +72,41 @@
       <p
         class="max-w-138.75 text-[17px] leading-[1.7] text-muted max-md:max-w-112.5 max-md:text-[15px]"
       >
-        Bring equities, crypto, FX, commodities, and perpetuals into one normalized API. Clear
-        identities. Traceable data.
+        Bring equities, tokenized stocks, crypto, FX, commodities, and perpetuals into one
+        normalized API. Clear identities. Traceable data.
       </p>
     </div>
-    <div
-      data-hero-reveal
-      aria-hidden="true"
-      class="mt-17.5 aspect-[16/8.1] w-full border border-[#2c312c] bg-[#101310] shadow-[0_0_0_7px_#1216116b,0_22px_85px_-25px_#7f9b6120] max-md:mt-10.5 max-md:aspect-4/3"
-    ></div>
+    <!--
+      The app itself: a sage glow behind, a lit top edge, and a fade into the page below.
+      It runs past the hero into the next section (inside that section's top padding).
+    -->
+    <figure data-hero-reveal class="relative z-10 mt-17.5 -mb-12 max-md:mt-10.5 max-md:-mb-6">
+      <div
+        aria-hidden="true"
+        class="pointer-events-none absolute inset-x-[8%] -top-10 -z-10 h-[70%] bg-[radial-gradient(ellipse_at_top,#a9c48f2e,transparent_70%)] blur-2xl"
+      ></div>
+      <div
+        class="relative overflow-hidden border border-[#2c312c] bg-[#101310] shadow-[0_0_0_7px_#1216116b,0_22px_85px_-25px_#7f9b6140]"
+      >
+        <span
+          aria-hidden="true"
+          class="absolute inset-x-0 top-0 z-10 h-px bg-linear-to-r from-transparent via-[#cfeea0b3] to-transparent"
+        ></span>
+        <img
+          src="/preview-app.png"
+          alt="The Undrly app: markets across crypto, equities, tokenized stocks, perpetuals, forex and commodities, each with its price, 24-hour change and trend."
+          width="3388"
+          height="1946"
+          fetchpriority="high"
+          decoding="async"
+          class="block w-full max-md:aspect-4/3 max-md:object-cover max-md:object-left-top"
+        />
+        <div
+          aria-hidden="true"
+          class="pointer-events-none absolute inset-x-0 bottom-0 h-[38%] bg-linear-to-b from-transparent to-paper"
+        ></div>
+      </div>
+    </figure>
   </section>
   <Pipeline />
   <Capabilities />

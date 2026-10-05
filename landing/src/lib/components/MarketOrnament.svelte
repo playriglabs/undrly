@@ -23,9 +23,11 @@
       d="M44 54V86M44 54H56C63 54 66 57 66 62S63 70 56 70H44M44 70H58C65 70 68 73 68 78S65 86 58 86H44M48 50v4M54 50v4M48 86v4M54 86v4"
     />
   {:else if kind === 'commodities'}
-    <!-- A gold bar and a drop of oil. -->
-    <path d="M14 98 28 64H80L94 98Z" />
-    <path d="M28 64 36 52H72L80 64" />
+    <!-- Two bars stacked (gold, silver) and a drop of oil. -->
+    <path d="M12 100 24 76H80L92 100Z" />
+    <path d="M24 76 32 66H72L80 76" />
+    <path d="M32 66 39 46H65L72 66" />
+    <path d="M39 46 45 37H59L65 46" />
     <path d="M124 24C124 24 102 54 102 72A22 22 0 0 0 146 72C146 54 124 24 124 24Z" />
   {:else if kind === 'fx'}
     <!-- A dollar note and a yen coin. -->

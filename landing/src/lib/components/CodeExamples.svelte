@@ -68,13 +68,13 @@
 
       <div
         id="example-panel"
-        class="relative min-h-105 p-8 pb-22 max-md:min-h-95 max-md:p-5 max-md:pb-18"
+        class="relative p-8 pb-22 max-md:p-5 max-md:pb-18"
         role="tabpanel"
         aria-labelledby="example-tab-{current.id}"
       >
         {#key current.id}
           <div
-            class="overflow-x-auto text-[13.5px] leading-[1.9] max-md:text-[12px] [&_pre]:bg-transparent!"
+            class="h-97 overflow-auto text-[13.5px] leading-[1.9] max-md:h-86 max-md:text-[12px] [&_pre]:bg-transparent!"
             in:fade={{ duration: 220 }}
           >
             {@html highlighted[current.id]}

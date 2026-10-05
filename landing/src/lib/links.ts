@@ -8,5 +8,6 @@ export const links = {
   contact: '#',
   blog: '#',
   x: 'https://x.com',
+  github: 'https://github.com/playriglabs/undrly',
   linkedin: 'https://www.linkedin.com',
 };

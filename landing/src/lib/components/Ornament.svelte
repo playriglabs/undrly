@@ -16,7 +16,7 @@
   aria-hidden="true"
 >
   <span class="absolute top-2 left-0 font-mono text-[10px] tracking-[1px] text-[#737c75]"
-    >FEAT. 0{figure}</span
+    >F. 0{figure}</span
   >
   <svg viewBox="0 0 360 290" fill="none" class="h-full w-full overflow-visible pt-6.75">
     {#if kind === 'capture'}

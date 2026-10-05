@@ -2,12 +2,12 @@
   import { ui } from '$lib/ui';
   import MarketOrnament from './MarketOrnament.svelte';
 
-  // Examples are markets in the universe (docs/v1.1-universe.md, docs/v1.2-fx.md, docs/v1.3-market-data.md).
+  // Examples are markets in the universe (docs/v1.1-universe.md, docs/v1.2-fx.md, docs/v1.10-tokenized-stocks.md).
   const markets = [
     {
       title: 'Crypto',
       kind: 'crypto' as const,
-      copy: 'Spot assets and perpetual futures, with funding and open interest.',
+      copy: 'The top 500 spot assets and perpetual futures, with funding and open interest.',
       examples: ['BTC', 'ETH', 'BTC perp'],
     },
     {
@@ -19,14 +19,14 @@
     {
       title: 'Forex',
       kind: 'fx' as const,
-      copy: 'Major pairs, Southeast Asian, MENA currencies, orientation preserved.',
-      examples: ['EUR/USD', 'USD/SGD', 'USD/JPY'],
+      copy: 'Majors plus Asian, Gulf and Latin American currencies, orientation preserved.',
+      examples: ['EUR/USD', 'USD/IDR', 'USD/VND'],
     },
     {
       title: 'Equities',
       kind: 'equities' as const,
-      copy: 'S&P 500 constituents with sessions, calendars and corporate actions.',
-      examples: ['NVDA', 'AAPL', 'MSFT'],
+      copy: 'S&P 500 and Nasdaq 100 shares, sessions and corporate actions, plus their tokens.',
+      examples: ['NVDA', 'AAPL', 'AAPLx'],
     },
   ];
 </script>
